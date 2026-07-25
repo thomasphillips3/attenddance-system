@@ -131,7 +131,7 @@ function doPost(e) {
   lock.waitLock(10000);
   try {
     const body = JSON.parse(e.postData.contents);
-    const itemId = String(body.item_id || '');
+    const itemId = _normId(body.item_id || '');
     if (!itemId) {
       return _cors(ContentService.createTextOutput(JSON.stringify({ error: 'item_id is required' }))
         .setMimeType(ContentService.MimeType.JSON));
@@ -147,15 +147,22 @@ function doPost(e) {
     const doneAtCol = headers.indexOf('done_at');
     const updatedAtCol = headers.indexOf('updated_at');
 
+    // Match with _normId, not raw String(): Sheets coerces a leading-zero id
+    // like "01" to the number 1, so the frontend's "01" and the cell's 1 must
+    // compare equal (same rule syncContent uses). And update EVERY row that
+    // shares the id rather than break-on-first — if a duplicate pair still
+    // exists, updating only one lets its TRUE twin outvote an un-check on the
+    // next read, which is exactly "can't check items off".
+    let matched = false;
     for (let r = 1; r < rows.length; r++) {
-      if (String(rows[r][idCol]) === itemId) {
+      if (_normId(rows[r][idCol]) === itemId) {
         sheet.getRange(r + 1, doneCol + 1).setValue(done);
         sheet.getRange(r + 1, doneAtCol + 1).setValue(done ? now : '');
         sheet.getRange(r + 1, updatedAtCol + 1).setValue(now);
-        break;
+        matched = true;
       }
     }
-    return _cors(ContentService.createTextOutput(JSON.stringify({ ok: true }))
+    return _cors(ContentService.createTextOutput(JSON.stringify({ ok: matched }))
       .setMimeType(ContentService.MimeType.JSON));
   } finally {
     lock.releaseLock();
