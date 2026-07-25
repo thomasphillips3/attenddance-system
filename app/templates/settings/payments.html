@@ -87,7 +87,7 @@
     <div class="px-6 py-4 border-b border-line flex items-center justify-between">
         <div class="flex items-center">
             <span class="font-display text-xl text-ink mr-3">Square</span>
-            <span class="text-xs text-ink-3">Send invoices parents can pay online</span>
+            <span class="text-xs text-ink-3">Let parents pay by card online</span>
         </div>
         <label class="relative inline-flex items-center cursor-pointer">
             <input type="checkbox" id="square-enabled" class="sr-only peer" onchange="saveSettings()">
@@ -98,45 +98,48 @@
         <div>
             <label class="{{ lbl }}">Payment Link</label>
             <input type="text" id="square-link" placeholder="https://square.link/u/..." class="{{ inpmono }}">
-            <p class="mt-1 text-xs text-ink-3">Your Square checkout link. Parents get a "Pay by card" button on their portal. This works on its own - the token and location below are only needed for emailed invoices.</p>
-        </div>
-        <div>
-            <label class="{{ lbl }}">Access Token</label>
-            <input type="password" id="square-token" autocomplete="off" class="{{ inpmono }}">
-            <div class="mt-1 flex items-center justify-between">
-                <p class="text-xs text-ink-3">From <a href="https://developer.squareup.com/apps" target="_blank" class="text-primary-600 hover:underline">Square Developer Dashboard</a>. Stored encrypted.</p>
-                <button type="button" id="token-clear" onclick="clearToken()" class="hidden text-xs text-danger hover:underline">Clear token</button>
-            </div>
-        </div>
-        <div>
-            <label class="{{ lbl }}">Location ID</label>
-            <input type="text" id="square-location" placeholder="e.g. LXXXXXXXXXXXXXXXXX" class="{{ inpmono }}">
-        </div>
-        <div>
-            <label class="{{ lbl }}">Environment</label>
-            <select id="square-env" class="{{ inp }}">
-                <option value="sandbox">Sandbox (testing)</option>
-                <option value="production">Production (live)</option>
-            </select>
-        </div>
-        <div>
-            <button type="button" onclick="testSquare()" class="inline-flex items-center rounded-xl border border-line-2 text-ink-2 font-bold px-3 py-2 text-sm hover:bg-surface-2">
-                <i class="fas fa-plug mr-2"></i>Test Connection
-            </button>
-            <span id="square-test-result" class="ml-3 text-sm"></span>
-            <p class="mt-1 text-xs text-ink-3">Save first, then test.</p>
+            <p class="mt-1 text-xs text-ink-3">Paste your Square checkout link and you're done — parents get a "Pay by card" button on their portal. Everything below is optional.</p>
         </div>
 
         <details class="border-t border-line pt-3">
-            <summary class="text-sm font-medium text-ink-2 cursor-pointer">Advanced: auto-reconcile webhook</summary>
-            <div class="mt-3 space-y-2">
-                <p class="text-xs text-ink-3">In Square Dashboard → Webhooks, add this URL and subscribe to <code>invoice.payment_made</code>. Then paste the signature key below so paid invoices auto-record.</p>
-                <div class="flex items-center gap-2">
-                    <input type="text" id="webhook-url" readonly class="flex-1 block w-full border border-line bg-surface-2 rounded-xl px-3 py-2 text-xs font-mono text-ink-2">
-                    <button aria-label="Copy webhook URL" type="button" onclick="copyWebhook()" class="rounded-xl border border-line-2 text-ink-2 px-2 py-2 text-xs hover:bg-surface-2"><i class="fas fa-copy"></i></button>
+            <summary class="text-sm font-medium text-ink-2 cursor-pointer">Advanced: emailed invoices &amp; auto-reconcile</summary>
+            <div class="mt-4 space-y-4">
+                <p class="text-xs text-ink-3">Only needed if you want to email parents a Square invoice from inside the app, or auto-record paid invoices. The payment link above works without any of this.</p>
+                <div>
+                    <label class="{{ lbl }}">Access Token</label>
+                    <input type="password" id="square-token" autocomplete="off" class="{{ inpmono }}">
+                    <div class="mt-1 flex items-center justify-between">
+                        <p class="text-xs text-ink-3">From <a href="https://developer.squareup.com/apps" target="_blank" class="text-primary-600 hover:underline">Square Developer Dashboard</a>. Stored encrypted.</p>
+                        <button type="button" id="token-clear" onclick="clearToken()" class="hidden text-xs text-danger hover:underline">Clear token</button>
+                    </div>
                 </div>
-                <label class="{{ lbl }}">Webhook Signature Key</label>
-                <input type="password" id="square-webhook-key" autocomplete="off" class="block w-full bg-surface border border-line-2 rounded-xl px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary-200 focus:border-primary-400">
+                <div>
+                    <label class="{{ lbl }}">Location ID</label>
+                    <input type="text" id="square-location" placeholder="e.g. LXXXXXXXXXXXXXXXXX" class="{{ inpmono }}">
+                </div>
+                <div>
+                    <label class="{{ lbl }}">Environment</label>
+                    <select id="square-env" class="{{ inp }}">
+                        <option value="sandbox">Sandbox (testing)</option>
+                        <option value="production">Production (live)</option>
+                    </select>
+                </div>
+                <div>
+                    <button type="button" onclick="testSquare()" class="inline-flex items-center rounded-xl border border-line-2 text-ink-2 font-bold px-3 py-2 text-sm hover:bg-surface-2">
+                        <i class="fas fa-plug mr-2"></i>Test Connection
+                    </button>
+                    <span id="square-test-result" class="ml-3 text-sm"></span>
+                    <p class="mt-1 text-xs text-ink-3">Save first, then test.</p>
+                </div>
+                <div class="border-t border-line pt-3 space-y-2">
+                    <p class="text-xs text-ink-3">Auto-reconcile webhook: in Square Dashboard → Webhooks, add this URL and subscribe to <code>invoice.payment_made</code>. Then paste the signature key below so paid invoices auto-record.</p>
+                    <div class="flex items-center gap-2">
+                        <input type="text" id="webhook-url" readonly class="flex-1 block w-full border border-line bg-surface-2 rounded-xl px-3 py-2 text-xs font-mono text-ink-2">
+                        <button aria-label="Copy webhook URL" type="button" onclick="copyWebhook()" class="rounded-xl border border-line-2 text-ink-2 px-2 py-2 text-xs hover:bg-surface-2"><i class="fas fa-copy"></i></button>
+                    </div>
+                    <label class="{{ lbl }}">Webhook Signature Key</label>
+                    <input type="password" id="square-webhook-key" autocomplete="off" class="block w-full bg-surface border border-line-2 rounded-xl px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary-200 focus:border-primary-400">
+                </div>
             </div>
         </details>
     </div>
