@@ -151,6 +151,44 @@
     padding-top: 12px;
   }
 
+  /* Step-by-step instructions, collapsed by default so the list stays
+     scannable — long walkthroughs live here instead of in .item-note. */
+  .item-details {
+    margin: 0 16px 14px 52px;
+    border-top: 1px solid var(--line);
+    padding-top: 10px;
+  }
+  .item-details > summary {
+    cursor: pointer;
+    font-size: 0.82rem;
+    font-weight: 700;
+    color: var(--primary-600);
+    list-style: none;
+  }
+  .item-details > summary::-webkit-details-marker { display: none; }
+  .item-details > summary::before {
+    content: "▸ ";
+    display: inline-block;
+    transition: transform .15s ease;
+  }
+  .item-details[open] > summary::before { content: "▾ "; }
+  .item-details-body {
+    margin-top: 8px;
+    font-size: 0.86rem;
+    line-height: 1.55;
+    color: var(--ink-2);
+  }
+  .item-details-body p { margin: 0 0 7px; }
+  .item-details-body p:last-child { margin-bottom: 0; }
+  /* Callouts and the closing reassurance line read better set apart. */
+  .item-details-body p.callout {
+    background: var(--gold-300);
+    color: var(--gold-ink);
+    padding: 7px 10px;
+    border-radius: 8px;
+    font-weight: 700;
+  }
+
   .empty, .loading {
     text-align: center;
     color: var(--ink-3);
@@ -204,6 +242,10 @@ const API_BASE = "__API_BASE__";
 
 let items = [];
 let pollTimer = null;
+// item_ids whose "detailed steps" are expanded. render() rebuilds the whole
+// list via innerHTML, and the 15s poll calls it — without this, someone
+// following a long walkthrough gets it slammed shut under them every 15s.
+let openDetails = new Set();
 
 function esc(s) {
   const d = document.createElement("div");
@@ -216,6 +258,24 @@ function formatDate(iso) {
   try {
     return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(new Date(iso));
   } catch { return ""; }
+}
+
+// Long walkthroughs ride in the sheet's `details` column. A TSV cell can't hold
+// a real newline (it would break row parsing), so steps are separated by a
+// literal backslash-n and split back out here.
+function renderDetails(raw) {
+  if (!raw) return "";
+  const lines = String(raw).split("\\n").map(s => s.trim()).filter(Boolean);
+  if (!lines.length) return "";
+  const body = lines.map(line => {
+    // Only the genuine security warning gets the callout treatment — making
+    // everything shout would make nothing stand out.
+    const cls = /^HEADS UP/.test(line) ? ' class="callout"' : "";
+    return `<p${cls}>${esc(line)}</p>`;
+  }).join("");
+  return `<details class="item-details">` +
+         `<summary>Show detailed steps</summary>` +
+         `<div class="item-details-body">${body}</div></details>`;
 }
 
 function render() {
@@ -241,8 +301,19 @@ function render() {
         </div>
         ${doneMeta}
         ${note}
+        ${renderDetails(item.details)}
       </div>`;
   }).join("");
+
+  // Re-open whatever was open before this rebuild, and keep tracking changes.
+  el.querySelectorAll(".item-details").forEach(d => {
+    const id = String(d.closest(".item-card").dataset.itemId);
+    if (openDetails.has(id)) d.open = true;
+    d.addEventListener("toggle", () => {
+      if (d.open) openDetails.add(id);
+      else openDetails.delete(id);
+    });
+  });
 
   el.querySelectorAll(".item-checkbox").forEach(cb => {
     cb.addEventListener("change", (e) => {

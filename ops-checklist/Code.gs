@@ -43,21 +43,37 @@ function syncContent() {
   const sSort = sh.indexOf('sort_order');
   const sTitle = sh.indexOf('title');
   const sNote = sh.indexOf('note');
+  const sDetails = sh.indexOf('details');
 
   const seed = lines.slice(1).map(line => {
     const c = line.split('\t');
-    return { id: c[sId], sort_order: c[sSort], title: c[sTitle], note: c[sNote] };
+    return {
+      id: c[sId],
+      sort_order: c[sSort],
+      title: c[sTitle],
+      note: c[sNote],
+      // Optional column; rows are allowed to be short, so guard the index.
+      details: sDetails >= 0 ? (c[sDetails] || '') : '',
+    };
   });
 
   const sheet = _sheet();
   const range = sheet.getDataRange();
   const rows = range.getValues();
   const h = rows[0];
+
+  // Self-healing schema: when the seed introduces a column the sheet predates
+  // (e.g. `details`), append it to the header instead of silently dropping the
+  // data — h.indexOf() would return -1 and write to a bogus array index.
+  ['item_id', 'sort_order', 'title', 'note', 'details', 'done', 'done_at', 'updated_at']
+    .forEach(name => { if (h.indexOf(name) === -1) h.push(name); });
+
   const width = h.length;
   const idCol = h.indexOf('item_id');
   const sortCol = h.indexOf('sort_order');
   const titleCol = h.indexOf('title');
   const noteCol = h.indexOf('note');
+  const detailsCol = h.indexOf('details');
   const doneCol = h.indexOf('done');
   const doneAtCol = h.indexOf('done_at');
   const updCol = h.indexOf('updated_at');
@@ -88,6 +104,7 @@ function syncContent() {
     row[sortCol] = item.sort_order;
     row[titleCol] = item.title;
     row[noteCol] = item.note;
+    row[detailsCol] = item.details;
     row[doneCol] = s.done;
     row[doneAtCol] = s.done_at || '';
     row[updCol] = s.updated_at || '';
