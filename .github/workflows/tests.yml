@@ -39,3 +39,8 @@ jobs:
         env:
           RFID_ENABLED: "false"
         run: python tests/test_backup.py
+
+      - name: Seasons harness
+        env:
+          RFID_ENABLED: "false"
+        run: python tests/test_seasons.py

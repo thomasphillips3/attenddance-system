@@ -103,6 +103,31 @@ class Family(db.Model):
         return f'<Family {self.name}>'
 
 
+class Season(db.Model):
+    """A session/term the studio runs classes in (e.g. "Fall 2026").
+
+    Lifecycle: draft → active → archived. Exactly one season is active at a
+    time; a draft season is a full staging area — its classes can be created,
+    enrolled into, and given recurring charges, but none of that surfaces on
+    live views or bills anyone until the season is activated. Activation
+    archives the previously active season (cancelling its classes wholesale,
+    same cascade as Cancel Class). Classes with season_id NULL predate this
+    feature and are treated as belonging to the active season."""
+    __tablename__ = 'seasons'
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    start_date = db.Column(db.Date)
+    end_date = db.Column(db.Date)
+    status = db.Column(db.String(10), default='draft', nullable=False)  # draft/active/archived
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    classes = db.relationship('DanceClass', backref='season', lazy='dynamic')
+
+    def __repr__(self):
+        return f'<Season {self.name} ({self.status})>'
+
+
 class Location(db.Model):
     """Studio location where classes are held"""
     __tablename__ = 'locations'
@@ -236,6 +261,7 @@ class DanceClass(db.Model):
     name = db.Column(db.String(100), nullable=False)
     description = db.Column(db.Text)
     location_id = db.Column(db.Integer, db.ForeignKey('locations.id'))
+    season_id = db.Column(db.Integer, db.ForeignKey('seasons.id'))  # NULL = pre-seasons row, treated as active season
 
     # Schedule
     day_of_week = db.Column(db.Integer, nullable=False)  # 0=Monday, 6=Sunday

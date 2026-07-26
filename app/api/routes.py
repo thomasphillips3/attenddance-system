@@ -16,6 +16,7 @@ from sqlalchemy.exc import IntegrityError
 from app import db, square_service
 from app.api import bp
 from app.helpers import (
+    active_season,
     allocate_family_payment,
     apply_student_fields,
     attendance_to_dict,
@@ -24,6 +25,7 @@ from app.helpers import (
     calc_balance,
     calc_balance_bulk,
     class_to_dict,
+    live_class_query,
     recurring_to_dict,
     student_to_dict,
     transaction_to_dict,
@@ -60,6 +62,7 @@ from app.models import (
     Registration,
     Rule,
     RuleAcknowledgment,
+    Season,
     Setting,
     Skill,
     SquareInvoice,
@@ -489,6 +492,172 @@ def remove_rfid(student_id):
     return jsonify({'message': 'RFID card removed successfully', 'student': student_to_dict(student)})
 
 
+# ── Season endpoints ────────────────────────────────────────────────
+
+def _season_to_dict(s):
+    return {
+        'id': s.id,
+        'name': s.name,
+        'status': s.status,
+        'start_date': s.start_date.isoformat() if s.start_date else None,
+        'end_date': s.end_date.isoformat() if s.end_date else None,
+        'class_count': s.classes.filter_by(is_active=True).count(),
+    }
+
+
+def _parse_season_date(value, field):
+    """(date-or-None, error-response-or-None) from a YYYY-MM-DD string. Empty
+    clears the date."""
+    val = _clean_str(value)
+    if not val:
+        return None, None
+    try:
+        return datetime.strptime(val, '%Y-%m-%d').date(), None
+    except ValueError:
+        return None, (jsonify({'error': f'invalid {field} (use YYYY-MM-DD)'}), 400)
+
+
+@bp.route('/seasons', methods=['GET'])
+@login_required
+def list_seasons():
+    err = _staff_only()
+    if err:
+        return err
+    seasons = Season.query.order_by(Season.created_at).all()
+    reg_sid = Setting.get('registration_season_id', '')
+    return jsonify({
+        'seasons': [_season_to_dict(s) for s in seasons],
+        'registration_season_id': int(reg_sid) if reg_sid.isdigit() else None,
+    })
+
+
+@bp.route('/seasons', methods=['POST'])
+@login_required
+def create_season():
+    """Create a DRAFT season — a staging area where the next session's schedule
+    is built (classes, enrollments, billing config) while the current season
+    keeps running untouched."""
+    err = _admin_only()
+    if err:
+        return err
+    data = request.get_json() or {}
+    name = _clean_str(data.get('name'))
+    if not name:
+        return jsonify({'error': 'name is required'}), 400
+    start_date, derr = _parse_season_date(data.get('start_date'), 'start_date')
+    if derr:
+        return derr
+    end_date, derr = _parse_season_date(data.get('end_date'), 'end_date')
+    if derr:
+        return derr
+    season = Season(name=name[:100], start_date=start_date, end_date=end_date, status='draft')
+    db.session.add(season)
+    AuditLog.record(current_user.id, 'season.create', f'Created draft season "{season.name}"')
+    db.session.commit()
+    return jsonify(_season_to_dict(season)), 201
+
+
+@bp.route('/seasons/<int:season_id>', methods=['PUT', 'PATCH'])
+@login_required
+def update_season(season_id):
+    err = _admin_only()
+    if err:
+        return err
+    season = Season.query.get_or_404(season_id)
+    data = request.get_json() or {}
+    if data.get('name') is not None:
+        name = _clean_str(data['name'])
+        if not name:
+            return jsonify({'error': 'name cannot be empty'}), 400
+        season.name = name[:100]
+    for fld in ('start_date', 'end_date'):
+        if fld in data:
+            d, derr = _parse_season_date(data.get(fld), fld)
+            if derr:
+                return derr
+            setattr(season, fld, d)
+    db.session.commit()
+    return jsonify(_season_to_dict(season))
+
+
+@bp.route('/seasons/<int:season_id>/activate', methods=['POST'])
+@login_required
+def activate_season(season_id):
+    """Make a season THE live season. The previously active season is archived
+    and its classes are wound down with the same cascade as Cancel Class
+    (deactivate class + recurring charges + enrollments, clear waitlists) so
+    nothing from the old season keeps billing or showing up. History
+    (attendance, ledger) is untouched. NULL-season legacy classes count as the
+    outgoing season and are wound down too."""
+    err = _admin_only()
+    if err:
+        return err
+    from app.models import WaitlistEntry
+    season = Season.query.get_or_404(season_id)
+    if season.status == 'active':
+        return jsonify({'message': f'{season.name} is already the active season'})
+
+    outgoing = Season.query.filter_by(status='active').all()
+    outgoing_ids = [s.id for s in outgoing]
+    # Classes being retired: the outgoing season's live classes, plus NULL-season
+    # legacy rows. The incoming season can't be among outgoing_ids (we returned
+    # above if it was already active), so its classes are never touched.
+    season_clause = (or_(DanceClass.season_id.is_(None), DanceClass.season_id.in_(outgoing_ids))
+                     if outgoing_ids else DanceClass.season_id.is_(None))
+    retiring = DanceClass.query.filter(DanceClass.is_active.is_(True), season_clause).all()
+    retiring_ids = [c.id for c in retiring]
+    if retiring_ids:
+        RecurringCharge.query.filter(
+            RecurringCharge.class_id.in_(retiring_ids),
+            RecurringCharge.is_active.is_(True),
+        ).update({'is_active': False}, synchronize_session=False)
+        ClassEnrollment.query.filter(
+            ClassEnrollment.class_id.in_(retiring_ids),
+            ClassEnrollment.is_active.is_(True),
+        ).update({'is_active': False}, synchronize_session=False)
+        WaitlistEntry.query.filter(
+            WaitlistEntry.class_id.in_(retiring_ids),
+            WaitlistEntry.status == 'waiting',
+        ).update({'status': 'removed'}, synchronize_session=False)
+        for c in retiring:
+            c.is_active = False
+
+    for s in outgoing:
+        s.status = 'archived'
+    season.status = 'active'
+    # If public registration was aimed at this (draft) season, it's now just
+    # the default; clear the override.
+    if Setting.get('registration_season_id', '') == str(season.id):
+        Setting.set('registration_season_id', '')
+    AuditLog.record(current_user.id, 'season.activate',
+                    f'Activated "{season.name}"; archived {len(outgoing)} season(s), '
+                    f'wound down {len(retiring_ids)} class(es)')
+    db.session.commit()
+    return jsonify({'message': f'{season.name} is now the active season',
+                    'classes_wound_down': len(retiring_ids)})
+
+
+@bp.route('/seasons/<int:season_id>', methods=['DELETE'])
+@login_required
+def delete_season(season_id):
+    """Delete a season — drafts only, and only while empty (mis-clicks). A
+    season with classes is history and can only be archived via activation."""
+    err = _admin_only()
+    if err:
+        return err
+    season = Season.query.get_or_404(season_id)
+    if season.status != 'draft':
+        return jsonify({'error': 'Only draft seasons can be deleted'}), 400
+    if season.classes.count():
+        return jsonify({'error': 'Season has classes — move or cancel them first'}), 400
+    if Setting.get('registration_season_id', '') == str(season.id):
+        Setting.set('registration_season_id', '')
+    db.session.delete(season)
+    AuditLog.record(current_user.id, 'season.delete', f'Deleted empty draft season "{season.name}"')
+    db.session.commit()
+    return jsonify({'message': f'{season.name} deleted'})
+
+
 # ── Class endpoints ─────────────────────────────────────────────────
 
 @bp.route('/classes', methods=['GET'])
@@ -498,9 +667,23 @@ def get_classes():
     if err:
         return err
     active_only = request.args.get('active', 'true').lower() == 'true'
-    query = DanceClass.query
-    if active_only:
-        query = query.filter_by(is_active=True)
+    season_param = request.args.get('season_id')
+    if season_param:
+        # Explicit season view (the Classes page's season picker) — shows that
+        # season's classes whether it's draft, active, or archived.
+        sid, serr = _valid_id(season_param)
+        if serr:
+            return serr
+        Season.query.get_or_404(sid)
+        query = DanceClass.query.filter_by(season_id=sid)
+        if active_only:
+            query = query.filter_by(is_active=True)
+    elif active_only:
+        # Default: only classes actually running (active season). Draft-season
+        # classes must not leak into check-in dropdowns and rosters.
+        query = live_class_query()
+    else:
+        query = DanceClass.query
     query = query.order_by(DanceClass.day_of_week, DanceClass.start_time)
     return jsonify({'classes': [class_to_dict(cls) for cls in query.all()]})
 
@@ -558,11 +741,25 @@ def create_class():
     if User.query.get(instructor_id) is None:
         return jsonify({'error': 'instructor not found'}), 404
 
+    # Season: explicit id (the Classes page passes the season being viewed, so
+    # "Add Class" while looking at a draft fall season lands there), defaulting
+    # to the active season.
+    if data.get('season_id'):
+        season_id, snerr = _valid_id(data.get('season_id'))
+        if snerr:
+            return snerr
+        if Season.query.get(season_id) is None:
+            return jsonify({'error': 'season not found'}), 404
+    else:
+        season = active_season()
+        season_id = season.id if season else None
+
     try:
         dance_class = DanceClass(
             name=_clean_str(data['name']),
             description=_clean_str(data.get('description')) or None,
             location_id=location_id,
+            season_id=season_id,
             day_of_week=int(data['day_of_week']),
             start_time=datetime.strptime(data['start_time'], '%H:%M').time(),
             end_time=datetime.strptime(data['end_time'], '%H:%M').time(),
@@ -630,6 +827,15 @@ def update_class(class_id):
         dc.level = _clean_str(data.get('level')) or None
     if 'age_group' in data:
         dc.age_group = _clean_str(data.get('age_group')) or None
+    if data.get('season_id'):
+        # Move a class between seasons (e.g. created in summer by mistake,
+        # belongs to the fall draft).
+        sn_id, snerr = _valid_id(data.get('season_id'))
+        if snerr:
+            return snerr
+        if Season.query.get(sn_id) is None:
+            return jsonify({'error': 'season not found'}), 404
+        dc.season_id = sn_id
     try:
         db.session.commit()
         return jsonify(class_to_dict(dc))
@@ -795,8 +1001,8 @@ def global_search():
         ),
     ).order_by(Student.first_name, Student.last_name).limit(8).all()
     families = Family.query.filter(Family.name.ilike(like)).order_by(Family.name).limit(8).all()
-    classes = DanceClass.query.filter(
-        DanceClass.is_active.is_(True), DanceClass.name.ilike(like)
+    classes = live_class_query().filter(
+        DanceClass.name.ilike(like)
     ).order_by(DanceClass.name).limit(8).all()
     return jsonify({
         'students': [{'id': s.id, 'name': s.full_name, 'url': f'/students/{s.id}/detail'}
@@ -1061,7 +1267,7 @@ def dashboard_stats():
 
     today = date.today()
     total_students = Student.query.filter_by(is_active=True).count()
-    total_classes = DanceClass.query.filter_by(is_active=True).count()
+    total_classes = live_class_query().count()
     todays_attendance = Attendance.query.filter(
         func.date(Attendance.check_in_time) == today
     ).count()
@@ -2538,7 +2744,7 @@ PAYMENT_SETTINGS_KEYS = [
     # Donations / Foundation
     'donations_enabled', 'donations_org_name', 'donations_ein',
     # Self-registration
-    'registration_open', 'registration_message',
+    'registration_open', 'registration_message', 'registration_season_id',
 ]
 
 # Secret settings: encrypted at rest, masked on read
@@ -4641,7 +4847,17 @@ def registration_open_info():
     is_open = Setting.get_bool('registration_open')
     classes = []
     if is_open:
-        for c in DanceClass.query.filter_by(is_active=True).order_by(DanceClass.name).all():
+        # Registration can target a specific season (e.g. open FALL sign-ups
+        # while summer is still the active season). When the setting points at
+        # a real season, list that season's classes — draft included, that's
+        # the point. Otherwise: the live (active-season) schedule.
+        reg_sid = Setting.get('registration_season_id', '')
+        target = Season.query.get(int(reg_sid)) if reg_sid.isdigit() else None
+        if target:
+            reg_classes_query = DanceClass.query.filter_by(season_id=target.id, is_active=True)
+        else:
+            reg_classes_query = live_class_query()
+        for c in reg_classes_query.order_by(DanceClass.name).all():
             enrolled = c.enrolled_students_count
             classes.append({
                 'id': c.id, 'name': c.name, 'day_name': c.day_name,
@@ -5552,7 +5768,7 @@ def analytics_retention():
 
     # Students per class (top 10 active classes by enrollment)
     per_class = []
-    for cls in DanceClass.query.filter_by(is_active=True).all():
+    for cls in live_class_query().all():
         per_class.append({'name': cls.name, 'count': cls.enrolled_students_count})
     per_class = sorted(per_class, key=lambda x: -x['count'])[:10]
 

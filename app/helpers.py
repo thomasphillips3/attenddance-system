@@ -265,8 +265,39 @@ def student_to_dict(student) -> dict:
     }
 
 
+def active_season():
+    """The single active Season, or None (only possible before the seasons
+    bootstrap migration has run)."""
+    from app.models import Season
+    return Season.query.filter_by(status='active').first()
+
+
+def live_class_query():
+    """DanceClass query restricted to the classes that are actually running:
+    is_active AND in the active season.
+
+    Every operational view (dashboards, check-in, dropdowns, public
+    registration default) must use this instead of filter_by(is_active=True).
+    A draft (future) season is a staging area — its classes are created
+    is_active=True so they go live at activation, but they must not surface
+    anywhere parents or teachers operate until then. season_id NULL rows
+    predate the seasons feature and count as the active season."""
+    from sqlalchemy import or_
+    from app.models import DanceClass
+    q = DanceClass.query.filter(DanceClass.is_active.is_(True))
+    season = active_season()
+    if season:
+        return q.filter(or_(DanceClass.season_id.is_(None),
+                            DanceClass.season_id == season.id))
+    # No active season (pre-migration edge): only legacy NULL-season rows are
+    # live — never leak draft/archived-season classes.
+    return q.filter(DanceClass.season_id.is_(None))
+
+
 def class_to_dict(dance_class) -> dict:
     return {
+        'season_id': dance_class.season_id,
+        'season_name': dance_class.season.name if dance_class.season else None,
         'id': dance_class.id,
         'name': dance_class.name,
         'description': dance_class.description,

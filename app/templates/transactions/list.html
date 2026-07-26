@@ -184,7 +184,7 @@
                         <select id="bulk-class" required class="{{ inp }}">
                             <option value="">Select class…</option>
                             {% for c in classes %}
-                            <option value="{{ c.id }}">{{ c.name }} ({{ c.day_name }} {{ c.start_time.strftime('%I:%M %p') }})</option>
+                            <option value="{{ c.id }}">{{ c.name }} ({{ c.day_name }} {{ c.start_time.strftime('%I:%M %p') }}){% if c.season and c.season.status == 'draft' %} — {{ c.season.name }} (upcoming){% endif %}</option>
                             {% endfor %}
                         </select>
                     </div>
@@ -237,7 +237,7 @@
                         <select id="rc-class" required class="{{ inp }}">
                             <option value="">Select class…</option>
                             {% for c in classes %}
-                            <option value="{{ c.id }}">{{ c.name }} ({{ c.day_name }} {{ c.start_time.strftime('%I:%M %p') }})</option>
+                            <option value="{{ c.id }}">{{ c.name }} ({{ c.day_name }} {{ c.start_time.strftime('%I:%M %p') }}){% if c.season and c.season.status == 'draft' %} — {{ c.season.name }} (upcoming){% endif %}</option>
                             {% endfor %}
                         </select>
                     </div>

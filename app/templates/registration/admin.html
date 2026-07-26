@@ -13,6 +13,10 @@
             <div class="w-11 h-6 bg-surface-2 peer-focus:ring-4 peer-focus:ring-primary-200 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary-600"></div>
             <span class="ml-2 text-sm text-ink-2">Registration open</span>
         </label>
+        <label class="flex items-center gap-2 text-sm text-ink-2">
+            <span>for</span>
+            <select id="reg-season" onchange="saveRegSeason()" class="bg-surface border border-line-2 rounded-xl px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary-200"></select>
+        </label>
     </div>
 </div>
 
@@ -35,6 +39,21 @@ function esc(s){return (s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>
 async function loadToggle(){
     const s = (await (await fetch('/api/settings/payments')).json()).settings;
     document.getElementById('reg-open').checked = s.registration_open === '1';
+    // Which season the public form enrolls into. Default = whatever season is
+    // live; picking a draft season is how fall sign-ups open during summer.
+    const sd = await (await fetch('/api/seasons')).json();
+    const sel = document.getElementById('reg-season');
+    const LABELS = { active: 'current', draft: 'upcoming', archived: 'archived' };
+    sel.innerHTML = '<option value="">' + esc((sd.seasons.find(x=>x.status==='active')||{name:'current season'}).name) + ' (default)</option>' +
+        sd.seasons.filter(x=>x.status==='draft').map(x=>`<option value="${x.id}">${esc(x.name)} (${LABELS[x.status]})</option>`).join('');
+    sel.value = sd.registration_season_id ? String(sd.registration_season_id) : '';
+    // A stale setting (season since activated/deleted) falls back to default.
+    if (sel.value !== String(sd.registration_season_id || '')) sel.value = '';
+}
+async function saveRegSeason(){
+    const v = document.getElementById('reg-season').value;
+    const r = await fetch('/api/settings/payments',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({registration_season_id: v})});
+    msg(r.ok?'Registration season updated':'Error', r.ok);
 }
 async function toggleOpen(){
     const open = document.getElementById('reg-open').checked;

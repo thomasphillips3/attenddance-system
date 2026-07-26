@@ -8,7 +8,7 @@ from flask_login import current_user, login_required
 from sqlalchemy import desc, func
 
 from app import db
-from app.helpers import calc_balance
+from app.helpers import calc_balance, live_class_query
 from app.main import bp
 from app.models import (
     Attendance,
@@ -64,7 +64,7 @@ def dashboard():
     current_weekday = today.weekday()
 
     total_students = Student.query.filter_by(is_active=True).count()
-    total_classes = DanceClass.query.filter_by(is_active=True).count()
+    total_classes = live_class_query().count()
     todays_attendance = Attendance.query.filter(
         func.date(Attendance.check_in_time) == today
     ).count()
@@ -72,8 +72,8 @@ def dashboard():
         is_active=True, rfid_uid=None
     ).count()
 
-    todays_classes = DanceClass.query.filter_by(
-        is_active=True, day_of_week=current_weekday
+    todays_classes = live_class_query().filter_by(
+        day_of_week=current_weekday
     ).order_by(DanceClass.start_time).all()
 
     from app.models import RFIDLog
@@ -169,7 +169,14 @@ def parent_dashboard():
 @admin_required
 def transactions():
     students = Student.query.filter_by(is_active=True).order_by(Student.last_name, Student.first_name).all()
-    classes = DanceClass.query.filter_by(is_active=True).order_by(DanceClass.name).all()
+    # Billing config includes DRAFT-season classes on purpose: fall tuition
+    # rules get set up while summer runs. The season gate in
+    # _process_recurring_charges keeps them from billing until activation.
+    from app.models import Season
+    classes = live_class_query().order_by(DanceClass.name).all()
+    classes += (DanceClass.query.join(Season, DanceClass.season_id == Season.id)
+                .filter(DanceClass.is_active.is_(True), Season.status == 'draft')
+                .order_by(DanceClass.name).all())
     return render_template('transactions/list.html', students=students, classes=classes)
 
 
@@ -218,7 +225,7 @@ def family_ledger(family_id):
 @staff_required
 def messages_page():
     students = Student.query.filter_by(is_active=True).order_by(Student.last_name).all()
-    classes = DanceClass.query.filter_by(is_active=True).order_by(DanceClass.name).all()
+    classes = live_class_query().order_by(DanceClass.name).all()
     return render_template('messages/list.html', students=students, classes=classes)
 
 
@@ -243,10 +250,10 @@ def acknowledge_rules(student_id):
 def take_attendance():
     today = date.today()
     current_weekday = today.weekday()
-    todays_classes = DanceClass.query.filter_by(
-        is_active=True, day_of_week=current_weekday
+    todays_classes = live_class_query().filter_by(
+        day_of_week=current_weekday
     ).order_by(DanceClass.start_time).all()
-    all_classes = DanceClass.query.filter_by(is_active=True).order_by(
+    all_classes = live_class_query().order_by(
         DanceClass.day_of_week, DanceClass.start_time
     ).all()
     return render_template('attendance/take_pick.html',
@@ -363,7 +370,7 @@ def company_page():
 @admin_required
 def recital_page():
     students = Student.query.filter_by(is_active=True).order_by(Student.last_name, Student.first_name).all()
-    classes = DanceClass.query.filter_by(is_active=True).order_by(DanceClass.name).all()
+    classes = live_class_query().order_by(DanceClass.name).all()
     return render_template('recital/manage.html', students=students, classes=classes)
 
 
@@ -373,7 +380,7 @@ def recital_hub_page():
     """The per-year recital command center — show order, music/choreo, awards, booklet."""
     from app.models import PerformanceGroup
     students = Student.query.filter_by(is_active=True).order_by(Student.last_name, Student.first_name).all()
-    classes = DanceClass.query.filter_by(is_active=True).order_by(DanceClass.name).all()
+    classes = live_class_query().order_by(DanceClass.name).all()
     groups = PerformanceGroup.query.filter_by(is_active=True).order_by(PerformanceGroup.name).all()
     return render_template('recital/hub.html', students=students, classes=classes, groups=groups)
 
@@ -423,7 +430,7 @@ def calendar_page():
 @admin_required
 def skills_page():
     students = Student.query.filter_by(is_active=True).order_by(Student.last_name, Student.first_name).all()
-    classes = DanceClass.query.filter_by(is_active=True).order_by(DanceClass.name).all()
+    classes = live_class_query().order_by(DanceClass.name).all()
     return render_template('skills/manage.html', students=students, classes=classes)
 
 
@@ -443,7 +450,7 @@ def student_certificate(student_id):
 @admin_required
 def makeups_page():
     students = Student.query.filter_by(is_active=True).order_by(Student.last_name, Student.first_name).all()
-    classes = DanceClass.query.filter_by(is_active=True).order_by(DanceClass.name).all()
+    classes = live_class_query().order_by(DanceClass.name).all()
     return render_template('makeups/manage.html', students=students, classes=classes)
 
 

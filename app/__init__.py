@@ -48,7 +48,7 @@ def _process_recurring_charges(today=None):
     import calendar
     from datetime import date
 
-    from app.models import ClassEnrollment, RecurringCharge, Transaction
+    from app.models import ClassEnrollment, DanceClass, RecurringCharge, Season, Transaction
 
     if today is None:
         today = date.today()
@@ -56,7 +56,17 @@ def _process_recurring_charges(today=None):
     last_day = calendar.monthrange(today.year, today.month)[1]
     actives = RecurringCharge.query.filter_by(is_active=True).all()
 
+    # Season gate: a charge on a draft (future) or archived season's class must
+    # not bill — fall tuition configured in July would otherwise fire on the
+    # next boot. NULL season (pre-seasons rows) bills normally.
+    season_status = dict(
+        db.session.query(DanceClass.id, Season.status)
+        .outerjoin(Season, DanceClass.season_id == Season.id).all())
+
     for rc in actives:
+        status = season_status.get(rc.class_id)
+        if status is not None and status != 'active':
+            continue
         # Clamp the due day to the current month's length so a charge set for the
         # 29th/30th/31st still fires (on the last day) in shorter months instead
         # of being silently skipped — otherwise the studio loses that tuition.

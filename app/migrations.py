@@ -32,6 +32,7 @@ TRANSACTION_COLUMNS = [
 
 CLASS_COLUMNS = [
     ('location_id', 'INTEGER'),
+    ('season_id', 'INTEGER'),
 ]
 
 PERFORMANCE_COLUMNS = [
@@ -73,6 +74,27 @@ def _enforce_attendance_uniqueness(conn):
         ' ON attendance(student_id, class_id, date(check_in_time))'))
 
 
+def _seed_default_season(conn, inspector):
+    """One-time seasons bootstrap: when the seasons table is empty, create an
+    active 'Current Season' and adopt every existing class into it. Keeps the
+    invariant that exactly one season is active and every class has a season,
+    without changing anything user-visible (the studio can rename it from the
+    Classes page). Idempotent: a non-empty seasons table means this already ran
+    (or the studio made its own), so it never touches data again."""
+    if 'seasons' not in inspector.get_table_names():
+        return
+    count = conn.execute(sqlalchemy.text('SELECT COUNT(*) FROM seasons')).scalar()
+    if count:
+        return
+    conn.execute(sqlalchemy.text(
+        "INSERT INTO seasons (name, status, created_at) "
+        "VALUES ('Current Season', 'active', CURRENT_TIMESTAMP)"))
+    season_id = conn.execute(sqlalchemy.text(
+        "SELECT id FROM seasons WHERE status='active' ORDER BY id LIMIT 1")).scalar()
+    conn.execute(sqlalchemy.text(
+        'UPDATE classes SET season_id = :sid WHERE season_id IS NULL'), {'sid': season_id})
+
+
 def run_migrations(db):
     with db.engine.connect() as conn:
         inspector = sqlalchemy.inspect(db.engine)
@@ -88,4 +110,5 @@ def run_migrations(db):
             _add_missing_columns(conn, inspector, 'performances', PERFORMANCE_COLUMNS)
         if 'attendance' in inspector.get_table_names():
             _enforce_attendance_uniqueness(conn)
+        _seed_default_season(conn, inspector)
         conn.commit()
