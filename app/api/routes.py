@@ -1382,32 +1382,27 @@ def export_aging_csv():
     return _csv_response(f'aging-{as_of}.csv', header, body)
 
 
-@bp.route('/admin/backup', methods=['GET'])
-@login_required
-def download_backup():
-    """Download a complete, consistent snapshot of the database (admin only).
+def _sqlite_db_path():
+    """On-disk path of the file-backed SQLite DB, or None if the configured DB
+    isn't a usable file (`:memory:` or a non-sqlite URL) and so can't be
+    snapshotted."""
+    from sqlalchemy.engine import make_url
+    uri = current_app.config.get('SQLALCHEMY_DATABASE_URI', '')
+    if not uri.startswith('sqlite'):
+        return None
+    db_path = make_url(uri).database
+    if not db_path or db_path == ':memory:':
+        return None
+    return db_path
 
-    The whole studio lives in one SQLite file on a Fly volume; this is the
-    studio's disaster-recovery + data-portability safety net — an owner can pull
-    a full backup anytime and store it off-Fly, or take their data if they ever
-    leave. Uses SQLite's online backup API for a point-in-time consistent copy
-    (a raw file copy could be torn mid-write); the snapshot is read fully into
-    memory (a studio DB is a few MB) and the temp file is always cleaned up."""
+
+def _sqlite_snapshot_bytes(db_path):
+    """A consistent point-in-time copy of the SQLite DB as a BytesIO, via
+    SQLite's online backup API — a raw file copy could be torn mid-write. The
+    studio DB is a few MB, so reading it fully into memory is fine; the temp
+    file is always cleaned up."""
     import sqlite3
     from io import BytesIO
-    from sqlalchemy.engine import make_url
-
-    err = _admin_only()
-    if err:
-        return err
-
-    uri = current_app.config.get('SQLALCHEMY_DATABASE_URI', '')
-    db_path = make_url(uri).database if uri else None
-    if not uri.startswith('sqlite') or not db_path or db_path == ':memory:':
-        return jsonify({'error': 'Backup is only supported for a file-backed SQLite database'}), 400
-    if not os.path.exists(db_path):
-        return jsonify({'error': 'Database file not found'}), 404
-
     tmp = tempfile.NamedTemporaryFile(suffix='.db', delete=False)
     tmp.close()
     src = dst = None
@@ -1419,7 +1414,7 @@ def download_backup():
         dst.close()
         dst = None
         with open(tmp.name, 'rb') as fh:
-            payload = BytesIO(fh.read())
+            return BytesIO(fh.read())
     finally:
         if src is not None:
             src.close()
@@ -1430,9 +1425,22 @@ def download_backup():
         except OSError:
             pass
 
+
+def _backup_response(actor_user_id, source_label):
+    """Shared body for the two backup routes: snapshot the DB, record a
+    best-effort audit entry, and stream the file. `actor_user_id` is None for
+    the unattended cron path (audit_logs.user_id is nullable)."""
+    db_path = _sqlite_db_path()
+    if not db_path:
+        return jsonify({'error': 'Backup is only supported for a file-backed SQLite database'}), 400
+    if not os.path.exists(db_path):
+        return jsonify({'error': 'Database file not found'}), 404
+
+    payload = _sqlite_snapshot_bytes(db_path)
+
     try:
-        AuditLog.record(current_user.id, 'backup_downloaded',
-                        f'{payload.getbuffer().nbytes} bytes')
+        AuditLog.record(actor_user_id, 'backup_downloaded',
+                        f'{source_label}: {payload.getbuffer().nbytes} bytes')
         db.session.commit()
     except Exception:  # audit is best-effort; never block the backup
         db.session.rollback()
@@ -1440,6 +1448,21 @@ def download_backup():
     payload.seek(0)
     return send_file(payload, mimetype='application/x-sqlite3', as_attachment=True,
                      download_name=f'attendance-backup-{date.today().isoformat()}.db')
+
+
+@bp.route('/admin/backup', methods=['GET'])
+@login_required
+def download_backup():
+    """Download a complete, consistent snapshot of the database (admin only).
+
+    The whole studio lives in one SQLite file on a Fly volume; this is the
+    studio's disaster-recovery + data-portability safety net — an owner can pull
+    a full backup anytime and store it off-Fly, or take their data if they ever
+    leave. The nightly automated backup uses the token-protected sibling below."""
+    err = _admin_only()
+    if err:
+        return err
+    return _backup_response(current_user.id, 'admin')
 
 
 def _month_buckets(n):
@@ -4306,15 +4329,21 @@ def test_sms_connection():
     return jsonify({'ok': ok, 'message': message}), (200 if ok else 400)
 
 
+def _cron_authorized():
+    """True if the request carries the valid cron token (Setting 'cron_token',
+    config CRON_TOKEN, or env CRON_TOKEN). Constant-time compare to avoid
+    leaking the token via response timing; an unset token always rejects rather
+    than accepting an empty one."""
+    token = Setting.get('cron_token', '') or current_app.config.get('CRON_TOKEN') or os.environ.get('CRON_TOKEN', '')
+    provided = request.args.get('token') or request.headers.get('X-Cron-Token', '')
+    return bool(token) and secrets.compare_digest(str(provided), str(token))
+
+
 @bp.route('/cron/run', methods=['POST'])
 def cron_run():
     """Token-protected endpoint for external schedulers to run recurring charges
     and auto-reminders. Token from Setting 'cron_token' or env CRON_TOKEN."""
-    token = Setting.get('cron_token', '') or current_app.config.get('CRON_TOKEN') or os.environ.get('CRON_TOKEN', '')
-    provided = request.args.get('token') or request.headers.get('X-Cron-Token', '')
-    # Constant-time compare to avoid leaking the token via response timing; an
-    # unset token (`not token`) always rejects rather than accepting an empty one.
-    if not token or not secrets.compare_digest(str(provided), str(token)):
+    if not _cron_authorized():
         return jsonify({'error': 'Invalid or missing cron token'}), 403
     from app import _process_auto_reminders, _process_recurring_charges
     ran = []
@@ -4327,6 +4356,18 @@ def cron_run():
             db.session.rollback()
             logger.exception("Cron: %s failed", name)
     return jsonify({'status': 'ok', 'ran': ran})
+
+
+@bp.route('/cron/backup', methods=['GET'])
+def cron_backup():
+    """Token-protected DB snapshot for an unattended scheduler (the nightly S3
+    backup runs off-box because the 256MB Fly machine is OOM-sensitive and
+    auto-sleeps — this HTTPS hit wakes it, GitHub Actions streams the file and
+    uploads it). Same consistent snapshot as /admin/backup, but authenticated
+    with the cron token instead of an admin session."""
+    if not _cron_authorized():
+        return jsonify({'error': 'Invalid or missing cron token'}), 403
+    return _backup_response(None, 'cron')
 
 
 # Serializes concurrent late-fee runs. The per-student "already charged this

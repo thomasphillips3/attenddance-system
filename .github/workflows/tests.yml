@@ -34,3 +34,8 @@ jobs:
         env:
           RFID_ENABLED: "false"
         run: python tests/test_billing.py
+
+      - name: Backup endpoint harness
+        env:
+          RFID_ENABLED: "false"
+        run: python tests/test_backup.py

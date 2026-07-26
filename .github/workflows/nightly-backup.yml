@@ -1,0 +1,70 @@
+name: nightly-backup
+
+# Pulls a consistent SQLite snapshot from the live app each night and stores it
+# in the private, versioned S3 bucket (see backups/setup-s3.sh + backups/README.md).
+#
+# The backup runs OFF the Fly box on purpose: the machine is 256MB and
+# OOM-sensitive, and it auto-sleeps (min_machines_running = 0). This job's one
+# HTTPS request wakes it, streams the snapshot, and uploads from the runner —
+# no sidecar, no boto3, no memory pressure on the app.
+#
+# Secrets required (Settings -> Secrets and variables -> Actions):
+#   BACKUP_URL                    https://<app>/api/cron/backup
+#   CRON_TOKEN                    same value as the app's CRON_TOKEN
+#   BACKUP_AWS_ACCESS_KEY_ID      scoped IAM user, PutObject to db/ only
+#   BACKUP_AWS_SECRET_ACCESS_KEY
+
+on:
+  schedule:
+    - cron: "0 7 * * *"   # 07:00 UTC ~= 3am US Eastern (studio is in Michigan)
+  workflow_dispatch: {}   # allow an on-demand "run backup now" from the Actions tab
+
+concurrency:
+  group: nightly-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Pull a consistent snapshot from the app
+        env:
+          BACKUP_URL: ${{ secrets.BACKUP_URL }}
+          CRON_TOKEN: ${{ secrets.CRON_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${BACKUP_URL}" ] || [ -z "${CRON_TOKEN}" ]; then
+            echo "BACKUP_URL and CRON_TOKEN secrets must be set."; exit 1
+          fi
+          # --fail: a 4xx/5xx (e.g. bad token) errors out instead of saving the
+          # error page as "backup.db". Retry to absorb the cold-start wake-up.
+          curl -fsS --max-time 120 --retry 3 --retry-delay 10 --retry-connrefused \
+            -H "X-Cron-Token: ${CRON_TOKEN}" \
+            -o backup.db \
+            "${BACKUP_URL}"
+
+      - name: Verify it is a real, intact SQLite database
+        run: |
+          set -euo pipefail
+          # Never upload a truncated file or an HTML error page.
+          head -c 16 backup.db | grep -q "SQLite format 3" \
+            || { echo "Downloaded file is not a SQLite database"; head -c 200 backup.db; exit 1; }
+          sudo apt-get update -qq && sudo apt-get install -y -qq sqlite3
+          check="$(sqlite3 backup.db 'PRAGMA integrity_check;')"
+          test "${check}" = "ok" || { echo "integrity_check failed: ${check}"; exit 1; }
+          # Sanity: the expected schema is present and populated.
+          rows="$(sqlite3 backup.db 'SELECT count(*) FROM users;')"
+          test "${rows}" -ge 1 || { echo "no users in snapshot — refusing to upload"; exit 1; }
+          echo "OK: intact SQLite, ${rows} user row(s), $(du -h backup.db | cut -f1)"
+
+      - name: Upload to S3 (timestamped key, SSE)
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.BACKUP_AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.BACKUP_AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: us-east-1
+          BUCKET: attenddance-backups
+        run: |
+          set -euo pipefail
+          KEY="db/attendance-$(date -u +%Y-%m-%d).db"
+          aws s3 cp backup.db "s3://${BUCKET}/${KEY}" --sse AES256 --only-show-errors
+          echo "Uploaded s3://${BUCKET}/${KEY}"
