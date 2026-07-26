@@ -12,7 +12,7 @@ PROFILE="attenddance-checklist-deploy"
 # an env var so the specific deployment target isn't hardcoded into the repo:
 #   APPS_SCRIPT_URL="https://script.google.com/.../exec" ./deploy.sh
 # Falls back to the current studio deployment if unset.
-APPS_SCRIPT_URL="${APPS_SCRIPT_URL:-https://script.google.com/macros/s/AKfycbzLEIPL6hnEkghLoCvY-3S5kRJOZqW6KTesvlBLs0ZWmhDhkWYnJYvF8WUkgXwf3L4VRA/exec}"
+APPS_SCRIPT_URL="${APPS_SCRIPT_URL:-https://script.google.com/macros/s/AKfycbydlmrJHWPAB2_RIqOf18kPUocf3XfHkCangINlvlxzJCilZfIfyu6ihYZI8sJfqzRYHQ/exec}"
 
 cd "$(dirname "$0")"
 
