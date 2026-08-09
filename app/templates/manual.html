@@ -1,0 +1,718 @@
+{% extends "base.html" %}
+
+{# Studio operations manual. Everything here is written against what the app
+   actually does - if a behavior changes, this page has to change with it. #}
+
+{% set h2 = "font-display text-2xl text-ink mt-2 mb-3 scroll-mt-24" %}
+{% set h3 = "font-bold text-ink text-base mt-6 mb-2" %}
+{% set p = "text-sm text-ink-2 leading-relaxed mb-3" %}
+{% set ol = "text-sm text-ink-2 leading-relaxed mb-3 list-decimal pl-5 space-y-1.5" %}
+{% set ul = "text-sm text-ink-2 leading-relaxed mb-3 list-disc pl-5 space-y-1.5" %}
+{% set card = "bg-surface border border-line rounded-2xl shadow-soft p-6 mb-5 man-sec" %}
+{% set kbd = "inline-block bg-surface-2 border border-line-2 rounded px-1.5 py-0.5 text-xs font-bold text-ink" %}
+
+{% macro warn(title) %}
+<div class="rounded-xl bg-gold-300/40 border border-gold-400/50 p-3.5 mb-3">
+  <p class="text-sm font-bold text-gold-ink mb-1"><i class="fas fa-triangle-exclamation mr-1.5"></i>{{ title }}</p>
+  <div class="text-sm text-gold-ink/90 leading-relaxed">{{ caller() }}</div>
+</div>
+{% endmacro %}
+
+{% macro danger(title) %}
+<div class="rounded-xl bg-danger/10 border border-danger/30 p-3.5 mb-3">
+  <p class="text-sm font-bold text-danger mb-1"><i class="fas fa-circle-exclamation mr-1.5"></i>{{ title }}</p>
+  <div class="text-sm text-ink-2 leading-relaxed">{{ caller() }}</div>
+</div>
+{% endmacro %}
+
+{% macro tip(title) %}
+<div class="rounded-xl bg-info/10 border border-info/30 p-3.5 mb-3">
+  <p class="text-sm font-bold text-info mb-1"><i class="fas fa-lightbulb mr-1.5"></i>{{ title }}</p>
+  <div class="text-sm text-ink-2 leading-relaxed">{{ caller() }}</div>
+</div>
+{% endmacro %}
+
+{% block content %}
+<div class="flex flex-wrap items-end justify-between gap-3 mb-6 man-head">
+  <div>
+    <div class="text-[11px] font-bold uppercase tracking-[.09em] text-primary-600">Help</div>
+    <h1 class="font-display text-3xl text-ink leading-tight mt-1">User Manual</h1>
+    <p class="mt-1 text-sm text-ink-2">How to run the studio in AttenDANCE. Written for LaShelle's School of Dance.</p>
+  </div>
+  <div class="flex items-center gap-2">
+    <input id="man-search" type="search" placeholder="Search the manual…"
+           class="bg-surface border border-line-2 rounded-xl px-3 py-2 text-sm w-56 focus:outline-none focus:ring-2 focus:ring-primary-200 focus:border-primary-400">
+    <button onclick="window.print()" class="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-line-2 text-sm font-bold text-ink-2 hover:border-primary-300 hover:text-primary-700">
+      <i class="fas fa-print"></i>Print
+    </button>
+  </div>
+</div>
+
+<div id="man-noresults" class="hidden text-center py-12 text-ink-3 text-sm">
+  Nothing matches that. <button onclick="clearManSearch()" class="text-primary-600 font-bold hover:underline">Clear the search</button>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+  <!-- Table of contents -->
+  <aside class="lg:col-span-3 man-toc">
+    <nav class="lg:sticky lg:top-24 bg-surface border border-line rounded-2xl shadow-soft p-4 text-sm">
+      <p class="text-[11px] font-bold uppercase tracking-[.09em] text-ink-3 mb-2">Contents</p>
+      <ol class="space-y-1.5 text-ink-2">
+        <li><a href="#start" class="hover:text-primary-700">1. Start here</a></li>
+        <li><a href="#seasons" class="hover:text-primary-700">2. Seasons</a></li>
+        <li><a href="#classes" class="hover:text-primary-700">3. Classes &amp; schedule</a></li>
+        <li><a href="#students" class="hover:text-primary-700">4. Students &amp; families</a></li>
+        <li><a href="#enrollment" class="hover:text-primary-700">5. Enrollment &amp; parent portal</a></li>
+        <li><a href="#attendance" class="hover:text-primary-700">6. Attendance &amp; makeups</a></li>
+        <li><a href="#money" class="hover:text-primary-700">7. Money</a></li>
+        <li><a href="#messages" class="hover:text-primary-700">8. Messages &amp; reminders</a></li>
+        <li><a href="#paperwork" class="hover:text-primary-700">9. Forms, waivers &amp; rules</a></li>
+        <li><a href="#recital" class="hover:text-primary-700">10. Recital &amp; costumes</a></li>
+        <li><a href="#company" class="hover:text-primary-700">11. Company &amp; auditions</a></li>
+        <li><a href="#staff" class="hover:text-primary-700">12. Staff &amp; time clock</a></li>
+        <li><a href="#reports" class="hover:text-primary-700">13. Reports &amp; donations</a></li>
+        <li><a href="#data" class="hover:text-primary-700">14. Your data &amp; backups</a></li>
+        <li><a href="#gotchas" class="hover:text-primary-700">15. If something looks wrong</a></li>
+      </ol>
+    </nav>
+  </aside>
+
+  <div class="lg:col-span-9">
+
+  <!-- ============ 1. START HERE ============ -->
+  <h2 id="start" class="{{ h2 }}">1. Start here</h2>
+
+  <div class="{{ card }}">
+    <h3 class="{{ h3 }}">What this system does</h3>
+    <p class="{{ p }}">AttenDANCE is the studio's own system for enrollment, attendance, tuition, parent
+    communication, recital planning, and company management. It replaces what the studio was paying
+    Jackrabbit for. Everything lives at <strong>attenddance.fly.dev</strong> and works on a phone,
+    tablet, or laptop - no app to install.</p>
+
+    <h3 class="{{ h3 }}">Who can do what</h3>
+    <p class="{{ p }}">There are three kinds of accounts, and the menu changes depending on which one
+    you're signed in as.</p>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm mb-3">
+        <thead class="bg-surface-2"><tr class="text-left">
+          <th class="px-3 py-2 font-bold text-ink rounded-l-lg">Role</th>
+          <th class="px-3 py-2 font-bold text-ink">Can do</th>
+          <th class="px-3 py-2 font-bold text-ink rounded-r-lg">Cannot do</th>
+        </tr></thead>
+        <tbody class="text-ink-2">
+          <tr class="border-b border-line"><td class="px-3 py-2.5 font-bold">Admin</td>
+            <td class="px-3 py-2.5">Everything: money, students, staff, settings, recital, company</td>
+            <td class="px-3 py-2.5">-</td></tr>
+          <tr class="border-b border-line"><td class="px-3 py-2.5 font-bold">Teacher</td>
+            <td class="px-3 py-2.5">Take attendance, view students and classes, view families (no money), send messages to their classes, edit the recital show order and cast, clock in and out</td>
+            <td class="px-3 py-2.5">Anything to do with money, adding or editing students, settings, staff</td></tr>
+          <tr><td class="px-3 py-2.5 font-bold">Parent</td>
+            <td class="px-3 py-2.5">See only their own dancers: balance, attendance, pay, sign forms, initial rules, request makeups, sign up for auditions</td>
+            <td class="px-3 py-2.5">See anyone else's child, or any staff page</td></tr>
+        </tbody>
+      </table>
+    </div>
+    {% call tip("Give people the smallest role that works") %}
+      A teacher account genuinely cannot see balances or edit the roster, so handing one to a new
+      instructor is safe. Only give someone Admin if they need to touch money or settings.
+    {% endcall %}
+
+    <h3 class="{{ h3 }}">Signing in and your password</h3>
+    <ol class="{{ ol }}">
+      <li>Go to <strong>attenddance.fly.dev</strong> and sign in with your username and password.</li>
+      <li>To change your own password: click your name (top right) then <strong>Your profile</strong>.</li>
+      <li>Forgot it? Use <strong>Forgot your password?</strong> on the sign-in page. It emails you a link that works for one hour.</li>
+    </ol>
+  </div>
+
+  <!-- ============ 2. SEASONS ============ -->
+  <h2 id="seasons" class="{{ h2 }}">2. Seasons</h2>
+
+  <div class="{{ card }}">
+    <p class="{{ p }}">A <strong>season</strong> is a session of the year: Fall 2026, Summer 2027, and so
+    on. This is what lets you build next season's whole schedule while the current one is still running,
+    without parents or teachers seeing it early and without anybody getting billed early.</p>
+
+    <p class="{{ p }}">A season is always in one of three states:</p>
+    <ul class="{{ ul }}">
+      <li><strong>Active</strong> - the season running right now. Exactly one season is active at a time. This is what parents, teachers, and check-in see.</li>
+      <li><strong>Upcoming (draft)</strong> - a staging area you're building. Invisible to everyone but admins. Nothing in it bills.</li>
+      <li><strong>Archived</strong> - a finished season, kept as history.</li>
+    </ul>
+
+    <h3 class="{{ h3 }}">Building next season while this one runs</h3>
+    <ol class="{{ ol }}">
+      <li>Go to <strong>Classes</strong>. At the top there's a season bar with a dropdown.</li>
+      <li>Click <strong>New Season</strong>, name it (for example "Fall 2026"), optionally set start and end dates, and create it. The page switches you into the new season automatically.</li>
+      <li>While that season is selected in the dropdown, click <strong>Add Class</strong> for each class. Every class you add lands in the season you're viewing.</li>
+      <li>Set up its tuition too if you want (see <a href="#autobilling" class="text-primary-600 hover:underline">Auto-billing</a>). Draft classes appear in the billing dropdowns marked "(upcoming)" and will not charge anyone.</li>
+      <li>Switch the dropdown back to the active season any time to get back to what's live today.</li>
+    </ol>
+
+    <h3 class="{{ h3 }}">Turning the new season on</h3>
+    <p class="{{ p }}">When the new session actually starts, select it in the dropdown and click
+    <strong>Make This the Active Season</strong>.</p>
+    {% call warn("Activating winds down the old season automatically") %}
+      The season you're leaving gets archived, and all of its classes are cancelled the same way the
+      <strong>Cancel Class</strong> button does it: auto-billing for those classes stops, enrollments
+      close, and waitlists clear. <strong>Past attendance and everyone's balances are kept.</strong>
+      If a class genuinely runs across both seasons, add it to the new season too - it will not carry
+      itself over.
+    {% endcall %}
+
+    <h3 class="{{ h3 }}">Opening registration for next season early</h3>
+    <p class="{{ p }}">You can take fall sign-ups while summer is still running. Go to
+    <strong>Enrollment</strong>. Next to the "Registration open" switch there's a
+    <strong>for</strong> dropdown - pick the upcoming season. The public sign-up link will then show
+    only that season's classes.</p>
+  </div>
+
+  <!-- ============ 3. CLASSES ============ -->
+  <h2 id="classes" class="{{ h2 }}">3. Classes &amp; schedule</h2>
+
+  <div class="{{ card }}">
+    <h3 class="{{ h3 }}">Adding and editing a class</h3>
+    <p class="{{ p }}"><strong>Classes</strong> in the menu, then <strong>Add Class</strong>. You set the
+    name, day, start and end time, level, location, instructor, and maximum number of students. The
+    maximum is enforced - once a class is full, new sign-ups go to a waitlist instead.</p>
+    <p class="{{ p }}">Use <strong>Edit</strong> on a class card to change any of that later, including
+    mid-season. <strong>Manage Students</strong> on the card is where you add or remove dancers.</p>
+
+    <h3 class="{{ h3 }}">Cancelling a class</h3>
+    {% call warn("Cancel Class does more than hide it") %}
+      It stops that class's auto-billing so families don't keep getting charged, removes it from
+      dancers' class lists, and clears its waitlist. Past attendance and past charges stay on the
+      books. Use this when a class stops running - it is the right button, but it is not a quiet one.
+    {% endcall %}
+
+    <h3 class="{{ h3 }}">Calendar</h3>
+    <p class="{{ p }}"><strong>Calendar</strong> shows the whole week laid out by day and time. It's the
+    fastest way to spot a double-booking or an empty evening.</p>
+
+    <h3 class="{{ h3 }}">Locations</h3>
+    <p class="{{ p }}"><strong>Locations</strong> is where you set up the community centers and rooms
+    you teach in - name, address, phone, and notes (parking, door codes, hours). Once a location
+    exists you can pick it on any class.</p>
+    {% call danger("Deactivating a location cannot be undone from the app") %}
+      There's no "show inactive" list and no reactivate button, so a deactivated location is gone from
+      the screen for good. The app also won't stop you deactivating one that still has classes in it -
+      check the "N active classes" count on the card first.
+    {% endcall %}
+  </div>
+
+  <!-- ============ 4. STUDENTS ============ -->
+  <h2 id="students" class="{{ h2 }}">4. Students &amp; families</h2>
+
+  <div class="{{ card }}">
+    <h3 class="{{ h3 }}">Adding a dancer</h3>
+    <p class="{{ p }}"><strong>Students</strong> then <strong>Add Student</strong> (admins only). The
+    form is long on purpose - it holds everything you'd otherwise keep on paper:</p>
+    <ul class="{{ ul }}">
+      <li><strong>Basic info</strong> - name, birthday, school, grade</li>
+      <li><strong>Parent and emergency contact</strong> - the parent email here is the address used for receipts, reminders, and message blasts, so it's worth getting right</li>
+      <li><strong>Family</strong> - links siblings together (see below)</li>
+      <li><strong>Sizes &amp; measurements</strong> - 16 fields for costume ordering, plus a notes box. Fill these in once and they show up automatically when you're assigning costumes.</li>
+      <li><strong>Health</strong> - allergies, special needs, medical notes. Anything you put here shows in a red callout on the dancer's page so a teacher can't miss it.</li>
+    </ul>
+
+    <h3 class="{{ h3 }}">The dancer's page</h3>
+    <p class="{{ p }}">Click a dancer to open their detail page: contact and emergency info, enrolled
+    classes, health flags, recent attendance, and (for admins) their account balance with a link to the
+    full ledger, plus the <strong>Portal Access</strong> card for parent logins.</p>
+
+    <h3 class="{{ h3 }}">Withdrawing a dancer</h3>
+    <p class="{{ p }}">The trash icon <strong>deactivates</strong> rather than deletes - their history,
+    attendance, and ledger all stay. You can reactivate them later from their detail page. There is no
+    way to permanently delete a student from the app, and that's deliberate.</p>
+
+    <h3 class="{{ h3 }}">Families</h3>
+    <p class="{{ p }}">A family groups siblings. On the <strong>Families</strong> page you see each
+    family, its dancers, and (admins only) the combined balance with a link to a
+    <strong>family ledger</strong> - every sibling's charges and payments merged into one running
+    balance. You attach a dancer to a family by editing the dancer and picking the family.</p>
+    <p class="{{ p }}">The one thing families change for parents: if a parent has two or more dancers in
+    the same family and the family owes money, the portal offers them a single "pay for the whole
+    family" option, and the payment gets split across the kids automatically.</p>
+    {% call warn("Family balances only count active dancers") %}
+      If you deactivate a dancer who still owes money, that debt disappears from the family balance -
+      but it stays on the <strong>Aging (A/R)</strong> report tagged "Withdrawn." If a family total
+      looks too low, check the Aging report.
+    {% endcall %}
+
+    <h3 class="{{ h3 }}">Export the roster</h3>
+    <p class="{{ p }}"><strong>Export CSV</strong> on the Students page downloads the roster (names,
+    family, birthday, parent contact, emergency contact, allergies, special needs). Admins also get a
+    balance column. Opens in Excel or Google Sheets - handy for a mail merge or a printed emergency
+    contact sheet for the front desk.</p>
+  </div>
+
+  <!-- ============ 5. ENROLLMENT ============ -->
+  <h2 id="enrollment" class="{{ h2 }}">5. Enrollment &amp; the parent portal</h2>
+
+  <div class="{{ card }}">
+    <h3 class="{{ h3 }}">Public sign-up (new families)</h3>
+    <ol class="{{ ol }}">
+      <li>Go to <strong>Enrollment</strong> and turn on <strong>Registration open</strong>. Pick which season it's for if you're taking sign-ups for an upcoming one.</li>
+      <li>Share the public link (it's at the top of that page - <strong>attenddance.fly.dev/register</strong>). Put it on the website, Instagram, wherever.</li>
+      <li>Families fill it out themselves. New requests show a badge on the <strong>Enrollment</strong> menu item.</li>
+      <li>Open each request and <strong>Approve</strong> it. That creates the family, creates the dancers, and enrolls them in the classes they picked.</li>
+    </ol>
+    <p class="{{ p }}">Returning families use the exact same link. The system matches them by email, so
+    it re-enrolls existing dancers instead of creating duplicates, and flags the request
+    <strong>Returning</strong> in your queue.</p>
+
+    <h3 class="{{ h3 }}">Parent portal accounts (invite codes)</h3>
+    <p class="{{ p }}">Approving a registration sets a family up. For a dancer you entered by hand, you
+    give the parent an <strong>invite code</strong> instead:</p>
+    <ol class="{{ ol }}">
+      <li>Open the dancer's page and find the <strong>Portal Access</strong> card.</li>
+      <li>Click <strong>Generate invite code</strong>. You get a link on screen.</li>
+      <li><strong>Copy it and text or email it to the parent yourself.</strong> The app does not send it.</li>
+      <li>The parent opens the link, enters their name, email, and a password, and they're in - already connected to their dancer.</li>
+    </ol>
+    <p class="{{ p }}">Each code works once and then stops working. Siblings each get their own code,
+    and when a parent redeems a second code with the same email, the system adds that dancer to their
+    existing login instead of making a second account.</p>
+
+    <h3 class="{{ h3 }}">A parent who's locked out</h3>
+    <p class="{{ p }}">Same <strong>Portal Access</strong> card, click <strong>Reset password link</strong>
+    next to their name, and text them the link. It expires in one hour. Parents can also use
+    <strong>Forgot your password?</strong> on the sign-in page themselves now that email is set up.</p>
+    {% call tip("Neither link is sent automatically") %}
+      Invite links and reset links appear on your screen only. Copy them before you navigate away - if
+      you lose one, just generate a fresh one.
+    {% endcall %}
+
+    <h3 class="{{ h3 }}">What parents see</h3>
+    <p class="{{ p }}">Their dancers, each one's balance and payment history, attendance, class
+    schedule, recital program, and buttons to pay, sign forms, initial the rules, request a makeup,
+    view a progress certificate, and sign up for auditions. They cannot see any other family.</p>
+  </div>
+
+  <!-- ============ 6. ATTENDANCE ============ -->
+  <h2 id="attendance" class="{{ h2 }}">6. Attendance &amp; makeups</h2>
+
+  <div class="{{ card }}">
+    <h3 class="{{ h3 }}">Taking attendance</h3>
+    <ol class="{{ ol }}">
+      <li>Open <strong>Take Attendance</strong> on a tablet or laptop. Teachers can do this - they don't need an admin account.</li>
+      <li>Pick the class. Today's classes are listed first.</li>
+      <li>Tap each dancer who's present. It saves as you go, so there's no Save button to forget.</li>
+    </ol>
+    <p class="{{ p }}"><strong>Attendance Log</strong> shows the history and lets you check a dancer in
+    manually if you missed them.</p>
+    {% call warn("Take attendance even on light nights") %}
+      The <strong>Insights</strong> page flags any dancer with no check-in in the last 30 days as
+      "at risk." If a class simply never gets attendance taken, every dancer in it shows up as at risk
+      and the number is meaningless. This is the most common false alarm in the system.
+    {% endcall %}
+
+    <h3 class="{{ h3 }}">Makeups</h3>
+    <p class="{{ p }}">Parents can request a makeup from their portal; those land on the
+    <strong>Makeups</strong> page marked <strong>Requested</strong>, and you use
+    <strong>Schedule</strong> to set the class and date. If you're logging a makeup yourself with
+    <strong>Log Makeup</strong>, it goes straight in as <strong>Scheduled</strong>. Mark it
+    <strong>Complete</strong> when the dancer attends.</p>
+    {% call danger("Delete on a makeup is permanent") %}
+      Unlike most things here, this one really removes the record. The page also shows only the 200
+      most recent makeups, so old ones drop off the list over time.
+    {% endcall %}
+
+    <h3 class="{{ h3 }}">Skills and progress certificates</h3>
+    <p class="{{ p }}"><strong>Skills</strong> lets you define what dancers can earn (with an optional
+    category like "Ballet") and tick them off per dancer. Each dancer gets a printable
+    <strong>Certificate of Achievement</strong> listing what they've earned - parents can see it from
+    their portal as <strong>Progress</strong>. Nice for end of season.</p>
+    <p class="{{ p }}">Ticking a box saves instantly. Un-ticking one deletes that achievement with no
+    confirmation, so be a little careful with the checkboxes.</p>
+  </div>
+
+  <!-- ============ 7. MONEY ============ -->
+  <h2 id="money" class="{{ h2 }}">7. Money</h2>
+
+  <div class="{{ card }}">
+    <h3 class="{{ h3 }}">How billing works here</h3>
+    <p class="{{ p }}">Every charge and every payment is recorded against <strong>one dancer</strong>.
+    A balance is just charges minus payments. Family totals are a roll-up of the siblings' individual
+    balances. All of this lives on the <strong>Payments</strong> page.</p>
+
+    <h3 class="{{ h3 }}">Charging</h3>
+    <ul class="{{ ul }}">
+      <li><strong>Add Charge</strong> - one dancer, one amount, a category (tuition, costumes, recital, late fee, other) and a description.</li>
+      <li><strong>Bulk Charge</strong> - charge everyone in a class at once. Use this for costume deposits, recital fees, that sort of thing.</li>
+      <li><strong>Add Payment</strong> - record money you received, including cash and checks handed to you in person.</li>
+    </ul>
+
+    <h3 id="autobilling" class="{{ h3 }}">Auto-billing (monthly tuition)</h3>
+    <p class="{{ p }}">On the <strong>Payments</strong> page, <strong>Auto-Billing Rules</strong> is
+    where monthly tuition gets set up. <strong>Add Rule</strong>, pick the class, the amount per
+    dancer, the category, and the day of the month it should bill. From then on every enrolled dancer
+    in that class is charged automatically on that day.</p>
+    {% call tip("It will not surprise-charge anyone") %}
+      Two protections are built in. A rule never bills for a month that already passed - the first
+      charge is the first due date on or after you created the rule. And a rule on an
+      <strong>upcoming season's</strong> class does not bill at all until you activate that season.
+      That's what makes it safe to set fall tuition up in July.
+    {% endcall %}
+    <p class="{{ p }}">A dancer who joins mid-month is not automatically charged a partial month - post
+    that one by hand if you want it.</p>
+
+    <h3 class="{{ h3 }}">How parents pay</h3>
+    <p class="{{ p }}">Set the options up under <strong>Payment Methods</strong>:</p>
+    <ul class="{{ ul }}">
+      <li><strong>Zelle</strong> - turn it on, set the display name, upload your QR code, and set the memo instruction telling parents to put their dancer's name in.</li>
+      <li><strong>Cash App</strong> - turn it on and enter the cashtag. Parents get a link with the amount already filled in.</li>
+      <li><strong>Square (card)</strong> - paste your Square payment link and parents get a "Pay by card" button. That's all that's required. The <strong>Advanced</strong> section is only if you also want to email Square invoices from inside the app.</li>
+    </ul>
+    <p class="{{ p }}">Zelle and Cash App payments don't tell the system anything on their own, so
+    there's a confirmation step - see below.</p>
+
+    <h3 class="{{ h3 }}">The Pending inbox</h3>
+    <p class="{{ p }}">When a parent pays by Zelle or Cash App they tap "I sent it" in the portal.
+    That lands on the <strong>Pending</strong> page with a badge in the menu.</p>
+    <ol class="{{ ol }}">
+      <li>Check your bank or Cash App that the money actually arrived.</li>
+      <li><strong>Confirm</strong> it - that records the payment on the dancer's ledger and emails the parent a receipt. For a family payment it splits across the siblings automatically.</li>
+      <li><strong>Reject</strong> it if you can't find the money. Nothing is posted.</li>
+    </ol>
+    {% call warn("Confirm means the money is really there") %}
+      Confirming is what creates the payment record. Always verify against your actual bank or Cash App
+      before you press it.
+    {% endcall %}
+
+    <h3 class="{{ h3 }}">Late fees</h3>
+    <p class="{{ p }}">Set your default amount and threshold under <strong>Payment Methods → Late Fees</strong>,
+    then apply them from the <strong>Pending</strong> page with <strong>Apply late fees</strong>. Nothing
+    charges a late fee automatically - you press the button when you want it. Any dancer who already
+    got a late fee this calendar month is skipped, so a double-click can't double-charge.</p>
+
+    <h3 class="{{ h3 }}">Payment plans</h3>
+    <p class="{{ p }}">A family who needs to spread a big balance can be put on a plan with a set number
+    of installments. Their portal shows the plan and how many payments they've made.</p>
+  </div>
+
+  <!-- ============ 8. MESSAGES ============ -->
+  <h2 id="messages" class="{{ h2 }}">8. Messages &amp; reminders</h2>
+
+  <div class="{{ card }}">
+    <h3 class="{{ h3 }}">Emailing parents</h3>
+    <p class="{{ p }}"><strong>Messages</strong> sends email to one of three groups:</p>
+    <ul class="{{ ul }}">
+      <li><strong>All Parents</strong> - admins only</li>
+      <li><strong>Parents in a Class</strong> - everyone currently enrolled in it</li>
+      <li><strong>Individual Student's Parent</strong> - one family</li>
+    </ul>
+    <p class="{{ p }}">A family with three dancers gets one copy, not three. Message history is kept at
+    the bottom of the page.</p>
+    {% call warn("Check the status column after a blast") %}
+      Sending happens in the background, so a message shows <strong>Saved</strong> first and flips to
+      <strong>Sent</strong> when it goes out. If one is still saying "Saved" a while later, the send
+      failed and there's no retry button - open it, copy the addresses, and send it from Gmail.
+    {% endcall %}
+    <p class="{{ p }}">This sends email only. There's no text-message blast.</p>
+
+    <h3 class="{{ h3 }}">Balance reminders</h3>
+    <p class="{{ p }}">Two ways to nudge families who owe:</p>
+    <ul class="{{ ul }}">
+      <li><strong>Right now:</strong> <strong>Send Reminders</strong> on the <strong>Pending</strong> page emails every active dancer's family with a balance over $0.</li>
+      <li><strong>Monthly:</strong> <strong>Payment Methods → Automatic Reminders</strong>, pick a day of the month and a minimum balance.</li>
+    </ul>
+    {% call warn("Automatic reminders need the app to be awake") %}
+      The site sleeps when nobody's using it, and the monthly reminder only fires when the app is
+      running on the day you picked. If nobody opens the site that day, that month's reminders quietly
+      don't go out. Two easy habits fix this: pick a day you're normally working anyway, and open the
+      site that morning. Text me if you want this fully automated - it's a small job on my end.
+    {% endcall %}
+    <p class="{{ p }}">Reminders can also go by text if you set up Twilio under
+    <strong>Text Messages (SMS)</strong>, but email alone is fine for most studios.</p>
+  </div>
+
+  <!-- ============ 9. PAPERWORK ============ -->
+  <h2 id="paperwork" class="{{ h2 }}">9. Forms, waivers &amp; rules</h2>
+
+  <div class="{{ card }}">
+    <h3 class="{{ h3 }}">Forms &amp; Waivers</h3>
+    <p class="{{ p }}">Create a form (liability waiver, photo release, medical authorization) with
+    <strong>New Form</strong>: a title and the text the parent reads. Parents sign from their portal by
+    typing their full name. Each form shows you a compliance card - how many have signed, and the
+    names of who hasn't.</p>
+    <p class="{{ p }}">The checkbox <strong>"Allow parents to opt out while still signing"</strong> is
+    for optional consents. Turn it <strong>on</strong> for a photo release so a parent can decline
+    while still completing the form, and you get a recorded decision either way. Leave it
+    <strong>off</strong> for anything mandatory like liability - the system will refuse a decline.</p>
+    {% call warn("Pick the opt-out setting before you publish a form") %}
+      It can't be changed after the form is created, because it would change what everyone's existing
+      signatures meant. To switch it you have to archive the form and make a new one, and everyone
+      signs again.
+    {% endcall %}
+
+    <h3 class="{{ h3 }}">Rules</h3>
+    <p class="{{ p }}"><strong>Rules</strong> is your studio policies, one per entry. Parents initial
+    each rule individually from their portal, and you get a status table showing who's complete.</p>
+    <p class="{{ p }}">Adding a new rule sets everyone back to incomplete on that rule, which is what
+    you want when a policy changes. Initials can't be undone by the parent once entered.</p>
+  </div>
+
+  <!-- ============ 10. RECITAL ============ -->
+  <h2 id="recital" class="{{ h2 }}">10. Recital &amp; costumes</h2>
+
+  <div class="{{ card }}">
+    <h3 class="{{ h3 }}">Recital Hub</h3>
+    <p class="{{ p }}"><strong>Recital Hub</strong> is the command center for the June show. Create the
+    year with <strong>New Year</strong>, then work through the tabs:</p>
+    <ul class="{{ ul }}">
+      <li><strong>Overview</strong> - title, theme, date, show times, venue, your director's note and acknowledgments (both print in the booklet).</li>
+      <li><strong>Show Order</strong> - every number in performance order. Each one holds the class or company performing it, the music (song, artist, link, cue notes), the choreographer and formation notes, duration, props, and the cast. Reorder with the up and down arrows.</li>
+      <li><strong>Awards</strong> - award title, category, and recipient.</li>
+      <li><strong>Booklet &amp; Ads</strong> - program ads and shout-outs, with sizes, prices, images, and a paid checkbox.</li>
+    </ul>
+    <p class="{{ p }}">When a number is linked to a class or company, <strong>Fill from class/company</strong>
+    adds the whole roster to the cast at once, skipping anyone already in it.</p>
+    <p class="{{ p }}"><strong>Open Booklet</strong> produces the print-ready program: cover, director's
+    note, the full program with cast lists, awards, sponsor ads, and acknowledgments. Print it or save
+    it as a PDF to send to the printer.</p>
+    {% call tip("Teachers can help build the show") %}
+      Teachers can edit the show order, music, choreography notes, and cast - which is exactly the part
+      they know best. Only admins can change the Overview, Awards, and Ads.
+    {% endcall %}
+    {% call danger("Deleting a recital takes everything with it") %}
+      Numbers, cast lists, awards, and ads all go. There's no undo.
+    {% endcall %}
+
+    <h3 class="{{ h3 }}">Costumes &amp; tickets</h3>
+    <p class="{{ p }}">From the Recital Hub, <strong>Costumes &amp; Tickets</strong> has two tabs.</p>
+    <p class="{{ p }}"><strong>Costumes</strong> - create a costume with a fee and vendor, assign
+    dancers (or add a whole class at once), and record each dancer's costume size. The sizes you
+    entered on the dancer's record show right next to it for reference.</p>
+    {% call warn("Charge fee posts real charges") %}
+      The <strong>Charge fee</strong> button adds the costume fee to every assigned dancer's ledger.
+      Dancers who were already charged get skipped, so it's safe to press again after adding more
+      dancers - but you can't un-charge from this screen. To reverse one, go to the dancer's ledger.
+    {% endcall %}
+    <p class="{{ p }}"><strong>Tickets</strong> - set up ticket types with prices for each show date,
+    then record sales as they come in. The header keeps a running total of tickets sold and money
+    collected versus pending.</p>
+  </div>
+
+  <!-- ============ 11. COMPANY ============ -->
+  <h2 id="company" class="{{ h2 }}">11. Company &amp; auditions</h2>
+
+  <div class="{{ card }}">
+    <p class="{{ p }}"><strong>Company</strong> runs LSODance Company and any other performance group.
+    Three tabs:</p>
+    <ul class="{{ ul }}">
+      <li><strong>Companies</strong> - create a group and add dancers with a role (defaults to "Member").</li>
+      <li><strong>Auditions</strong> - create an audition with a date, location, and the company it's for. Parents sign their dancers up from their portal. Review each signup with <strong>Accept</strong>, <strong>Waitlist</strong>, or <strong>Decline</strong>.</li>
+      <li><strong>Performances</strong> - shows and events with a date, call time, and venue, plus the lineup of who's performing.</li>
+    </ul>
+    {% call tip("Attach the company when you create the audition") %}
+      Accepting a dancer automatically adds them to the audition's company - but only if you set that
+      company when creating the audition. Without it, accepting adds them to nothing and you'll have to
+      add them by hand.
+    {% endcall %}
+    <p class="{{ p }}">Closing an audition stops new signups and is reversible. Deleting one removes its
+    signups permanently, so close rather than delete unless you really mean it.</p>
+    <p class="{{ p }}">Performances created here are also what recital ticket sales attach to.</p>
+  </div>
+
+  <!-- ============ 12. STAFF ============ -->
+  <h2 id="staff" class="{{ h2 }}">12. Staff &amp; time clock</h2>
+
+  <div class="{{ card }}">
+    <h3 class="{{ h3 }}">Staff accounts</h3>
+    <p class="{{ p }}"><strong>Staff</strong> is where you add teachers and admins and set who's who.
+    Give new instructors a <strong>teacher</strong> account unless they need to handle money.
+    Deactivating a staff account signs them out immediately, including any session they already had
+    open.</p>
+
+    <h3 class="{{ h3 }}">Time clock</h3>
+    <p class="{{ p }}">Staff clock themselves in and out on the <strong>Time Clock</strong> page - one
+    button, and it shows their recent shifts. Admins get a <strong>Payroll Hours</strong> section:
+    pick a date range, press Run, and get hours per staff member with a total.</p>
+    {% call warn("A missed clock-out won't show up in payroll") %}
+      There's no way to edit or delete a punch in the app, and a shift that was never clocked out is
+      left out of the payroll report entirely. If someone's hours look low, check whether they have a
+      shift still sitting open. Text me if a punch needs correcting - I can fix it directly.
+    {% endcall %}
+    <p class="{{ p }}">Hours are straight clock-out minus clock-in. No break deductions, no overtime
+    rules, no pay rates - it's a record of hours worked, not a payroll processor.</p>
+
+    <h3 class="{{ h3 }}">Leads &amp; Trials</h3>
+    <p class="{{ p }}">Track prospective families from first contact through to enrollment. Add a lead
+    with their contact info, what they're interested in, and how they found you, then move them along
+    the stages: new, contacted, trial scheduled, converted, lost. <strong>Convert</strong> turns a lead
+    into a real family and dancer.</p>
+    {% call tip("The list defaults to New only") %}
+      When you open Leads &amp; Trials you're seeing only brand-new leads, not everything. Change the
+      filter to <strong>All</strong> if you're wondering where everyone went.
+    {% endcall %}
+  </div>
+
+  <!-- ============ 13. REPORTS ============ -->
+  <h2 id="reports" class="{{ h2 }}">13. Reports &amp; donations</h2>
+
+  <div class="{{ card }}">
+    <h3 class="{{ h3 }}">The four reports</h3>
+    <ul class="{{ ul }}">
+      <li><strong>Insights</strong> - active dancers, new this month, at risk, inactive, plus enrollment and attendance trends and your biggest classes.</li>
+      <li><strong>Revenue</strong> - collected this month, this year, and all-time, billed versus collected by month, and a breakdown by category. Exports to CSV for your accountant.</li>
+      <li><strong>Aging (A/R)</strong> - who owes what, split into 0-30, 31-60, 61-90, and 90+ days, sorted by who owes most. This is your collections worklist.</li>
+      <li><strong>Payments</strong> - the live ledger of everything charged and paid.</li>
+    </ul>
+    {% call tip("Revenue and Aging totals won't match, and that's correct") %}
+      Revenue's "Outstanding" counts only active dancers. Aging also includes withdrawn dancers who
+      still owe, marked "Withdrawn." If you're chasing money, trust Aging.
+    {% endcall %}
+    <p class="{{ p }}">On Aging, payments are applied to the oldest charges first, so a family can still
+    show something in the 90+ column right after paying you.</p>
+
+    <h3 class="{{ h3 }}">Donations and giving statements</h3>
+    <p class="{{ p }}"><strong>Donations</strong> records gifts to the LSODance Foundation. Enter the
+    donor's name, <strong>email</strong>, amount, and method. Donations parents submit through their
+    portal arrive as <strong>pending</strong> and need you to <strong>Confirm</strong> them before they
+    count.</p>
+    <p class="{{ p }}">At year end, type a donor's email and the year into the bar at the top and press
+    <strong>Giving statement</strong> to produce their printable 501(c)(3) letter with your EIN and the
+    "no goods or services" language. Set the org name and EIN once under
+    <strong>Payment Methods → Foundation Donations</strong>.</p>
+    {% call warn("No email means no statement, ever") %}
+      Statements are matched by exact donor email. A donation entered without one (or with a typo) can
+      never appear on any statement. Get the email at the time you record the gift.
+    {% endcall %}
+  </div>
+
+  <!-- ============ 14. DATA ============ -->
+  <h2 id="data" class="{{ h2 }}">14. Your data &amp; backups</h2>
+
+  <div class="{{ card }}">
+    <h3 class="{{ h3 }}">Backups happen automatically</h3>
+    <p class="{{ p }}">Every night at about 3am the entire system is backed up to secure offsite storage,
+    and 90 days of those backups are kept. You don't have to do anything. If something catastrophic ever
+    happened, the studio loses at most one day.</p>
+
+    <h3 class="{{ h3 }}">Taking your own copy</h3>
+    <p class="{{ p }}"><strong>Payment Methods → Data &amp; Backup → Download backup</strong> gives you a
+    complete copy of the studio's database as a file. Worth grabbing before anything big - a season
+    switch, a bulk charge - and keeping somewhere safe. It's also your proof that this data is yours.</p>
+
+    <h3 class="{{ h3 }}">Exports</h3>
+    <ul class="{{ ul }}">
+      <li><strong>Students → Export CSV</strong> - the roster</li>
+      <li><strong>Revenue → Export CSV</strong> - every transaction, for the accountant</li>
+      <li><strong>Aging → Export CSV</strong> - who owes what, with a total row</li>
+    </ul>
+
+    <h3 class="{{ h3 }}">Privacy requests</h3>
+    <p class="{{ p }}">Parents can download everything the studio holds on their family from their
+    profile page, and can submit a deletion request. A deletion request doesn't erase anything by
+    itself - it notifies you so a person decides, since billing and tax records have to be kept. The
+    public privacy policy is at <strong>attenddance.fly.dev/privacy</strong>.</p>
+  </div>
+
+  <!-- ============ 15. GOTCHAS ============ -->
+  <h2 id="gotchas" class="{{ h2 }}">15. If something looks wrong</h2>
+
+  <div class="{{ card }}">
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead class="bg-surface-2"><tr class="text-left">
+          <th class="px-3 py-2 font-bold text-ink rounded-l-lg">What you're seeing</th>
+          <th class="px-3 py-2 font-bold text-ink rounded-r-lg">What's going on</th>
+        </tr></thead>
+        <tbody class="text-ink-2">
+          <tr class="border-b border-line">
+            <td class="px-3 py-2.5 font-bold">A class I made isn't showing up</td>
+            <td class="px-3 py-2.5">You probably added it to an upcoming season. Check the season dropdown at the top of the Classes page.</td></tr>
+          <tr class="border-b border-line">
+            <td class="px-3 py-2.5 font-bold">Tons of dancers marked "at risk"</td>
+            <td class="px-3 py-2.5">Attendance isn't being taken for their class. At risk just means no check-in in 30 days.</td></tr>
+          <tr class="border-b border-line">
+            <td class="px-3 py-2.5 font-bold">Leads page looks empty</td>
+            <td class="px-3 py-2.5">The filter defaults to "New." Switch it to "All."</td></tr>
+          <tr class="border-b border-line">
+            <td class="px-3 py-2.5 font-bold">A message still says "Saved"</td>
+            <td class="px-3 py-2.5">The send failed. Copy the addresses off the row and send from Gmail.</td></tr>
+          <tr class="border-b border-line">
+            <td class="px-3 py-2.5 font-bold">Monthly reminders never went out</td>
+            <td class="px-3 py-2.5">Nobody opened the site on the day they were set for. Use Send Reminders on the Pending page to catch up.</td></tr>
+          <tr class="border-b border-line">
+            <td class="px-3 py-2.5 font-bold">A family's balance looks too low</td>
+            <td class="px-3 py-2.5">A dancer who owes was deactivated. Family totals only count active dancers - check Aging (A/R).</td></tr>
+          <tr class="border-b border-line">
+            <td class="px-3 py-2.5 font-bold">Someone's payroll hours are short</td>
+            <td class="px-3 py-2.5">They forgot to clock out. Open shifts are left out of the report.</td></tr>
+          <tr class="border-b border-line">
+            <td class="px-3 py-2.5 font-bold">A donor's statement is empty</td>
+            <td class="px-3 py-2.5">The donation has no email on it, or a different one. Statements match by exact email.</td></tr>
+          <tr class="border-b border-line">
+            <td class="px-3 py-2.5 font-bold">Parent says they never got the invite</td>
+            <td class="px-3 py-2.5">Invite and reset links aren't sent automatically - you copy and send them. Generate a fresh one.</td></tr>
+          <tr>
+            <td class="px-3 py-2.5 font-bold">The site is slow to load the first time</td>
+            <td class="px-3 py-2.5">Normal. It sleeps when unused and takes a few seconds to wake. It's quick after that.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 class="{{ h3 }}">Still stuck</h3>
+    <p class="{{ p }}">Text Thomas. Say what you were doing, what you expected, and what happened
+    instead - a screenshot helps more than anything. Nothing in here is unfixable, and the nightly
+    backups mean nothing is truly lost.</p>
+  </div>
+
+  <p class="text-xs text-ink-3 text-center mb-8">Last updated {{ updated.strftime('%B %-d, %Y') }} · AttenDANCE for LaShelle's School of Dance</p>
+
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<style>
+  @media print {
+    .man-toc, .man-head, aside, nav, header, .no-print { display: none !important; }
+    .man-sec { break-inside: avoid; box-shadow: none !important; border-color: #ddd !important; }
+    body { background: #fff !important; }
+  }
+</style>
+<script>
+// Filter the manual to the cards that match. Sections whose cards are all
+// hidden lose their heading too, so the page never shows a bare heading.
+const manSecs = Array.from(document.querySelectorAll('.man-sec'));
+const manHeads = Array.from(document.querySelectorAll('h2[id]'));
+
+function clearManSearch() {
+  const box = document.getElementById('man-search');
+  box.value = '';
+  applyManSearch();
+  box.focus();
+}
+
+function applyManSearch() {
+  const q = document.getElementById('man-search').value.trim().toLowerCase();
+  let anyVisible = false;
+
+  manSecs.forEach(sec => {
+    const hit = !q || sec.textContent.toLowerCase().includes(q);
+    sec.classList.toggle('hidden', !hit);
+    if (hit) anyVisible = true;
+  });
+
+  // A heading stays only if a card after it (before the next heading) survived.
+  manHeads.forEach((head, i) => {
+    const next = manHeads[i + 1] || null;
+    let node = head.nextElementSibling;
+    let keep = false;
+    while (node && node !== next) {
+      if (node.classList.contains('man-sec') && !node.classList.contains('hidden')) { keep = true; break; }
+      node = node.nextElementSibling;
+    }
+    head.classList.toggle('hidden', !!q && !keep);
+  });
+
+  document.getElementById('man-noresults').classList.toggle('hidden', anyVisible);
+}
+
+document.getElementById('man-search').addEventListener('input', applyManSearch);
+</script>
+{% endblock %}

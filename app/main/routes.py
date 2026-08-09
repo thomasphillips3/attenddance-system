@@ -582,3 +582,11 @@ def sign_waivers_page(student_id):
     if not _parent_owns(student):  # a parent may only act on their own child
         return redirect(url_for('main.parent_dashboard'))
     return render_template('waivers/sign.html', student=student)
+
+
+@bp.route('/manual')
+@admin_required
+def manual_page():
+    """The studio operations manual. Admin-only: it documents billing, payout
+    settings, and destructive admin actions that teachers can't perform anyway."""
+    return render_template('manual.html', updated=date.today())

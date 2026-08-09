@@ -191,6 +191,7 @@
                 {{ nl('Rules', 'main.rules_admin', 'gavel', ['rules']) }}
                 {{ nl('Messages', 'main.messages_page', 'envelope', ['message']) }}
                 {{ nl('Time Clock', 'main.timeclock_page', 'business-time', ['timeclock']) }}
+                {% if current_user.is_admin %}{{ nl('User Manual', 'main.manual_page', 'book-open', ['manual']) }}{% endif %}
             </nav>
             <div class="border-t border-line p-3 flex items-center gap-2.5">
                 <span class="h-9 w-9 rounded-full bg-gold-300 text-gold-ink flex items-center justify-center text-sm font-bold">{{ current_user.first_name[0]|upper }}{{ current_user.last_name[0]|upper }}</span>
