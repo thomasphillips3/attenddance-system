@@ -412,6 +412,25 @@
     {% endcall %}
     <p class="{{ p }}">This sends email only. There's no text-message blast.</p>
 
+    <h3 class="{{ h3 }}">Attaching a file</h3>
+    <p class="{{ p }}">Use <strong>Choose Files</strong> under the message box to send a flyer, a
+    permission slip, a costume order form, or a schedule along with the email. Every parent in the
+    group gets a copy attached to their message.</p>
+    <ul class="{{ ul }}">
+      <li><strong>Allowed:</strong> PDF, photos (PNG, JPG, GIF, WebP, HEIC), Word, Excel, PowerPoint, TXT, and CSV</li>
+      <li><strong>Limits:</strong> up to 5 files, 5MB each, 10MB total per message</li>
+      <li>Click the <strong>&times;</strong> next to a file to take it off before sending</li>
+    </ul>
+    <p class="{{ p }}">Attachments stay with the message in the history, so the file can be
+    downloaded again later from the <strong>Attachments</strong> column - handy when a parent says
+    they never got it. If email isn't configured yet, download it there and attach it by hand to the
+    email you send from Gmail.</p>
+    {% call warn("Big files bounce") %}
+      Phone photos and scanned PDFs run large. If a flyer is over 5MB, shrink it first (export the
+      PDF smaller, or resize the photo) - the studio's email provider rejects oversized attachments
+      even when the system accepts them.
+    {% endcall %}
+
     <h3 class="{{ h3 }}">Balance reminders</h3>
     <p class="{{ p }}">Two ways to nudge families who owe:</p>
     <ul class="{{ ul }}">

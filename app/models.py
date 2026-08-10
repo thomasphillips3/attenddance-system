@@ -4,6 +4,7 @@ Database models for AttenDANCE system
 
 from datetime import datetime, date
 from flask_login import UserMixin
+from sqlalchemy.orm import deferred
 from werkzeug.security import generate_password_hash, check_password_hash
 from app import db
 
@@ -514,6 +515,36 @@ class Message(db.Model):
 
     def __repr__(self):
         return f'<Message "{self.subject}" to {self.recipient_count}>'
+
+
+class MessageAttachment(db.Model):
+    """A file attached to an email blast (flyer, permission slip, schedule PDF).
+
+    Bytes live in the DB rather than on disk because Fly's filesystem is
+    ephemeral and only the SQLite volume survives a restart - the same reason the
+    Zelle QR is stored in Setting instead of uploads/.
+
+    `data` is deferred so listing message history never drags megabytes of blob
+    into memory on a 256MB machine; it loads only when something touches
+    `.data` (the send worker and the download endpoint)."""
+    __tablename__ = 'message_attachments'
+
+    id = db.Column(db.Integer, primary_key=True)
+    message_id = db.Column(db.Integer, db.ForeignKey('messages.id'),
+                           nullable=False, index=True)
+    filename = db.Column(db.String(255), nullable=False)
+    content_type = db.Column(db.String(100), nullable=False)
+    size = db.Column(db.Integer, default=0, nullable=False)
+    data = deferred(db.Column(db.LargeBinary, nullable=False))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    message = db.relationship(
+        'Message',
+        backref=db.backref('attachments', lazy='dynamic',
+                           cascade='all, delete-orphan'))
+
+    def __repr__(self):
+        return f'<MessageAttachment {self.filename} ({self.size}b)>'
 
 
 class Setting(db.Model):

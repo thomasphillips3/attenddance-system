@@ -44,3 +44,8 @@ jobs:
         env:
           RFID_ENABLED: "false"
         run: python tests/test_seasons.py
+
+      - name: Message attachment harness
+        env:
+          RFID_ENABLED: "false"
+        run: python tests/test_message_attachments.py

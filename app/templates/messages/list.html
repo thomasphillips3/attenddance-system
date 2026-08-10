@@ -40,6 +40,17 @@
             <label class="{{ LABEL }}">Message *</label>
             <textarea id="msg-body" rows="5" required class="{{ INPUT }}" placeholder="Write your message here..."></textarea>
         </div>
+        <div class="mb-4">
+            <label class="{{ LABEL }}">Attachments</label>
+            <p class="text-xs text-ink-3 mt-0.5 mb-2">Flyers, permission slips, schedules - PDF, image, Word, Excel, PowerPoint, TXT, or CSV. Up to 5 files, 5MB each, 10MB total.</p>
+            <label class="inline-flex items-center px-3 py-1.5 rounded-xl border border-line-2 text-ink-2 font-bold hover:bg-surface-2 text-sm cursor-pointer">
+                <i class="fas fa-paperclip mr-2"></i>Choose Files
+                <input type="file" id="msg-files" multiple class="hidden"
+                       accept=".pdf,.png,.jpg,.jpeg,.gif,.webp,.heic,.txt,.csv,.doc,.docx,.xls,.xlsx,.ppt,.pptx"
+                       onchange="onFilesPicked(event)">
+            </label>
+            <div id="attach-list" class="mt-3 space-y-2"></div>
+        </div>
         <div class="flex justify-end">
             <button type="submit" id="send-btn" class="inline-flex items-center px-4 py-2 rounded-xl bg-primary-500 text-white text-sm font-bold hover:bg-primary-600 shadow-sm">
                 <i class="fas fa-paper-plane mr-2"></i>Send
@@ -59,6 +70,7 @@
             <button onclick="copyEmails()" class="inline-flex items-center px-3 py-1.5 rounded-xl border border-line-2 text-ink-2 font-bold hover:bg-surface-2 text-sm mb-3">
                 <i class="fas fa-copy mr-2"></i>Copy Emails
             </button>
+            <div id="modal-attachments" class="mb-3 space-y-1"></div>
             <div class="flex justify-end">
                 <button onclick="closeEmailModal()" class="px-4 py-2 rounded-xl bg-primary-500 text-white text-sm font-bold hover:bg-primary-600 shadow-sm">Done</button>
             </div>
@@ -77,11 +89,12 @@
                     <th class="text-[11px] font-bold uppercase tracking-[.06em] text-ink-3 px-5 py-3 text-left">Subject</th>
                     <th class="text-[11px] font-bold uppercase tracking-[.06em] text-ink-3 px-5 py-3 text-left">To</th>
                     <th class="text-[11px] font-bold uppercase tracking-[.06em] text-ink-3 px-5 py-3 text-left">Recipients</th>
+                    <th class="text-[11px] font-bold uppercase tracking-[.06em] text-ink-3 px-5 py-3 text-left">Attachments</th>
                     <th class="text-[11px] font-bold uppercase tracking-[.06em] text-ink-3 px-5 py-3 text-left">Status</th>
                 </tr>
             </thead>
             <tbody id="history-table">
-                <tr><td colspan="5" class="px-5 py-4 text-center text-ink-3">Loading...</td></tr>
+                <tr><td colspan="6" class="px-5 py-4 text-center text-ink-3">Loading...</td></tr>
             </tbody>
         </table>
         <div id="history-pagination" class="flex items-center justify-between gap-3 px-5 py-3 border-t border-line"></div>
@@ -114,32 +127,95 @@ function updateRecipientFilter() {
 // so their default is "class" and the filter must populate without a change event.
 updateRecipientFilter();
 
+// ── Attachments ──────────────────────────────────────────────────────
+// The <input type=file> is only a picker; this array is the source of truth so
+// a single file can be removed without clearing the whole selection (a FileList
+// is read-only). Limits mirror the server's - the server still enforces them.
+const MAX_FILES = 5, MAX_FILE_BYTES = 5 * 1024 * 1024, MAX_TOTAL_BYTES = 10 * 1024 * 1024;
+const ALLOWED_EXT = ['pdf','png','jpg','jpeg','gif','webp','heic','txt','csv','doc','docx','xls','xlsx','ppt','pptx'];
+let selectedFiles = [];
+
+function fmtSize(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(0) + ' KB';
+    return (bytes / 1024 / 1024).toFixed(1) + ' MB';
+}
+
+function onFilesPicked(e) {
+    for (const f of Array.from(e.target.files)) {
+        const ext = f.name.includes('.') ? f.name.split('.').pop().toLowerCase() : '';
+        if (!ALLOWED_EXT.includes(ext)) { toast(`"${f.name}" isn't an allowed file type`, false); continue; }
+        if (f.size > MAX_FILE_BYTES) { toast(`"${f.name}" is bigger than 5MB`, false); continue; }
+        if (selectedFiles.length >= MAX_FILES) { toast(`You can attach up to ${MAX_FILES} files`, false); break; }
+        if (selectedFiles.some(s => s.name === f.name && s.size === f.size)) continue;  // same file picked twice
+        const total = selectedFiles.reduce((sum, s) => sum + s.size, 0) + f.size;
+        if (total > MAX_TOTAL_BYTES) { toast('Attachments would total more than 10MB', false); break; }
+        selectedFiles.push(f);
+    }
+    // Clear the picker so re-choosing the same file still fires `change`.
+    e.target.value = '';
+    renderAttachList();
+}
+
+function removeAttachment(i) { selectedFiles.splice(i, 1); renderAttachList(); }
+
+function renderAttachList() {
+    const el = document.getElementById('attach-list');
+    if (!selectedFiles.length) { el.innerHTML = ''; return; }
+    const total = selectedFiles.reduce((sum, f) => sum + f.size, 0);
+    el.innerHTML = selectedFiles.map((f, i) => `
+        <div class="flex items-center justify-between gap-3 bg-surface-2 border border-line rounded-xl px-3 py-2">
+            <div class="flex items-center gap-2 min-w-0">
+                <i class="fas fa-paperclip text-ink-3"></i>
+                <span class="text-sm text-ink truncate">${esc(f.name)}</span>
+                <span class="text-xs text-ink-3 shrink-0">${fmtSize(f.size)}</span>
+            </div>
+            <button type="button" onclick="removeAttachment(${i})" class="text-ink-3 hover:text-danger px-1" aria-label="Remove attachment">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>`).join('') +
+        `<p class="text-xs text-ink-3">${selectedFiles.length} file(s), ${fmtSize(total)} total</p>`;
+}
+
 async function sendMessage(e) {
     e.preventDefault();
     const btn = document.getElementById('send-btn');
     btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Sending...';
     const type = document.getElementById('msg-type').value;
-    const body = {
-        subject: document.getElementById('msg-subject').value,
-        body: document.getElementById('msg-body').value,
-        recipient_type: type,
-    };
-    if (type !== 'all') body.recipient_filter = document.getElementById('msg-filter').value;
+    // Always multipart - one code path whether or not files are attached.
+    const form = new FormData();
+    form.append('subject', document.getElementById('msg-subject').value);
+    form.append('body', document.getElementById('msg-body').value);
+    form.append('recipient_type', type);
+    if (type !== 'all') form.append('recipient_filter', document.getElementById('msg-filter').value);
+    selectedFiles.forEach(f => form.append('attachments', f));
     try {
-        const res = await fetch('/api/messages', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
+        // No Content-Type header: the browser must set the multipart boundary.
+        const res = await fetch('/api/messages', { method: 'POST', body: form });
         const data = await res.json();
         if (res.ok || res.status === 201) {
             if (data.recipient_emails) {
                 document.getElementById('email-list-box').value = data.recipient_emails.join(', ');
+                renderModalAttachments(data.attachments);
                 document.getElementById('email-modal').classList.remove('hidden');
             } else {
                 toast(data.message, true);
             }
             document.getElementById('compose-form').reset();
+            selectedFiles = []; renderAttachList();
             loadHistory();
         } else { toast(data.error || 'Error sending message', false); }
     } catch (err) { toast('Network error', false); }
     btn.disabled = false; btn.innerHTML = '<i class="fas fa-paper-plane mr-2"></i>Send';
+}
+
+function renderModalAttachments(atts) {
+    const el = document.getElementById('modal-attachments');
+    if (!el) return;
+    if (!atts || !atts.length) { el.innerHTML = ''; return; }
+    el.innerHTML = `<p class="text-sm text-ink-2 font-bold mb-1">Download your attachment(s) to add to that email:</p>` +
+        atts.map(a => `<a href="${a.url}" class="block text-sm text-primary-600 hover:underline">
+            <i class="fas fa-paperclip mr-1"></i>${esc(a.filename)}</a>`).join('');
 }
 
 function closeEmailModal() { document.getElementById('email-modal').classList.add('hidden'); }
@@ -158,7 +234,7 @@ async function loadHistory(page) {
         renderHistory(data.messages);
         renderHistoryPagination(data.pagination);
     } catch (err) {
-        document.getElementById('history-table').innerHTML = '<tr><td colspan="5" class="px-5 py-4 text-center text-danger">Failed to load</td></tr>';
+        document.getElementById('history-table').innerHTML = '<tr><td colspan="6" class="px-5 py-4 text-center text-danger">Failed to load</td></tr>';
     }
 }
 function renderHistoryPagination(p) {
@@ -177,17 +253,22 @@ function renderHistoryPagination(p) {
 }
 function renderHistory(msgs) {
     const tbody = document.getElementById('history-table');
-    if (!msgs.length) { tbody.innerHTML = '<tr><td colspan="5" class="px-5 py-4 text-center text-ink-3">No messages sent yet.</td></tr>'; return; }
+    if (!msgs.length) { tbody.innerHTML = '<tr><td colspan="6" class="px-5 py-4 text-center text-ink-3">No messages sent yet.</td></tr>'; return; }
     const typeLabels = { all: 'All Parents', class: 'Class', individual: 'Individual' };
     tbody.innerHTML = msgs.map(m => {
         const status = m.sent
             ? '<span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-ok/10 text-ok">Sent</span>'
             : '<span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-warn/10 text-warn">Saved</span>';
+        const atts = (m.attachments || []).length
+            ? m.attachments.map(a => `<a href="${a.url}" class="block text-sm text-primary-600 hover:underline" title="${esc(a.filename)} (${fmtSize(a.size)})">
+                    <i class="fas fa-paperclip mr-1"></i>${esc(a.filename)}</a>`).join('')
+            : '<span class="text-sm text-ink-3">—</span>';
         return `<tr class="border-b border-line last:border-0">
             <td class="px-5 py-3 text-sm text-ink">${esc(m.created_at.split('T')[0])}</td>
             <td class="px-5 py-3 text-sm font-bold text-ink">${esc(m.subject)}</td>
             <td class="px-5 py-3 text-sm text-ink-3">${esc(typeLabels[m.recipient_type] || m.recipient_type)}</td>
             <td class="px-5 py-3 text-sm text-ink-3">${m.recipient_count} recipient(s)</td>
+            <td class="px-5 py-3 max-w-[220px]">${atts}</td>
             <td class="px-5 py-3">${status}</td>
         </tr>`;
     }).join('');

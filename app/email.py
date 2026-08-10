@@ -6,6 +6,8 @@ All sends honor MAIL_REPLY_TO so parent replies go to the studio inbox.
 
 import logging
 import smtplib
+from email import encoders
+from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
@@ -19,13 +21,40 @@ def is_configured() -> bool:
     return bool(current_app.config.get("MAIL_SERVER"))
 
 
-def send_email(to, subject: str, body: str) -> int:
+def _build_attachment_parts(attachments):
+    """Base64-encode each attachment ONCE into a reusable MIME part.
+
+    A blast sends one message per recipient (so parents never see each other's
+    addresses), and encoding a 5MB flyer per recipient would burn CPU linearly
+    in the recipient count. The parts are immutable once built, so the same
+    objects get attached to every per-recipient message."""
+    parts = []
+    for att in attachments or []:
+        raw = att.get("data")
+        if not raw:
+            continue
+        filename = att.get("filename") or "attachment"
+        ctype = att.get("content_type") or "application/octet-stream"
+        maintype, _, subtype = ctype.partition("/")
+        part = MIMEBase(maintype or "application", subtype or "octet-stream")
+        part.set_payload(raw)
+        encoders.encode_base64(part)
+        # filename is sanitized at upload (secure_filename), so it carries no
+        # quotes or newlines that could break out of the header.
+        part.add_header("Content-Disposition", "attachment", filename=filename)
+        parts.append(part)
+    return parts
+
+
+def send_email(to, subject: str, body: str, attachments=None) -> int:
     """Send a plaintext email to one or more recipients.
 
     Args:
         to: a single address (str) or an iterable of addresses.
         subject: email subject.
         body: plaintext body.
+        attachments: optional list of dicts with `filename`, `content_type`,
+            and `data` (bytes). Each is attached to every recipient's copy.
 
     Returns:
         Number of recipients the message was sent to.
@@ -70,6 +99,7 @@ def send_email(to, subject: str, body: str) -> int:
         safe_subject = _hdr(subject)
         safe_sender = _hdr(sender)
         safe_reply = _hdr(reply_to) if reply_to else None
+        attachment_parts = _build_attachment_parts(attachments)
         for addr in recipients:
             safe_addr = _hdr(addr)
             m = MIMEMultipart()
@@ -79,6 +109,8 @@ def send_email(to, subject: str, body: str) -> int:
             if safe_reply:
                 m["Reply-To"] = safe_reply
             m.attach(MIMEText(body, "plain"))
+            for part in attachment_parts:
+                m.attach(part)
             smtp.sendmail(safe_sender, safe_addr, m.as_string())
     finally:
         try:

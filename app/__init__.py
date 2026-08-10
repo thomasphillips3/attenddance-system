@@ -390,6 +390,18 @@ def create_app(config_name=None):
             return jsonify({'error': 'Method not allowed'}), 405
         return render_template('errors/404.html'), 405
 
+    @app.errorhandler(413)
+    def payload_too_large_error(error):
+        """Werkzeug aborts oversized uploads before any view runs, so the size
+        limits inside the upload endpoints never get a chance to speak. Answer
+        in JSON so the compose form shows a real message instead of choking on
+        an HTML body in res.json()."""
+        from flask import render_template, request, jsonify
+        limit_mb = app.config.get('MAX_CONTENT_LENGTH', 0) // (1024 * 1024)
+        if request.path.startswith('/api/'):
+            return jsonify({'error': f'Upload too large (max {limit_mb}MB total)'}), 413
+        return render_template('errors/404.html'), 413
+
     @app.errorhandler(500)
     def internal_error(error):
         from flask import render_template, request, jsonify

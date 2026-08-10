@@ -12,6 +12,7 @@ from flask import current_app, jsonify, request, send_file, url_for
 from flask_login import current_user, login_required
 from sqlalchemy import desc, func, or_
 from sqlalchemy.exc import IntegrityError
+from werkzeug.utils import secure_filename
 
 from app import db, square_service
 from app.api import bp
@@ -46,6 +47,7 @@ from app.models import (
     Location,
     MakeupClass,
     Message,
+    MessageAttachment,
     ParentStudent,
     PaymentPlan,
     PaymentPlanInstallment,
@@ -2230,6 +2232,118 @@ def acknowledge_rule(rule_id):
 
 # ── Message / Email blast endpoints ─────────────────────────────────
 
+# Attachment limits. Per-file 5MB / per-message 10MB keeps a whole-studio blast
+# under Gmail's 25MB ceiling once base64 inflates it ~33%, and keeps the peak
+# working set survivable on the 256MB Fly machine (the send worker holds one
+# serialized copy at a time). MAX_CONTENT_LENGTH (16MB) rejects anything past
+# the total before Flask reads the body.
+_ATTACH_MAX_FILE_BYTES = 5 * 1024 * 1024
+_ATTACH_MAX_TOTAL_BYTES = 10 * 1024 * 1024
+_ATTACH_MAX_COUNT = 5
+
+# Extension -> content type. The stored type comes from THIS map, never from the
+# client's multipart Content-Type header (same reasoning as the image uploads:
+# a header-supplied type can carry an injection payload). An unlisted extension
+# is rejected outright, which keeps executables and active content (.svg, .html,
+# .js) out of both the DB and parents' inboxes.
+_ATTACH_TYPES = {
+    'pdf': 'application/pdf',
+    'png': 'image/png',
+    'jpg': 'image/jpeg',
+    'jpeg': 'image/jpeg',
+    'gif': 'image/gif',
+    'webp': 'image/webp',
+    'heic': 'image/heic',
+    'txt': 'text/plain',
+    'csv': 'text/csv',
+    'doc': 'application/msword',
+    'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'xls': 'application/vnd.ms-excel',
+    'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'ppt': 'application/vnd.ms-powerpoint',
+    'pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+}
+
+_ATTACH_ALLOWED_LABEL = 'PDF, image, Word, Excel, PowerPoint, TXT, or CSV'
+
+
+def _attachment_to_dict(a, message_id):
+    return {
+        'id': a.id, 'message_id': message_id,
+        'filename': a.filename, 'content_type': a.content_type, 'size': a.size,
+        'url': url_for('api.download_message_attachment',
+                       mid=message_id, aid=a.id),
+    }
+
+
+def _attachments_for_messages(message_ids):
+    """Bulk-load attachment metadata for a page of messages, blobs excluded.
+
+    Queries explicit columns so the LargeBinary never enters the result set -
+    a 50-row history page with a 5MB flyer on each would otherwise pull 250MB
+    through a 256MB machine. `MessageAttachment.data` is deferred as a second
+    line of defense."""
+    if not message_ids:
+        return {}
+    rows = (db.session.query(
+                MessageAttachment.id, MessageAttachment.message_id,
+                MessageAttachment.filename, MessageAttachment.content_type,
+                MessageAttachment.size)
+            .filter(MessageAttachment.message_id.in_(message_ids))
+            .order_by(MessageAttachment.id)
+            .all())
+    out: dict[int, list] = {}
+    for r in rows:
+        out.setdefault(r.message_id, []).append({
+            'id': r.id, 'message_id': r.message_id,
+            'filename': r.filename, 'content_type': r.content_type, 'size': r.size,
+            'url': url_for('api.download_message_attachment',
+                           mid=r.message_id, aid=r.id),
+        })
+    return out
+
+
+def _collect_message_attachments():
+    """Read, validate, and normalize uploaded files off a multipart message post.
+
+    Returns a list of dicts ready for MessageAttachment, or an (json, status)
+    error tuple. An empty list means the admin attached nothing, which is the
+    normal case and not an error."""
+    files = [f for f in request.files.getlist('attachments') if f and f.filename]
+    if not files:
+        return []
+    if len(files) > _ATTACH_MAX_COUNT:
+        return jsonify({'error': f'Too many files (max {_ATTACH_MAX_COUNT})'}), 400
+
+    out = []
+    total = 0
+    for f in files:
+        ext = f.filename.rsplit('.', 1)[-1].lower() if '.' in f.filename else ''
+        content_type = _ATTACH_TYPES.get(ext)
+        if not content_type:
+            return jsonify({
+                'error': f'"{f.filename}" is not an allowed file type '
+                         f'({_ATTACH_ALLOWED_LABEL})'
+            }), 400
+        raw = f.read()
+        if not raw:
+            return jsonify({'error': f'"{f.filename}" is empty'}), 400
+        if len(raw) > _ATTACH_MAX_FILE_BYTES:
+            mb = _ATTACH_MAX_FILE_BYTES // (1024 * 1024)
+            return jsonify({'error': f'"{f.filename}" is too large (max {mb}MB per file)'}), 400
+        total += len(raw)
+        if total > _ATTACH_MAX_TOTAL_BYTES:
+            mb = _ATTACH_MAX_TOTAL_BYTES // (1024 * 1024)
+            return jsonify({'error': f'Attachments total more than {mb}MB'}), 400
+        # secure_filename strips path separators, quotes, and newlines, so the
+        # stored name is safe to drop straight into a Content-Disposition header
+        # (both on download here and on the outgoing MIME part).
+        safe = secure_filename(f.filename) or f'attachment.{ext}'
+        out.append({'filename': safe[:255], 'content_type': content_type,
+                    'size': len(raw), 'data': raw})
+    return out
+
+
 @bp.route('/messages', methods=['GET'])
 @login_required
 def get_messages():
@@ -2240,6 +2354,7 @@ def get_messages():
     per_page = min(request.args.get('per_page', 50, type=int), 100)
     pagination = (Message.query.order_by(desc(Message.created_at))
                   .paginate(page=page, per_page=per_page, error_out=False))
+    attachments = _attachments_for_messages([m.id for m in pagination.items])
     return jsonify({
         'messages': [{
             'id': m.id, 'subject': m.subject, 'body': m.body,
@@ -2248,11 +2363,31 @@ def get_messages():
             'sent': m.sent, 'sent_at': _utc_iso(m.sent_at),
             'created_by': m.creator.full_name if m.creator else None,
             'created_at': _utc_iso(m.created_at),
+            'attachments': attachments.get(m.id, []),
         } for m in pagination.items],
         'pagination': {
             'page': page, 'pages': pagination.pages,
             'per_page': per_page, 'total': pagination.total,
         },
+    })
+
+
+@bp.route('/messages/<int:mid>/attachments/<int:aid>', methods=['GET'])
+@login_required
+def download_message_attachment(mid, aid):
+    """Serve an attachment back to staff - so the studio can re-download what
+    went out, and can send it by hand when SMTP isn't configured."""
+    from flask import Response
+    err = _staff_only()
+    if err:
+        return err
+    a = MessageAttachment.query.get_or_404(aid)
+    if a.message_id != mid:
+        return jsonify({'error': 'Attachment not found'}), 404
+    return Response(a.data, mimetype=a.content_type, headers={
+        # Always download, never render in-origin: even with a whitelist, an
+        # inline render of user-supplied bytes is a needless XSS surface.
+        'Content-Disposition': f'attachment; filename="{a.filename}"',
     })
 
 
@@ -2285,11 +2420,19 @@ def _send_message_blast(app, message_id, emails, subject, body):
     whole-studio blast ('all' recipients) is one SMTP round-trip per family and
     would exceed the 120s gunicorn worker timeout if sent inline (the same reason
     balance reminders are threaded). The Message row is saved as unsent before
-    this starts and flipped to sent here on success."""
+    this starts and flipped to sent here on success.
+
+    Attachment bytes are re-read from the DB here rather than handed in from the
+    request, so the uploaded buffers are free the moment the response returns."""
     with app.app_context():
         from app import email as email_service
         try:
-            email_service.send_email(emails, subject, body)
+            attachments = [
+                {'filename': a.filename, 'content_type': a.content_type, 'data': a.data}
+                for a in MessageAttachment.query.filter_by(message_id=message_id)
+                                                .order_by(MessageAttachment.id).all()
+            ]
+            email_service.send_email(emails, subject, body, attachments=attachments)
             m = Message.query.get(message_id)
             if m:
                 m.sent = True
@@ -2305,7 +2448,13 @@ def _send_message_blast(app, message_id, emails, subject, body):
 @bp.route('/messages', methods=['POST'])
 @login_required
 def send_message():
-    data = request.get_json()
+    # Two content types land here: multipart/form-data when the compose form
+    # carries attachments (files can't ride in JSON without a 33% base64 tax on
+    # a 256MB machine), and JSON for every other caller.
+    if request.files or request.mimetype == 'multipart/form-data':
+        data = request.form.to_dict()
+    else:
+        data = request.get_json(silent=True)
     if not data:
         return jsonify({'error': 'No data provided'}), 400
     subject = _clean_str(data.get('subject'))
@@ -2317,6 +2466,12 @@ def send_message():
         # Whole-studio blasts are admin-only (least privilege); teachers can
         # still message a class or an individual family.
         return jsonify({'error': 'Only an admin can message all parents'}), 403
+
+    # Validate attachments BEFORE the Message row exists, so a rejected file
+    # doesn't leave a phantom entry in the studio's message history.
+    attachments = _collect_message_attachments()
+    if isinstance(attachments, tuple):
+        return attachments  # error response
 
     emails = _resolve_recipient_emails(rtype, data.get('recipient_filter'))
     if isinstance(emails, tuple):
@@ -2336,7 +2491,14 @@ def send_message():
         sent=False,
     )
     db.session.add(msg)
+    db.session.flush()  # need msg.id to hang attachments off
+    saved_attachments = []
+    for att in attachments:
+        row = MessageAttachment(message_id=msg.id, **att)
+        db.session.add(row)
+        saved_attachments.append(row)
     db.session.commit()
+    attachment_meta = [_attachment_to_dict(a, msg.id) for a in saved_attachments]
 
     from app import email as email_service
     if email_service.is_configured():
@@ -2348,10 +2510,14 @@ def send_message():
         threading.Thread(target=_send_message_blast,
                          args=(app, msg.id, sorted(emails), subject, body),
                          daemon=True).start()
+        note = ''
+        if attachment_meta:
+            note = f' with {len(attachment_meta)} attachment(s)'
         return jsonify({
-            'message': f'Sending to {len(emails)} recipient(s)…',
+            'message': f'Sending to {len(emails)} recipient(s){note}…',
             'message_id': msg.id,
             'queued': len(emails),
+            'attachments': attachment_meta,
         }), 201
 
     # SMTP not configured — hand the admin the addresses to send manually.
@@ -2362,6 +2528,7 @@ def send_message():
         'recipient_emails': sorted(emails),
         'recipient_count': len(emails),
         'reply_to': reply_to,
+        'attachments': attachment_meta,
     }), 201
 
 
