@@ -90,6 +90,9 @@ function renderFamilies(families) {
             <div class="p-5">
                 <p class="text-sm text-ink-2 mb-2"><i class="fas fa-users mr-1"></i>${kids}</p>
                 ${f.primary_email ? '<p class="text-sm text-ink-3"><i class="fas fa-envelope mr-1"></i>' + esc(f.primary_email) + '</p>' : ''}
+                ${f.primary_phone ? '<p class="text-sm text-ink-3"><i class="fas fa-phone mr-1"></i>' + esc(f.primary_phone) + '</p>' : ''}
+                ${f.address_block ? '<p class="text-sm text-ink-3"><i class="fas fa-house mr-1"></i>' + esc(f.address_block) + '</p>' : ''}
+                ${f.secondary_name ? '<p class="text-sm text-ink-3"><i class="fas fa-user-group mr-1"></i>' + esc([f.secondary_name, f.secondary_phone].filter(Boolean).join(' · ')) + '</p>' : ''}
                 ${moneyRow}
             </div>
         </div>`;

@@ -177,8 +177,12 @@
                     </div>
                 </form>
 
-                <div class="mt-4 text-center">
+                <div class="mt-4 text-center space-y-2">
                     <p class="text-sm text-ink-2">Parent? <a href="{{ url_for('auth.register_parent') }}" class="font-medium text-primary-600 hover:text-primary-500">Register with your invite code</a></p>
+                    <div class="pt-3 border-t border-line">
+                        <p class="text-sm text-ink-2">New Parent? <a href="{{ url_for('main.public_register') }}" class="font-medium text-primary-600 hover:text-primary-500">Click here to register</a></p>
+                        <p class="text-xs text-ink-3 mt-1">No account yet? Start here to enroll your dancer.</p>
+                    </div>
                 </div>
 
                 <!-- Demo Credentials — dev only; hidden in production (DEBUG=False) -->

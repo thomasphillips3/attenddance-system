@@ -2601,6 +2601,10 @@ def get_families():
         row = {
             'id': f.id, 'name': f.name,
             'primary_email': f.primary_email, 'primary_phone': f.primary_phone,
+            'secondary_name': f.secondary_name, 'secondary_email': f.secondary_email,
+            'secondary_phone': f.secondary_phone,
+            'address': f.address, 'city': f.city, 'state': f.state,
+            'zip_code': f.zip_code, 'address_block': f.address_block,
             'student_count': len(students),
             'students': [{'id': s.id, 'full_name': s.full_name} for s in students],
         }
@@ -2632,6 +2636,13 @@ def create_family():
         name=name,
         primary_email=_clean_str(data.get('primary_email')) or None,
         primary_phone=_clean_str(data.get('primary_phone')) or None,
+        secondary_name=_clean_str(data.get('secondary_name'), 120) or None,
+        secondary_email=_clean_str(data.get('secondary_email'), 120) or None,
+        secondary_phone=_clean_str(data.get('secondary_phone'), 20) or None,
+        address=_clean_str(data.get('address'), 200) or None,
+        city=_clean_str(data.get('city'), 80) or None,
+        state=_clean_str(data.get('state'), 40) or None,
+        zip_code=_clean_str(data.get('zip_code'), 20) or None,
     )
     db.session.add(f)
     db.session.commit()
@@ -5008,6 +5019,27 @@ def delete_donation(did):
 
 # ── Self-registration (public) ──────────────────────────────────────
 
+# Answers that mean "no allergies". The form REQUIRES an allergies answer and
+# tells parents to type "None", which is what makes a blank unambiguous - but
+# storing that literal would put every allergy-free dancer in the red medical
+# callout on their page, the parent portal, and the approval queue, until staff
+# stop reading it. Worse, "None" is a truthy value, so it would block the
+# returning-dancer backfill from ever recording a real allergy later. The
+# parent's literal answer stays on the Registration row; the Student gets NULL.
+_NO_ALLERGY_ANSWERS = {
+    'none', 'none.', 'n/a', 'n/a.', 'na', 'no', 'no.', 'nil', 'nope',
+    'no allergies', 'no known allergies', 'nka', 'no medical needs',
+    '-', '--', 'n a',
+}
+
+
+def _normalized_allergies(raw):
+    """The dancer's allergy text, or None when the answer means 'nothing here'."""
+    text = (raw or '').strip()
+    if not text or text.lower().strip(' .!') in _NO_ALLERGY_ANSWERS:
+        return None
+    return text
+
 @bp.route('/registration/open', methods=['GET'])
 def registration_open_info():
     """Public: is enrollment open, plus the classes a family can request."""
@@ -5080,10 +5112,16 @@ def submit_registration():
     # so uncapped a scripted submit could store multi-MB values and bloat the DB).
     parent_name = _clean_str(data.get('parent_name'), 120)
     parent_email = _clean_str(data.get('parent_email'), 200)
+    parent_phone = _clean_str(data.get('parent_phone'), 40)
     if not parent_name or not parent_email:
         return jsonify({'error': 'Parent name and email are required'}), 400
     if '@' not in parent_email or '.' not in parent_email.split('@')[-1]:
         return jsonify({'error': 'Please enter a valid email address'}), 400
+    # Phone is required as of Aug 2026 (studio request): the office needs a
+    # number for every family, and chasing it after the fact never happened.
+    # Enforced server-side, not just in the form, so it holds for every caller.
+    if not parent_phone:
+        return jsonify({'error': 'A parent phone number is required'}), 400
     # Volume circuit breakers for the one unauthenticated write surface (the
     # remote IP isn't usable behind the proxy, so throttle on what we have):
     # a parent re-submitting is fine a couple of times, but unbounded submits
@@ -5112,11 +5150,35 @@ def submit_registration():
         fn = _clean_str(s.get('first_name'), 80)
         if not fn:
             continue
+        # Last name, date of birth, and the allergies/medical field are all
+        # required as of Aug 2026 (studio request). Allergies being required is
+        # deliberate: a blank was ambiguous between "none" and "didn't answer",
+        # so the form asks for "None" and the studio gets an explicit answer.
+        ln = _clean_str(s.get('last_name'), 80)
+        if not ln:
+            return jsonify({'error': f'A last name is required for {fn}'}), 400
+        dob = _clean_str(s.get('dob'), 20)
+        if not dob:
+            return jsonify({'error': f'A date of birth is required for {fn}'}), 400
+        try:
+            datetime.strptime(dob, '%Y-%m-%d')
+        except ValueError:
+            return jsonify({'error': f'Date of birth for {fn} must be YYYY-MM-DD'}), 400
+        allergies = _clean_str(s.get('allergies'), 500)
+        if not allergies:
+            return jsonify({
+                'error': f'Allergies / medical needs are required for {fn} '
+                         f'(enter "None" if there are none)'}), 400
+        student_email = _clean_str(s.get('email'), 200)
+        if student_email and ('@' not in student_email
+                              or '.' not in student_email.split('@')[-1]):
+            return jsonify({'error': f'The email for {fn} is not a valid address'}), 400
         students.append({
             'first_name': fn,
-            'last_name': _clean_str(s.get('last_name'), 80),
-            'dob': _clean_str(s.get('dob'), 20),
-            'allergies': _clean_str(s.get('allergies'), 500),
+            'last_name': ln,
+            'dob': dob,
+            'allergies': allergies,
+            'email': student_email,
         })
         if len(students) >= 30:
             break
@@ -5129,7 +5191,17 @@ def submit_registration():
     reg = Registration(
         parent_name=parent_name,
         parent_email=parent_email,
-        parent_phone=_clean_str(data.get('parent_phone'), 40) or None,
+        parent_phone=parent_phone,
+        parent2_name=_clean_str(data.get('parent2_name'), 120) or None,
+        parent2_email=_clean_str(data.get('parent2_email'), 200) or None,
+        parent2_phone=_clean_str(data.get('parent2_phone'), 40) or None,
+        emergency_name=_clean_str(data.get('emergency_name'), 120) or None,
+        emergency_phone=_clean_str(data.get('emergency_phone'), 40) or None,
+        emergency_relationship=_clean_str(data.get('emergency_relationship'), 60) or None,
+        address=_clean_str(data.get('address'), 200) or None,
+        city=_clean_str(data.get('city'), 80) or None,
+        state=_clean_str(data.get('state'), 40) or None,
+        zip_code=_clean_str(data.get('zip_code'), 20) or None,
         students_json=json.dumps(students),
         class_ids=','.join(str(int(c)) for c in raw_class_ids[:50] if str(c).isdigit()),
         note=_clean_str(data.get('note'), 2000) or None,
@@ -5174,6 +5246,11 @@ def list_registrations():
             'note': r.note, 'status': r.status, 'created_at': _utc_iso(r.created_at),
             'returning': m_fam is not None or bool(m_students),
             'matched_family': m_fam.name if m_fam else None,
+            'parent2_name': r.parent2_name, 'parent2_email': r.parent2_email,
+            'parent2_phone': r.parent2_phone,
+            'emergency_name': r.emergency_name, 'emergency_phone': r.emergency_phone,
+            'emergency_relationship': r.emergency_relationship,
+            'address': r.address, 'city': r.city, 'state': r.state, 'zip_code': r.zip_code,
         })
     return jsonify({
         'registrations': out,
@@ -5252,6 +5329,53 @@ def approve_registration(rid):
         # Backfill so the NEXT re-registration matches on the family fast path.
         fam.primary_email = reg.parent_email
 
+    # Household details from the form. A re-registration is the family's most
+    # recent statement of where they live and who the second guardian is, so a
+    # provided value wins; a blank never wipes what's already on file.
+    for field, value in (('primary_phone', reg.parent_phone),
+                         ('secondary_name', reg.parent2_name),
+                         ('secondary_email', reg.parent2_email),
+                         ('secondary_phone', reg.parent2_phone),
+                         ('address', reg.address), ('city', reg.city),
+                         ('state', reg.state), ('zip_code', reg.zip_code)):
+        if value:
+            setattr(fam, field, value)
+
+    # Relationship rides along in the contact name ("Jane Doe (Aunt)") rather
+    # than in its own Student column: every place that already renders an
+    # emergency contact - detail page, student form, serializer - then shows it
+    # for free, and "who is this person" is the whole point of the field.
+    emergency_name = reg.emergency_name or ''
+    if emergency_name and reg.emergency_relationship:
+        emergency_name = f'{emergency_name} ({reg.emergency_relationship})'
+    emergency_name = emergency_name[:100] or None  # Student column is String(100)
+
+    # Answers the studio should look at rather than have silently resolved.
+    allergy_updates = []
+
+    # Dancer emails are unique across students (DB-level). A family that types
+    # one parent address for every sibling, or reuses an address already on
+    # another dancer, would otherwise blow up approval with an IntegrityError
+    # mid-transaction. Claim each address at most once and report the rest.
+    reg_emails = [(s.get('email') or '').strip().lower()
+                  for s in students if (s.get('email') or '').strip()]
+    taken_emails = set()
+    if reg_emails:
+        taken_emails = {e.lower() for (e,) in db.session.query(Student.email)
+                        .filter(func.lower(Student.email).in_(reg_emails)).all() if e}
+    skipped_emails = []
+
+    def _claim_email(raw, who):
+        """Return an email safe to store on a new student, or None."""
+        email = (raw or '').strip()
+        if not email:
+            return None
+        if email.lower() in taken_emails:
+            skipped_emails.append(f'{who} ({email})')
+            return None
+        taken_emails.add(email.lower())
+        return email
+
     class_ids = [int(x) for x in (reg.class_ids or '').split(',') if x.isdigit()]
     # Only enroll in classes that still exist — a class deleted between submit and
     # approval would otherwise leave a dangling enrollment that 500s when the
@@ -5317,6 +5441,35 @@ def approve_registration(rid):
                 existing.is_active = True
             if existing.family_id != fam.id:
                 existing.family_id = fam.id
+            # Backfill only what's missing on a returning dancer - the office
+            # may have corrected these by hand, and a re-registration shouldn't
+            # overwrite that. New information still gets captured.
+            #
+            # The emergency contact is written as ONE record, never field by
+            # field: filling just the empty half would pair the name already on
+            # file with a phone number belonging to a different person, and
+            # staff would call the wrong contact in the emergency the field
+            # exists for. Only adopt the submitted contact when there is no
+            # contact on file at all.
+            if (emergency_name or reg.emergency_phone) and not (
+                    existing.emergency_contact_name or existing.emergency_contact_phone):
+                existing.emergency_contact_name = emergency_name
+                existing.emergency_contact_phone = reg.emergency_phone
+            if not existing.email:
+                claimed = _claim_email(s.get('email'), f'{fn} {ln}')
+                if claimed:
+                    existing.email = claimed
+            # Allergies stay write-once for the same reason: a parent skimming
+            # the form and typing "None" must not erase an EpiPen note the
+            # studio recorded. But a DIFFERENT answer is new medical
+            # information, so surface it for a human instead of dropping it.
+            submitted_allergies = _normalized_allergies(s.get('allergies'))
+            if submitted_allergies and not existing.allergies:
+                existing.allergies = submitted_allergies
+            elif (submitted_allergies
+                  and submitted_allergies.strip().lower() != (existing.allergies or '').strip().lower()):
+                allergy_updates.append(
+                    f'{fn} {ln}: form says "{submitted_allergies}", on file "{existing.allergies}"')
             _enroll(existing)
             returning.append(f'{fn} {ln}')
             continue
@@ -5329,7 +5482,10 @@ def approve_registration(rid):
         student = Student(
             first_name=fn, last_name=ln,
             family_id=fam.id, parent_email=reg.parent_email, parent_phone=reg.parent_phone,
-            date_of_birth=dob, allergies=(s.get('allergies') or '').strip() or None,
+            date_of_birth=dob, allergies=_normalized_allergies(s.get('allergies')),
+            email=_claim_email(s.get('email'), f'{fn} {ln}'),
+            emergency_contact_name=emergency_name,
+            emergency_contact_phone=reg.emergency_phone,
         )
         db.session.add(student)
         db.session.flush()
@@ -5384,8 +5540,16 @@ def approve_registration(rid):
     if full_skips:
         msg += (f' — {len(full_skips)} enrollment(s) skipped (class full): '
                 f'{"; ".join(full_skips)}. Raise the capacity or use the waitlist.')
+    if skipped_emails:
+        msg += (f' - dancer email already in use, left blank for: '
+                f'{"; ".join(skipped_emails)}')
+    if allergy_updates:
+        msg += (f' - CHECK: the form reports different allergies / medical needs than '
+                f'what is on file, so nothing was overwritten. Review and update by hand: '
+                f'{"; ".join(allergy_updates)}')
     return jsonify({'message': msg, 'students': created, 'full_skipped': full_skips,
-                    'returning_dancers': returning, 'matched_existing_family': matched_existing})
+                    'returning_dancers': returning, 'matched_existing_family': matched_existing,
+                    'skipped_emails': skipped_emails, 'allergy_updates': allergy_updates})
 
 
 @bp.route('/registrations/<int:rid>/reject', methods=['POST'])

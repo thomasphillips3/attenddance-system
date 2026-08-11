@@ -96,10 +96,33 @@ class Family(db.Model):
     name = db.Column(db.String(100), nullable=False)
     primary_email = db.Column(db.String(120))
     primary_phone = db.Column(db.String(20))
+
+    # Second parent/guardian. The household is the right home for this, not the
+    # dancer: siblings share it, and the studio wants "who else can I call".
+    secondary_name = db.Column(db.String(120))
+    secondary_email = db.Column(db.String(120))
+    secondary_phone = db.Column(db.String(20))
+
+    # Home address, structured rather than one blob so it can address an
+    # envelope (recital programs, costume shipments) without re-parsing.
+    address = db.Column(db.String(200))
+    city = db.Column(db.String(80))
+    state = db.Column(db.String(40))
+    zip_code = db.Column(db.String(20))
+
     is_active = db.Column(db.Boolean, default=True, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
     students = db.relationship('Student', backref='family', lazy='dynamic')
+
+    @property
+    def address_block(self):
+        """One-line address, or '' when nothing is on file."""
+        tail = ', '.join(p for p in [self.city, self.state] if p)
+        if self.zip_code:
+            tail = f'{tail} {self.zip_code}'.strip()
+        return ', '.join(p for p in [self.address, tail] if p)
+
     def __repr__(self):
         return f'<Family {self.name}>'
 
@@ -987,7 +1010,25 @@ class Registration(db.Model):
     parent_name = db.Column(db.String(120), nullable=False)
     parent_email = db.Column(db.String(120), nullable=False)
     parent_phone = db.Column(db.String(20))
-    students_json = db.Column(db.Text)  # JSON list of {first_name, last_name, dob, allergies}
+
+    # Second parent/guardian (optional) and emergency contact. Both flow onto
+    # the Family / Student records at approval.
+    parent2_name = db.Column(db.String(120))
+    parent2_email = db.Column(db.String(120))
+    parent2_phone = db.Column(db.String(20))
+    emergency_name = db.Column(db.String(120))
+    emergency_phone = db.Column(db.String(20))
+    emergency_relationship = db.Column(db.String(60))
+
+    # Home address -> Family on approval.
+    address = db.Column(db.String(200))
+    city = db.Column(db.String(80))
+    state = db.Column(db.String(40))
+    zip_code = db.Column(db.String(20))
+
+    # JSON list of {first_name, last_name, dob, allergies, email}. Rows written
+    # before dancer email existed simply have no `email` key.
+    students_json = db.Column(db.Text)
     class_ids = db.Column(db.String(200))  # comma-separated requested class ids
     note = db.Column(db.Text)
     status = db.Column(db.String(20), default='pending', nullable=False)  # pending, approved, rejected

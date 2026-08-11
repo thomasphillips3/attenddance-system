@@ -261,6 +261,32 @@
     <p class="{{ p }}">Returning families use the exact same link. The system matches them by email, so
     it re-enrolls existing dancers instead of creating duplicates, and flags the request
     <strong>Returning</strong> in your queue.</p>
+    <p class="{{ p }}">The login page also points new families at the same form ("New Parent? Click here
+    to register"), so a parent who lands there by mistake isn't stuck.</p>
+
+    <h3 class="{{ h3 }}">What the form asks for</h3>
+    <p class="{{ p }}">Required, and the form won't submit without them: parent name, email, and
+    <strong>phone</strong>; and for each dancer, <strong>first and last name</strong>,
+    <strong>date of birth</strong>, and <strong>allergies / medical needs / other notes</strong>.
+    That last one is required on purpose - a blank used to be ambiguous between "no allergies" and
+    "didn't answer", so parents are asked to type "None" when there's nothing. Answers like "None",
+    "n/a", or "no known allergies" are filed as <em>no allergy</em>, so the red allergy warning on a
+    dancer's page keeps meaning something.</p>
+    <p class="{{ p }}">Optional: a second parent/guardian, home address, an emergency contact with
+    their relationship to the dancer, and the dancer's own email.</p>
+    <p class="{{ p }}">Approving files all of it automatically. The address and second guardian go on
+    the <strong>family</strong>; the emergency contact, dancer email, and allergies go on each
+    <strong>dancer</strong>.</p>
+    {% call warn("Re-registration refreshes your records") %}
+      When a family registers again, a new address or second guardian replaces what's on file - that's
+      how a move gets picked up. Blanks never erase anything. A returning dancer's emergency contact
+      and allergies are <strong>never</strong> overwritten, so anything you corrected by hand stands.
+      If the form disagrees with what's on file about allergies, the approve message says
+      <strong>CHECK:</strong> and shows you both answers - update the dancer by hand after you've
+      decided which is right.
+    {% endcall %}
+    <p class="{{ p }}">Two dancers can't share the same dancer email. If a family puts one address on
+    both siblings, the first gets it, and the approve message tells you which ones were left blank.</p>
 
     <h3 class="{{ h3 }}">Parent portal accounts (invite codes)</h3>
     <p class="{{ p }}">Approving a registration sets a family up. For a dancer you entered by hand, you

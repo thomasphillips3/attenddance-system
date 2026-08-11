@@ -39,6 +39,31 @@ PERFORMANCE_COLUMNS = [
     ('recital_id', 'INTEGER'),
 ]
 
+# Second guardian + home address, collected on the public registration form and
+# carried onto the household at approval.
+FAMILY_COLUMNS = [
+    ('secondary_name', 'VARCHAR(120)'),
+    ('secondary_email', 'VARCHAR(120)'),
+    ('secondary_phone', 'VARCHAR(20)'),
+    ('address', 'VARCHAR(200)'),
+    ('city', 'VARCHAR(80)'),
+    ('state', 'VARCHAR(40)'),
+    ('zip_code', 'VARCHAR(20)'),
+]
+
+REGISTRATION_COLUMNS = [
+    ('parent2_name', 'VARCHAR(120)'),
+    ('parent2_email', 'VARCHAR(120)'),
+    ('parent2_phone', 'VARCHAR(20)'),
+    ('emergency_name', 'VARCHAR(120)'),
+    ('emergency_phone', 'VARCHAR(20)'),
+    ('emergency_relationship', 'VARCHAR(60)'),
+    ('address', 'VARCHAR(200)'),
+    ('city', 'VARCHAR(80)'),
+    ('state', 'VARCHAR(40)'),
+    ('zip_code', 'VARCHAR(20)'),
+]
+
 
 def _add_missing_columns(conn, inspector, table, columns):
     existing = [c['name'] for c in inspector.get_columns(table)]
@@ -108,6 +133,10 @@ def run_migrations(db):
             _add_missing_columns(conn, inspector, 'classes', CLASS_COLUMNS)
         if 'performances' in inspector.get_table_names():
             _add_missing_columns(conn, inspector, 'performances', PERFORMANCE_COLUMNS)
+        if 'families' in inspector.get_table_names():
+            _add_missing_columns(conn, inspector, 'families', FAMILY_COLUMNS)
+        if 'registrations' in inspector.get_table_names():
+            _add_missing_columns(conn, inspector, 'registrations', REGISTRATION_COLUMNS)
         if 'attendance' in inspector.get_table_names():
             _enforce_attendance_uniqueness(conn)
         _seed_default_season(conn, inspector)

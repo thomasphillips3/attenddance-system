@@ -49,3 +49,8 @@ jobs:
         env:
           RFID_ENABLED: "false"
         run: python tests/test_message_attachments.py
+
+      - name: Registration field harness
+        env:
+          RFID_ENABLED: "false"
+        run: python tests/test_registration_fields.py

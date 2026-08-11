@@ -45,7 +45,36 @@
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <input id="p-name" placeholder="Your full name *" class="border border-line-2 rounded-md px-3 py-2 text-sm">
                     <input id="p-email" type="email" placeholder="Email *" class="border border-line-2 rounded-md px-3 py-2 text-sm">
-                    <input id="p-phone" placeholder="Phone" class="border border-line-2 rounded-md px-3 py-2 text-sm sm:col-span-2">
+                    <input id="p-phone" type="tel" placeholder="Phone *" class="border border-line-2 rounded-md px-3 py-2 text-sm sm:col-span-2">
+                </div>
+            </div>
+
+            <div>
+                <h2 class="text-sm font-semibold text-ink-2 uppercase tracking-wider mb-2">Additional Parent / Guardian <span class="normal-case tracking-normal font-normal text-ink-3">(optional)</span></h2>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <input id="p2-name" placeholder="Full name" class="border border-line-2 rounded-md px-3 py-2 text-sm sm:col-span-2">
+                    <input id="p2-email" type="email" placeholder="Email" class="border border-line-2 rounded-md px-3 py-2 text-sm">
+                    <input id="p2-phone" type="tel" placeholder="Phone" class="border border-line-2 rounded-md px-3 py-2 text-sm">
+                </div>
+            </div>
+
+            <div>
+                <h2 class="text-sm font-semibold text-ink-2 uppercase tracking-wider mb-2">Home Address</h2>
+                <div class="grid grid-cols-1 sm:grid-cols-6 gap-3">
+                    <input id="a-street" placeholder="Street address" autocomplete="street-address" class="border border-line-2 rounded-md px-3 py-2 text-sm sm:col-span-6">
+                    <input id="a-city" placeholder="City" autocomplete="address-level2" class="border border-line-2 rounded-md px-3 py-2 text-sm sm:col-span-3">
+                    <input id="a-state" placeholder="State" autocomplete="address-level1" class="border border-line-2 rounded-md px-3 py-2 text-sm sm:col-span-1">
+                    <input id="a-zip" placeholder="ZIP" autocomplete="postal-code" inputmode="numeric" class="border border-line-2 rounded-md px-3 py-2 text-sm sm:col-span-2">
+                </div>
+            </div>
+
+            <div>
+                <h2 class="text-sm font-semibold text-ink-2 uppercase tracking-wider mb-2">Emergency Contact</h2>
+                <p class="text-xs text-ink-3 mb-2">Someone other than the parents above we can call if we can't reach you.</p>
+                <div class="grid grid-cols-1 sm:grid-cols-6 gap-3">
+                    <input id="e-name" placeholder="Full name" class="border border-line-2 rounded-md px-3 py-2 text-sm sm:col-span-3">
+                    <input id="e-phone" type="tel" placeholder="Phone" class="border border-line-2 rounded-md px-3 py-2 text-sm sm:col-span-3">
+                    <input id="e-rel" placeholder="Relationship to dancer (aunt, grandparent...)" class="border border-line-2 rounded-md px-3 py-2 text-sm sm:col-span-6">
                 </div>
             </div>
 
@@ -93,9 +122,12 @@ function addStudent(){
         </div>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <input class="s-first border border-line-2 rounded px-2 py-1.5 text-sm" placeholder="First name *">
-            <input class="s-last border border-line-2 rounded px-2 py-1.5 text-sm" placeholder="Last name">
-            <label class="text-xs text-ink-3">Date of birth<input type="date" class="s-dob border border-line-2 rounded px-2 py-1.5 text-sm w-full"></label>
-            <input class="s-allergies border border-line-2 rounded px-2 py-1.5 text-sm" placeholder="Allergies / notes">
+            <input class="s-last border border-line-2 rounded px-2 py-1.5 text-sm" placeholder="Last name *">
+            <label class="text-xs text-ink-3">Date of birth *<input type="date" class="s-dob border border-line-2 rounded px-2 py-1.5 text-sm w-full"></label>
+            <input type="email" class="s-email border border-line-2 rounded px-2 py-1.5 text-sm" placeholder="Dancer's email (optional)">
+            <label class="text-xs text-ink-3 sm:col-span-2">Allergies / medical needs / other notes *
+                <input class="s-allergies border border-line-2 rounded px-2 py-1.5 text-sm w-full" placeholder="Type None if there are none">
+            </label>
         </div>`;
     document.getElementById('students').appendChild(div);
 }
@@ -119,22 +151,41 @@ async function init(){
 document.getElementById('reg-form').addEventListener('submit', async e=>{
     e.preventDefault();
     const err = document.getElementById('err'); err.classList.add('hidden');
+    const val = id => document.getElementById(id).value.trim();
     const students = [...document.querySelectorAll('#students [data-idx]')].map(d=>({
         first_name: d.querySelector('.s-first').value.trim(),
         last_name: d.querySelector('.s-last').value.trim(),
         dob: d.querySelector('.s-dob').value,
         allergies: d.querySelector('.s-allergies').value.trim(),
+        email: d.querySelector('.s-email').value.trim(),
     })).filter(s=>s.first_name);
     const body = {
-        parent_name: document.getElementById('p-name').value.trim(),
-        parent_email: document.getElementById('p-email').value.trim(),
-        parent_phone: document.getElementById('p-phone').value.trim(),
+        parent_name: val('p-name'),
+        parent_email: val('p-email'),
+        parent_phone: val('p-phone'),
+        parent2_name: val('p2-name'),
+        parent2_email: val('p2-email'),
+        parent2_phone: val('p2-phone'),
+        address: val('a-street'), city: val('a-city'),
+        state: val('a-state'), zip_code: val('a-zip'),
+        emergency_name: val('e-name'),
+        emergency_phone: val('e-phone'),
+        emergency_relationship: val('e-rel'),
         students,
         class_ids: [...document.querySelectorAll('.c-box:checked')].map(b=>b.value),
-        note: document.getElementById('note').value.trim(),
+        note: val('note'),
     };
-    if (!body.parent_name || !body.parent_email){ err.textContent='Please enter your name and email.'; err.classList.remove('hidden'); return; }
-    if (!students.length){ err.textContent='Please add at least one dancer.'; err.classList.remove('hidden'); return; }
+    const fail = m => { err.textContent = m; err.classList.remove('hidden'); err.scrollIntoView({block:'center'}); };
+    if (!body.parent_name || !body.parent_email){ fail('Please enter your name and email.'); return; }
+    if (!body.parent_phone){ fail('Please enter a phone number we can reach you at.'); return; }
+    if (!students.length){ fail('Please add at least one dancer.'); return; }
+    // Mirror the server's per-dancer requirements so a parent gets the fix
+    // inline instead of a round-trip. The server enforces these too.
+    for (const s of students){
+        if (!s.last_name){ fail(`Please add a last name for ${s.first_name}.`); return; }
+        if (!s.dob){ fail(`Please add a date of birth for ${s.first_name}.`); return; }
+        if (!s.allergies){ fail(`Please answer allergies / medical needs for ${s.first_name} - type "None" if there are none.`); return; }
+    }
     try {
         const res = await fetch('/api/register', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
         const d = await res.json();
