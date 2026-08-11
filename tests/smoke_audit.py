@@ -2562,7 +2562,7 @@ def run_registration_field_caps():
     with app.test_client() as c:
         r = c.post("/api/register", json={
             "parent_name": huge, "parent_email": "fieldcaps@x.com",
-            "parent_phone": "313-555-0100",
+            **REG_CONTACT,
             "students": [reg_student(huge, huge, allergies=huge)]})
     with app.app_context():
         reg = (Registration.query.filter_by(parent_email="fieldcaps@x.com")
@@ -2598,11 +2598,11 @@ def run_registration_dedupe():
     email = "dedupe-fam@x.com"
     with app.test_client() as pub:
         pub.post("/api/register", json={
-            "parent_name": "Dana Dedupe", "parent_email": email, "parent_phone": "313-555-0100",
+            "parent_name": "Dana Dedupe", "parent_email": email, **REG_CONTACT,
             "students": [reg_student("Mia", "Dedupe")]})
         pub.post("/api/register", json={
             "parent_name": "Dana Dedupe", "parent_email": email.upper(),  # case differs
-            "parent_phone": "313-555-0100",
+            **REG_CONTACT,
             "students": [reg_student("Mia", "Dedupe"),
                          reg_student("Zoe", "Dedupe")],
             "class_ids": [fall_id]})
@@ -2634,7 +2634,7 @@ def run_registration_dedupe():
         db.session.commit()
     with app.test_client() as pub:
         pub.post("/api/register", json={
-            "parent_name": "Dana Dedupe", "parent_email": email, "parent_phone": "313-555-0100",
+            "parent_name": "Dana Dedupe", "parent_email": email, **REG_CONTACT,
             "students": [reg_student("Mia", "Dedupe")]})
     with app.test_client() as c:
         login(c, "admin", "admin123")
@@ -2668,7 +2668,7 @@ def run_registration_pilot_shape_dedupe():
     with app.test_client() as pub:
         pub.post("/api/register", json={
             "parent_name": "Pia Pilot", "parent_email": "PILOT-PARENT@x.com",  # case differs
-            "parent_phone": "313-555-0100",
+            **REG_CONTACT,
             "students": [reg_student("Pilot", "Kid"), reg_student("New", "Sib")]})
     with app.test_client() as c:
         login(c, "admin", "admin123")
@@ -2715,7 +2715,7 @@ def run_approval_links_sibling_to_portal():
     with app.test_client() as pub:
         pub.post("/api/register", json={
             "parent_name": "Pat Portal", "parent_email": "portal-fam@x.com",
-            "parent_phone": "313-555-0100",
+            **REG_CONTACT,
             "students": [reg_student("Poppy", "Portal"), reg_student("Newby", "Portal")]})
     with app.test_client() as c:
         login(c, "admin", "admin123")
@@ -2733,6 +2733,16 @@ def run_approval_links_sibling_to_portal():
     record("Approval links a new sibling to the family's existing portal account",
            linked and "Newby Portal" in kid_names and portal_ok,
            f"linked={linked} children={kid_names} portal={portal_ok} msg={res.get('message', '')[:80]}", "P1")
+
+
+# Registration-level fields the public form REQUIRES as of Aug 2026 (parent phone
+# + emergency contact name/phone). Spread into every payload so a test that isn't
+# about those rules keeps exercising its real subject instead of 400ing at the door.
+REG_CONTACT = {
+    "parent_phone": "313-555-0100",
+    "emergency_name": "Emergency Contact",
+    "emergency_phone": "313-555-0911",
+}
 
 
 def reg_student(first, last="Test", **over):
@@ -2759,7 +2769,7 @@ def run_registration_volume_caps():
         Setting.set("registration_open", "1")
         db.session.commit()
     payload = lambda i: {"parent_name": "Cap Test", "parent_email": "cap-test@x.com",
-                         "parent_phone": "313-555-0100",
+                         **REG_CONTACT,
                          "students": [reg_student(f"Kid{i}")]}
     with app.test_client() as pub:
         codes = [pub.post("/api/register", json=payload(i)).status_code for i in range(4)]
@@ -2773,7 +2783,7 @@ def run_registration_volume_caps():
         with app.test_client() as pub:
             r = pub.post("/api/register", json={
                 "parent_name": "Other", "parent_email": "other-cap@x.com",
-                "parent_phone": "313-555-0100", "students": [reg_student("Kid")]})
+                **REG_CONTACT, "students": [reg_student("Kid")]})
         record(f"Global pending cap trips at the limit -> {r.status_code}",
                r.status_code == 429, f"got {r.status_code}", "P2")
     finally:
@@ -2796,7 +2806,7 @@ def run_registration_flow():
         db.session.commit()
     with app.test_client() as pub:
         r = pub.post("/api/register", json={"parent_name": "Jo", "parent_email": "jo@x.com",
-                                            "parent_phone": "313-555-0100",
+                                            **REG_CONTACT,
                                             "students": [reg_student("Kid")]})
         record(f"Registration blocked when closed -> {r.status_code}",
                r.status_code == 403, f"got {r.status_code}", "P2")
@@ -2807,18 +2817,18 @@ def run_registration_flow():
     with app.test_client() as pub:
         # bad email rejected
         r = pub.post("/api/register", json={"parent_name": "Jo", "parent_email": "notanemail",
-                                            "parent_phone": "313-555-0100",
+                                            **REG_CONTACT,
                                             "students": [reg_student("Kid")]})
         record(f"Registration rejects bad email -> {r.status_code}", r.status_code == 400,
                f"got {r.status_code}", "P3")
         # no students rejected
         r = pub.post("/api/register", json={"parent_name": "Jo", "parent_email": "jo@x.com",
-                                            "parent_phone": "313-555-0100", "students": []})
+                                            **REG_CONTACT, "students": []})
         record(f"Registration rejects no dancers -> {r.status_code}", r.status_code == 400,
                f"got {r.status_code}", "P3")
         # valid submission
         r = pub.post("/api/register", json={"parent_name": "Riverside Family", "parent_email": "riv@x.com",
-                                            "parent_phone": "313-555-0100",
+                                            **REG_CONTACT,
                                             "students": [reg_student("Ivy", "River"),
                                                          reg_student("Max", "River")]})
         record(f"Valid registration accepted -> {r.status_code}", r.status_code == 201,
@@ -2855,7 +2865,7 @@ def run_registration_flow():
     from app.models import Registration as _Reg
     with app.test_client() as pub:  # no login
         ok = lambda **kw: dict({"parent_name": "P", "parent_email": "p@x.com",
-                                "parent_phone": "313-555-0100",
+                                **REG_CONTACT,
                                 "students": [reg_student("Ok")]}, **kw)
         malformed = [
             (ok(students="notalist"), 400, "students=string"),
@@ -2869,6 +2879,8 @@ def run_registration_flow():
             (ok(students=[reg_student("BadDob", dob="bad")]), 400, "dancer dob not a date"),
             (ok(students=[reg_student("NoAllergy", allergies="")]), 400, "dancer missing allergies"),
             (ok(students=[reg_student("BadEmail", email="nope")]), 400, "dancer email malformed"),
+            (ok(emergency_name=""), 400, "no emergency contact name"),
+            (ok(emergency_phone=""), 400, "no emergency contact phone"),
         ]
         for body, want, label in malformed:
             r = pub.post("/api/register", json=body)
@@ -2876,17 +2888,25 @@ def run_registration_flow():
                    r.status_code == want and r.status_code < 500, f"got {r.status_code} (want {want})", "P2")
         # Cap: 100 dancers submitted -> at most 30 stored.
         pub.post("/api/register", json={"parent_name": "Capped", "parent_email": "cap@x.com",
-                                        "parent_phone": "313-555-0100",
+                                        **REG_CONTACT,
                                         "students": [reg_student(f"D{i}") for i in range(100)]})
     with app.app_context():
         capped = _Reg.query.filter_by(parent_email="cap@x.com").first()
         n = len(_json.loads(capped.students_json)) if capped else 999
         record(f"Public register caps dancer count (stored {n})", n <= 30, f"stored {n}", "P3")
-    # Malformed + XSS registration approves cleanly and renders escaped-at-output.
+    # Malformed + XSS registration approves cleanly and survives the list
+    # renders. Output ESCAPING is asserted separately, by
+    # tests/test_template_escaping.py - status codes here can't see it.
     with app.test_client() as pub:
         pub.post("/api/register", json={
             "parent_name": "<script>x</script>", "parent_email": "xss@x.com",
             "parent_phone": "<script>313</script>",
+            "emergency_name": "<script>alert(1)</script>",
+            "emergency_phone": "<img src=x onerror=alert(1)>",
+            "emergency_relationship": "<b>aunt</b>",
+            "address": "<script>evil</script> 123 Main",
+            "city": "<i>Oak Park</i>", "state": "MI", "zip_code": "48237",
+            "parent2_name": "<script>p2</script>",
             "students": [{"first_name": "<script>", "last_name": 123, "dob": "2015-04-02",
                           "allergies": "<img src=x onerror=alert(1)>",
                           "email": "xss-kid@x.com"}, "junk"]})
@@ -4285,7 +4305,7 @@ def run_registration_notify_throttle():
             for i in range(5):
                 r = c.post("/api/register", json={
                     "parent_name": f"Flood{i}", "parent_email": f"flood{i}@x.com",
-                    "parent_phone": "313-555-0100",
+                    **REG_CONTACT,
                     "students": [reg_student("K", "F")]})
                 codes.append(r.status_code)
         # The notify now sends in a background thread (best-effort, off the public
@@ -4322,7 +4342,7 @@ def run_registration_notify_throttle():
             t0 = _t2.monotonic()
             r = c.post("/api/register", json={
                 "parent_name": "SlowNotify", "parent_email": "slow@x.com",
-                "parent_phone": "313-555-0100",
+                **REG_CONTACT,
                 "students": [reg_student("S", "N")]})
             elapsed = _t2.monotonic() - t0
     finally:

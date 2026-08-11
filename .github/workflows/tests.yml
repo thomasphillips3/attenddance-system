@@ -54,3 +54,6 @@ jobs:
         env:
           RFID_ENABLED: "false"
         run: python tests/test_registration_fields.py
+
+      - name: Template output-escaping harness
+        run: python tests/test_template_escaping.py

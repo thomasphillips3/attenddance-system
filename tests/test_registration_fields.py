@@ -1,13 +1,16 @@
 """Public-registration field tests for AttenDANCE.
 
 The studio expanded the enrollment form (Aug 2026): emergency contact, a second
-guardian, home address, dancer email, and four fields that became mandatory.
+guardian, home address, dancer email, and six fields that became mandatory.
 What has to hold:
 
   1. The form's URL never changes - it's already handed out to parents.
-  2. Required means required ON THE SERVER (parent phone; per dancer: last name,
-     a real date of birth, and the allergies/medical answer).
-  3. Optional additions round-trip onto the Registration and are visible to the
+  2. Required means required ON THE SERVER, for all six: parent phone, the
+     emergency contact's name and phone, and per dancer a last name, a real date
+     of birth, and the allergies/medical answer. (The emergency contact's
+     RELATIONSHIP stays optional - you can't call a relationship.)
+  3. Optional additions - second guardian, address, dancer email, emergency
+     relationship - round-trip onto the Registration and are visible to the
      admin reviewing the queue.
   4. Approval isn't a black hole: address + second guardian land on the Family,
      emergency contact and dancer email land on the Student.
@@ -54,9 +57,13 @@ def dancer(first, last="Tester", **over):
 
 
 def payload(email, **over):
+    """A complete, valid submission. Parent phone and the emergency contact's
+    name and phone are required, so they're baked in here; tests that are ABOUT
+    those rules override them."""
     body = {
         "parent_name": "Dana Parent", "parent_email": email,
         "parent_phone": "313-555-0100",
+        "emergency_name": "Emergency Contact", "emergency_phone": "313-555-0911",
         "students": [dancer("Ava")],
     }
     body.update(over)
@@ -104,6 +111,8 @@ cases = [
     ("dancer dob must parse", payload("req4@x.com", students=[dancer("Ava", dob="soon")])),
     ("dancer allergies", payload("req5@x.com", students=[dancer("Ava", allergies="")])),
     ("dancer email must be valid", payload("req6@x.com", students=[dancer("Ava", email="nope")])),
+    ("emergency contact name", payload("req7@x.com", emergency_name="")),
+    ("emergency contact phone", payload("req8@x.com", emergency_phone="")),
 ]
 for label, body in cases:
     resp = pub.post("/api/register", json=body)

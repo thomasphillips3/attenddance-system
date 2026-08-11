@@ -1009,15 +1009,19 @@ class Registration(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     parent_name = db.Column(db.String(120), nullable=False)
     parent_email = db.Column(db.String(120), nullable=False)
-    parent_phone = db.Column(db.String(20))
+    # Phone widths are 40 to match the caps the API applies on the way in.
+    # SQLite ignores VARCHAR widths so a narrower declaration truncates nothing
+    # today, but it would start silently cutting numbers the day this moves to a
+    # database that enforces them.
+    parent_phone = db.Column(db.String(40))
 
     # Second parent/guardian (optional) and emergency contact. Both flow onto
     # the Family / Student records at approval.
     parent2_name = db.Column(db.String(120))
     parent2_email = db.Column(db.String(120))
-    parent2_phone = db.Column(db.String(20))
+    parent2_phone = db.Column(db.String(40))
     emergency_name = db.Column(db.String(120))
-    emergency_phone = db.Column(db.String(20))
+    emergency_phone = db.Column(db.String(40))
     emergency_relationship = db.Column(db.String(60))
 
     # Home address -> Family on approval.

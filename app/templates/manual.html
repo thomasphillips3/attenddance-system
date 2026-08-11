@@ -266,14 +266,15 @@
 
     <h3 class="{{ h3 }}">What the form asks for</h3>
     <p class="{{ p }}">Required, and the form won't submit without them: parent name, email, and
-    <strong>phone</strong>; and for each dancer, <strong>first and last name</strong>,
+    <strong>phone</strong>; an <strong>emergency contact</strong> name and phone (the relationship
+    is optional); and for each dancer, <strong>first and last name</strong>,
     <strong>date of birth</strong>, and <strong>allergies / medical needs / other notes</strong>.
     That last one is required on purpose - a blank used to be ambiguous between "no allergies" and
     "didn't answer", so parents are asked to type "None" when there's nothing. Answers like "None",
     "n/a", or "no known allergies" are filed as <em>no allergy</em>, so the red allergy warning on a
     dancer's page keeps meaning something.</p>
-    <p class="{{ p }}">Optional: a second parent/guardian, home address, an emergency contact with
-    their relationship to the dancer, and the dancer's own email.</p>
+    <p class="{{ p }}">Optional: a second parent/guardian, home address, the emergency contact's
+    relationship to the dancer, and the dancer's own email.</p>
     <p class="{{ p }}">Approving files all of it automatically. The address and second guardian go on
     the <strong>family</strong>; the emergency contact, dancer email, and allergies go on each
     <strong>dancer</strong>.</p>

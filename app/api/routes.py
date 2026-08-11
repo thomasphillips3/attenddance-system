@@ -5122,6 +5122,13 @@ def submit_registration():
     # Enforced server-side, not just in the form, so it holds for every caller.
     if not parent_phone:
         return jsonify({'error': 'A parent phone number is required'}), 400
+    # Emergency contact is required too (studio request, Aug 2026). Name and
+    # phone only - the relationship is useful context but you can't call it.
+    emergency_name_in = _clean_str(data.get('emergency_name'), 120)
+    emergency_phone_in = _clean_str(data.get('emergency_phone'), 40)
+    if not emergency_name_in or not emergency_phone_in:
+        return jsonify({
+            'error': 'An emergency contact name and phone number are required'}), 400
     # Volume circuit breakers for the one unauthenticated write surface (the
     # remote IP isn't usable behind the proxy, so throttle on what we have):
     # a parent re-submitting is fine a couple of times, but unbounded submits
@@ -5195,8 +5202,8 @@ def submit_registration():
         parent2_name=_clean_str(data.get('parent2_name'), 120) or None,
         parent2_email=_clean_str(data.get('parent2_email'), 200) or None,
         parent2_phone=_clean_str(data.get('parent2_phone'), 40) or None,
-        emergency_name=_clean_str(data.get('emergency_name'), 120) or None,
-        emergency_phone=_clean_str(data.get('emergency_phone'), 40) or None,
+        emergency_name=emergency_name_in,
+        emergency_phone=emergency_phone_in,
         emergency_relationship=_clean_str(data.get('emergency_relationship'), 60) or None,
         address=_clean_str(data.get('address'), 200) or None,
         city=_clean_str(data.get('city'), 80) or None,

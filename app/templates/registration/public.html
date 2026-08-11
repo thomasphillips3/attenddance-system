@@ -70,10 +70,10 @@
 
             <div>
                 <h2 class="text-sm font-semibold text-ink-2 uppercase tracking-wider mb-2">Emergency Contact</h2>
-                <p class="text-xs text-ink-3 mb-2">Someone other than the parents above we can call if we can't reach you.</p>
+                <p class="text-xs text-ink-3 mb-2">Required. Someone other than the parents above we can call if we can't reach you.</p>
                 <div class="grid grid-cols-1 sm:grid-cols-6 gap-3">
-                    <input id="e-name" placeholder="Full name" class="border border-line-2 rounded-md px-3 py-2 text-sm sm:col-span-3">
-                    <input id="e-phone" type="tel" placeholder="Phone" class="border border-line-2 rounded-md px-3 py-2 text-sm sm:col-span-3">
+                    <input id="e-name" placeholder="Full name *" class="border border-line-2 rounded-md px-3 py-2 text-sm sm:col-span-3">
+                    <input id="e-phone" type="tel" placeholder="Phone *" class="border border-line-2 rounded-md px-3 py-2 text-sm sm:col-span-3">
                     <input id="e-rel" placeholder="Relationship to dancer (aunt, grandparent...)" class="border border-line-2 rounded-md px-3 py-2 text-sm sm:col-span-6">
                 </div>
             </div>
@@ -178,6 +178,7 @@ document.getElementById('reg-form').addEventListener('submit', async e=>{
     const fail = m => { err.textContent = m; err.classList.remove('hidden'); err.scrollIntoView({block:'center'}); };
     if (!body.parent_name || !body.parent_email){ fail('Please enter your name and email.'); return; }
     if (!body.parent_phone){ fail('Please enter a phone number we can reach you at.'); return; }
+    if (!body.emergency_name || !body.emergency_phone){ fail('Please add an emergency contact name and phone number.'); return; }
     if (!students.length){ fail('Please add at least one dancer.'); return; }
     // Mirror the server's per-dancer requirements so a parent gets the fix
     // inline instead of a round-trip. The server enforces these too.
