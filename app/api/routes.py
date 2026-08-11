@@ -6888,6 +6888,27 @@ def my_data_export():
     }
 
     if current_user.is_parent:
+        # Household record. Home address and the second guardian live on the
+        # Family, not the Student, so without this block the export would omit
+        # PII the registration form collects from the parent - the export has to
+        # cover everything the privacy policy says we hold.
+        households = {}
+        for child in current_user.get_children():
+            fam = child.family
+            if fam and fam.id not in households:
+                households[fam.id] = {
+                    'name': fam.name,
+                    'primary_email': fam.primary_email,
+                    'primary_phone': fam.primary_phone,
+                    'second_guardian_name': fam.secondary_name,
+                    'second_guardian_email': fam.secondary_email,
+                    'second_guardian_phone': fam.secondary_phone,
+                    'address': fam.address, 'city': fam.city,
+                    'state': fam.state, 'zip_code': fam.zip_code,
+                }
+        if households:
+            export['households'] = list(households.values())
+
         child_blocks = []
         for child in current_user.get_children():
             rule_acks = RuleAcknowledgment.query.filter_by(

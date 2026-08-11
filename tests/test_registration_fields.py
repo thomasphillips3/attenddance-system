@@ -361,6 +361,44 @@ with app.app_context():
            f"name={eve.emergency_contact_name!r} phone={eve.emergency_contact_phone!r}")
 
 
+# ── 6d. The parent data export covers the new household PII ────────
+# Home address and the second guardian sit on the Family, so they'd fall
+# straight through an export that only walks the account and its children -
+# and the privacy policy promises parents can download everything held.
+with app.app_context():
+    from app.models import ParentStudent
+    ava = Student.query.filter_by(first_name="Ava", last_name="Parent").first()
+    parent = User.query.filter_by(username="exportparent").first()
+    if not parent:
+        parent = User(username="exportparent", email="exportparent@x.com", role="parent",
+                      first_name="Dana", last_name="Parent")
+        db.session.add(parent)
+    parent.set_password("pw12345")
+    db.session.flush()
+    if not ParentStudent.query.filter_by(parent_id=parent.id, student_id=ava.id).first():
+        db.session.add(ParentStudent(parent_id=parent.id, student_id=ava.id))
+    db.session.commit()
+
+pc = app.test_client()
+pc.post("/auth/login", data={"username": "exportparent", "password": "pw12345"},
+        follow_redirects=True)
+exp = pc.get("/api/my-data").get_json() or {}
+houses = exp.get("households") or []
+record("data export includes the household record", len(houses) == 1, f"got {houses}")
+if houses:
+    h = houses[0]
+    record("export carries the home address",
+           h.get("address") == "500 Coolidge Hwy" and h.get("zip_code") == "48237", f"got {h}")
+    record("export carries the second guardian",
+           h.get("second_guardian_name") == "Chris Parent"
+           and h.get("second_guardian_email") == "chris@x.com", f"got {h}")
+kids = exp.get("children") or exp.get("students") or []
+blob = json.dumps(exp)
+record("export still carries the dancer-level additions",
+       "ava@x.com" in blob and "Office Corrected This" in blob,
+       "dancer email or emergency contact missing from the export")
+
+
 # ── 7. Rows written before these fields existed still approve ───────
 with app.app_context():
     legacy = Registration(
