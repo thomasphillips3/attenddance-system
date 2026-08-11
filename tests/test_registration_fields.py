@@ -101,6 +101,16 @@ login_html = pub.get("/auth/login").get_data(as_text=True)
 record("login page offers new parents the registration link",
        "New Parent?" in login_html and 'href="/register"' in login_html,
        "link missing from login page")
+# The studio asked for the sign-up link IN LIEU OF the invite-code link, so the
+# code link must stay gone. A parent who has a code is sent a direct
+# /auth/register?code=... link instead, which is asserted below.
+record("login page no longer advertises the invite-code flow",
+       "invite code" not in login_html.lower(),
+       "the invite-code link is back on the login page")
+reg_page = pub.get("/auth/register?code=ABC123XYZ").get_data(as_text=True)
+record("an invite link still works and fills the code in for the parent",
+       'value="ABC123XYZ"' in reg_page,
+       "the code from the invite link is not prefilled on the register form")
 
 
 # ── 2. Required fields, enforced server-side ────────────────────────

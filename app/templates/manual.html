@@ -301,6 +301,12 @@
     <p class="{{ p }}">Each code works once and then stops working. Siblings each get their own code,
     and when a parent redeems a second code with the same email, the system adds that dancer to their
     existing login instead of making a second account.</p>
+    {% call warn("Send the link, not just the code") %}
+      The link you copy has the code built into it, so the parent lands on the sign-up form with it
+      already filled in. The login page no longer mentions invite codes at all - it only points new
+      families at the public sign-up form - so a parent who has only the bare code and not the link
+      has no obvious way in. If someone loses theirs, generate a fresh one and send the link again.
+    {% endcall %}
 
     <h3 class="{{ h3 }}">A parent who's locked out</h3>
     <p class="{{ p }}">Same <strong>Portal Access</strong> card, click <strong>Reset password link</strong>

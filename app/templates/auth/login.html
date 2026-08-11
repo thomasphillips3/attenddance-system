@@ -177,12 +177,13 @@
                     </div>
                 </form>
 
-                <div class="mt-4 text-center space-y-2">
-                    <p class="text-sm text-ink-2">Parent? <a href="{{ url_for('auth.register_parent') }}" class="font-medium text-primary-600 hover:text-primary-500">Register with your invite code</a></p>
-                    <div class="pt-3 border-t border-line">
-                        <p class="text-sm text-ink-2">New Parent? <a href="{{ url_for('main.public_register') }}" class="font-medium text-primary-600 hover:text-primary-500">Click here to register</a></p>
-                        <p class="text-xs text-ink-3 mt-1">No account yet? Start here to enroll your dancer.</p>
-                    </div>
+                {# One way in for a parent without a login: the public sign-up
+                   form. The invite-code link that used to sit here was removed
+                   at the studio's request - a parent who gets a code is sent a
+                   direct /auth/register?code=... link that fills the code in for
+                   them, so they never needed to find this page. #}
+                <div class="mt-4 text-center">
+                    <p class="text-sm text-ink-2">New Parent? <a href="{{ url_for('main.public_register') }}" class="font-medium text-primary-600 hover:text-primary-500">Click here to register</a></p>
                 </div>
 
                 <!-- Demo Credentials — dev only; hidden in production (DEBUG=False) -->
