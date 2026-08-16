@@ -845,7 +845,13 @@ def run_multichild_invite_merge():
             and len(accts[0].get_children()) == 2
         record("Both siblings under one account", one_acct and both_kids,
                f"accounts={len(accts)}, kids={[s.full_name for s in accts[0].get_children()] if accts else []}", "P1")
-        record("No orphaned invite accounts", User.query.filter(User.invite_code.isnot(None)).count() == 0,
+        # Scoped to the two codes THIS test seeded. It used to assert no invite
+        # code existed anywhere, which was equivalent while these were the only
+        # invites in the DB - but approval now issues a pending invite per new
+        # family, so unredeemed ones are expected elsewhere. What must hold is
+        # that redeeming these two consumed both.
+        record("No orphaned invite accounts",
+               User.query.filter(User.invite_code.in_(["MCODE1", "MCODE2"])).count() == 0,
                "leftover invites", "P2")
 
 

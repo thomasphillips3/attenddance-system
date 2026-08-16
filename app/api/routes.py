@@ -277,6 +277,14 @@ _MAX_PENDING_REGISTRATIONS = 500
 
 _PARENT_WRITE_ALLOWED = {
     'api.api_logout',
+    # The public enrollment form. It is deliberately unauthenticated - anyone
+    # can post to it - so blocking the one class of visitor who happens to be
+    # logged in protects nothing and breaks something real: a returning parent
+    # who opens /register to sign a sibling up for fall got "Staff access
+    # required". That was rare while few families had logins; approval now
+    # creates one for every family, so it would have become the common path.
+    # Its own volume circuit breakers, not this allowlist, are what bound abuse.
+    'api.submit_registration',
     'api.claim_payment',
     'api.signup_for_audition',
     'api.sign_waiver',
@@ -5040,6 +5048,21 @@ def _normalized_allergies(raw):
         return None
     return text
 
+
+def _unique_invite_code(attempts=10):
+    """An invite code no account is holding.
+
+    User.invite_code and User.username are both UNIQUE, and this runs mid-way
+    through approval - a collision would raise IntegrityError and roll back the
+    whole approval (family, dancers, enrollments), so it's worth the lookup
+    rather than trusting 8 hex chars to never repeat."""
+    for _ in range(attempts):
+        code = secrets.token_hex(4).upper()
+        if not User.query.filter(
+                or_(User.invite_code == code, User.username == f'parent-{code}')).first():
+            return code
+    raise RuntimeError('Could not allocate a unique invite code')
+
 @bp.route('/registration/open', methods=['GET'])
 def registration_open_info():
     """Public: is enrollment open, plus the classes a family can request."""
@@ -5519,6 +5542,51 @@ def approve_registration(rid):
                     db.session.add(ParentStudent(parent_id=pid, student_id=st.id))
                     portal_linked += 1
 
+    # Set the family up with a portal login. Approving used to create the family
+    # and the dancers but no account, so a parent had no way in until an admin
+    # generated an invite code per dancer and texted them the link by hand -
+    # which meant most families simply never got one.
+    #
+    # ONE pending account for the household, linked to every dancer in it, not
+    # one per dancer: redeeming carries all of that account's ParentStudent rows
+    # across (see auth.register_parent), so the parent lands on a portal with
+    # every child already on it.
+    portal_invite_url = None
+    family_student_ids = [st.id for st in
+                          Student.query.filter_by(family_id=fam.id, is_active=True).all()]
+    if family_student_ids:
+        parent_q = (User.query
+                    .join(ParentStudent, ParentStudent.parent_id == User.id)
+                    .filter(ParentStudent.student_id.in_(family_student_ids),
+                            User.role == 'parent'))
+        # A family that already logs in needs nothing: the block above has
+        # already attached any new sibling to their existing account.
+        if not parent_q.filter(User.is_active.is_(True)).first():
+            # Reuse a pending invite (a manual one, or a second registration
+            # before the first was redeemed) rather than minting a rival account.
+            invite_user = parent_q.filter(User.is_active.is_(False),
+                                          User.invite_code.isnot(None)).first()
+            if invite_user is None:
+                code = _unique_invite_code()
+                invite_user = User(
+                    username=f'parent-{code}',
+                    email=f'invite-{code}@pending.local',
+                    first_name='Pending', last_name='Parent',
+                    password_hash='not-set', role='parent',
+                    is_active=False, invite_code=code,
+                )
+                db.session.add(invite_user)
+                db.session.flush()
+            linked_ids = {ps.student_id for ps in
+                          ParentStudent.query.filter_by(parent_id=invite_user.id).all()}
+            for sid in family_student_ids:
+                if sid not in linked_ids:
+                    db.session.add(ParentStudent(parent_id=invite_user.id, student_id=sid))
+            # Built here, inside the request, because url_for(_external=True)
+            # needs the request context the send thread won't have.
+            portal_invite_url = url_for('auth.register_parent',
+                                        code=invite_user.invite_code, _external=True)
+
     # Atomically claim the registration — two concurrent approvals (double-click)
     # both pass the status check above and would otherwise each create a Family
     # with its own students + enrollments (duplicate family). The conditional
@@ -5554,9 +5622,36 @@ def approve_registration(rid):
         msg += (f' - CHECK: the form reports different allergies / medical needs than '
                 f'what is on file, so nothing was overwritten. Review and update by hand: '
                 f'{"; ".join(allergy_updates)}')
+
+    # Only now, after the claim committed - a lost double-click race rolls the
+    # invite account back, and emailing a link to an account that no longer
+    # exists is worse than sending nothing.
+    invite_emailed = False
+    if portal_invite_url:
+        from app import email as email_service
+        if email_service.is_configured():
+            _send_email_async(
+                [reg.parent_email],
+                f'Your parent login for {STUDIO_NAME}',
+                f"Hi {reg.parent_name},\n\n"
+                f"You're all set for classes. Here's the link to set up your parent "
+                f"account, where you can see your dancer's schedule and attendance, "
+                f"check your balance and pay, and sign the studio rules and waivers:\n\n"
+                f"{portal_invite_url}\n\n"
+                f"You'll pick your own password. If you have more than one dancer, "
+                f"they'll all be on the same login.\n\n"
+                f"See you in class!\n{STUDIO_NAME}")
+            invite_emailed = True
+            msg += " - parent login emailed to the family"
+        else:
+            msg += (f' - parent login created, but email is not configured, so send '
+                    f'them this link yourself: {portal_invite_url}')
+
     return jsonify({'message': msg, 'students': created, 'full_skipped': full_skips,
                     'returning_dancers': returning, 'matched_existing_family': matched_existing,
-                    'skipped_emails': skipped_emails, 'allergy_updates': allergy_updates})
+                    'skipped_emails': skipped_emails, 'allergy_updates': allergy_updates,
+                    'portal_invite_url': portal_invite_url,
+                    'portal_invite_emailed': invite_emailed})
 
 
 @bp.route('/registrations/<int:rid>/reject', methods=['POST'])

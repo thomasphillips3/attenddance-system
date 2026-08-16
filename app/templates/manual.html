@@ -289,9 +289,21 @@
     <p class="{{ p }}">Two dancers can't share the same dancer email. If a family puts one address on
     both siblings, the first gets it, and the approve message tells you which ones were left blank.</p>
 
-    <h3 class="{{ h3 }}">Parent portal accounts (invite codes)</h3>
-    <p class="{{ p }}">Approving a registration sets a family up. For a dancer you entered by hand, you
-    give the parent an <strong>invite code</strong> instead:</p>
+    <h3 class="{{ h3 }}">Parent portal accounts</h3>
+    <p class="{{ p }}"><strong>Approving a registration now sets the family's login up for you.</strong>
+    It creates one account for the household - covering every dancer on it, not one per child - and
+    emails the parent a link to pick their own password. You don't have to do anything.</p>
+    <ul class="{{ ul }}">
+      <li>A family that already has a login doesn't get a second one; a newly approved sibling just
+      appears on the login they already use.</li>
+      <li>The approve message tells you whether the email went out. If email isn't configured, it
+      hands you the link to send yourself instead.</li>
+      <li>Nothing is sent until you approve, so a request you reject never creates an account.</li>
+    </ul>
+
+    <h4 class="font-bold text-ink mt-4 mb-1">Inviting by hand (a dancer you typed in yourself)</h4>
+    <p class="{{ p }}">A dancer you added directly, rather than through the sign-up form, has no
+    registration to approve - so give that parent an <strong>invite code</strong>:</p>
     <ol class="{{ ol }}">
       <li>Open the dancer's page and find the <strong>Portal Access</strong> card.</li>
       <li>Click <strong>Generate invite code</strong>. You get a link on screen.</li>
@@ -306,6 +318,8 @@
       already filled in. The login page no longer mentions invite codes at all - it only points new
       families at the public sign-up form - so a parent who has only the bare code and not the link
       has no obvious way in. If someone loses theirs, generate a fresh one and send the link again.
+      (This is only for dancers you entered by hand. Approving a registration emails the link on its
+      own.)
     {% endcall %}
 
     <h3 class="{{ h3 }}">A parent who's locked out</h3>
