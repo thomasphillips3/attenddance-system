@@ -21,7 +21,13 @@
 <body class="min-h-full">
     <div class="max-w-2xl mx-auto py-10 px-4">
         <div class="text-center mb-8">
-            <span class="logo-plate inline-flex items-center" style="padding:11px 16px"><img src="{{ url_for('static', filename='lsodance-logo.png') }}" alt="LSO Dance" class="block w-auto" style="height:32px"></span>
+            {# New tab is load-bearing here: this page holds a part-filled
+               enrollment form, and navigating away in place would throw away
+               everything the parent has typed. #}
+            <a href="{{ STUDIO_URL }}" target="_blank" rel="noopener noreferrer"
+               title="Go to {{ STUDIO_URL|replace('https://', '') }}">
+                <span class="logo-plate inline-flex items-center" style="padding:11px 16px"><img src="{{ url_for('static', filename='lsodance-logo.png') }}" alt="LSO Dance" class="block w-auto" style="height:32px"></span>
+            </a>
             <h1 class="font-display text-2xl text-ink mt-3">LaShelle's School of Dance</h1>
             <p class="text-ink-2">Registration</p>
         </div>

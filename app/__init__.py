@@ -415,6 +415,7 @@ def create_app(config_name=None):
         return {
             'APP_NAME': app.config['APP_NAME'],
             'APP_VERSION': app.config['APP_VERSION'],
+            'STUDIO_URL': app.config.get('STUDIO_URL', ''),
         }
 
     @app.context_processor

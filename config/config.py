@@ -49,6 +49,9 @@ class Config:
     # Application settings
     APP_NAME = 'LSO Dance'
     APP_VERSION = '1.0.0'
+    # The studio's public website. The logo on the sign-in and sign-up pages
+    # links here, so a parent who lands on either can get back to the main site.
+    STUDIO_URL = os.environ.get('STUDIO_URL', 'https://www.lsodance.com')
     TIMEZONE = os.environ.get('TIMEZONE', 'America/New_York')
     
     # File upload settings

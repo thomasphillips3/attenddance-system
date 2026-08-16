@@ -107,6 +107,19 @@ record("login page offers new parents the registration link",
 record("login page no longer advertises the invite-code flow",
        "invite code" not in login_html.lower(),
        "the invite-code link is back on the login page")
+# The studio asked for the logo on both public-facing pages to link back to
+# their website. New tab on the sign-up page specifically: navigating away in
+# place would discard a part-filled enrollment form.
+STUDIO_SITE = app.config["STUDIO_URL"]
+for label, page_html in (("login", login_html), ("sign-up", html)):
+    anchor = f'<a href="{STUDIO_SITE}" target="_blank" rel="noopener noreferrer"'
+    record(f"{label} page logo links back to the studio website",
+           anchor in page_html, f"expected an anchor to {STUDIO_SITE}")
+    logo_idx = page_html.find("lsodance-logo.png")
+    record(f"{label} page link actually wraps the logo",
+           logo_idx > 0 and anchor in page_html[max(0, logo_idx - 400):logo_idx],
+           "the studio link is on the page but not around the logo")
+
 reg_page = pub.get("/auth/register?code=ABC123XYZ").get_data(as_text=True)
 record("an invite link still works and fills the code in for the parent",
        'value="ABC123XYZ"' in reg_page,

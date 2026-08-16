@@ -62,7 +62,12 @@
             <!-- Logo and Title -->
             <div class="flex justify-center">
                 <div class="flex flex-col items-center">
-                    <span class="logo-plate inline-flex items-center form-float" style="padding:12px 18px"><img src="{{ url_for('static', filename='lsodance-logo.png') }}" alt="LSO Dance" class="block w-auto" style="height:36px"></span>
+                    {# Logo links back to the studio's website. New tab, so a
+                       parent part-way through signing in isn't yanked away. #}
+                    <a href="{{ STUDIO_URL }}" target="_blank" rel="noopener noreferrer"
+                       title="Go to {{ STUDIO_URL|replace('https://', '') }}">
+                        <span class="logo-plate inline-flex items-center form-float" style="padding:12px 18px"><img src="{{ url_for('static', filename='lsodance-logo.png') }}" alt="LSO Dance" class="block w-auto" style="height:36px"></span>
+                    </a>
                     <p class="text-sm text-ink-3 mt-3">LaShelle's School of Dance</p>
                 </div>
             </div>
