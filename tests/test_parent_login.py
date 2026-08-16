@@ -35,7 +35,7 @@ os.environ["DATABASE_URL"] = f"sqlite:///{_tmp.name}"
 
 from app import create_app, db  # noqa: E402
 from app.models import (  # noqa: E402
-    ParentStudent, Registration, Setting, Student, User,
+    Family, ParentStudent, Registration, Setting, Student, User,
 )
 
 app = create_app("development")
@@ -254,6 +254,108 @@ try:
                (res3.get_json() or {}).get("portal_invite_url") is not None)
     FakeSMTP.fail = False
 
+    # ── 6. Bulk catch-up for families approved before this was automatic ──
+    # Two families with no login, built the way the old flow left them: family
+    # + dancers, no account. One has no email at all and must be skipped, not
+    # silently given an undeliverable invite.
+    with app.app_context():
+        for name, mail in (("Old Family", "old@x.com"), ("Older Family", "older@x.com"),
+                           ("Noemail Family", None)):
+            f = Family(name=name, primary_email=mail)
+            db.session.add(f)
+            db.session.flush()
+            db.session.add(Student(first_name=name.split()[0], last_name="Legacy",
+                                   family_id=f.id, parent_email=mail))
+        db.session.commit()
+
+    pre = staff.get("/api/families/portal-invites").get_json() or {}
+    # Derived, not hardcoded: earlier sections left families holding unredeemed
+    # invites, and those legitimately count as "no login yet" - the send is a
+    # nudge for them, not a duplicate.
+    with app.app_context():
+        expect_ready = 0
+        for f in Family.query.filter_by(is_active=True).all():
+            kids = f.students.filter_by(is_active=True).all()
+            if not kids:
+                continue
+            has = (User.query.join(ParentStudent, ParentStudent.parent_id == User.id)
+                   .filter(ParentStudent.student_id.in_([k.id for k in kids]),
+                           User.role == "parent", User.is_active.is_(True)).first())
+            reachable = f.primary_email or any(k.parent_email for k in kids)
+            if not has and reachable:
+                expect_ready += 1
+    record("preview counts every family with no login", pre.get("ready") == expect_ready,
+           f"got {pre.get('ready')} want {expect_ready}")
+    record("the two legacy families are in that count", expect_ready >= 2,
+           f"got {expect_ready}")
+    record("preview counts the families that already log in",
+           pre.get("already_have_login", 0) >= 1, f"got {pre.get('already_have_login')}")
+    record("preview names who can't be reached", pre.get("no_email") == 1
+           and pre.get("no_email_names") == ["Noemail Family"], f"got {pre}")
+
+    with app.app_context():
+        before = User.query.filter_by(role="parent").count()
+
+    sent.clear()
+    res = staff.post("/api/families/portal-invites")
+    body = res.get_json() or {}
+    record("bulk send succeeds", res.status_code == 200, f"got {res.status_code} {body}")
+    record("it reports how many it sent", body.get("sent") == expect_ready, f"got {body}")
+    record("and how many it had to skip", body.get("skipped_no_email") == 1, f"got {body}")
+    record("one email per family goes out", wait_for_send(expect_ready) >= expect_ready,
+           f"sent {len(sent)} want {expect_ready}")
+    recipients = {to for to, _ in sent}
+    record("emailed the right families",
+           {"old@x.com", "older@x.com"} <= recipients, f"got {recipients}")
+    codes = {b.split("code=")[-1].split()[0] for _, b in sent if "code=" in b}
+    record("no two families were sent the same invite link",
+           len(codes) == len(sent), f"{len(codes)} codes across {len(sent)} emails")
+
+    with app.app_context():
+        after = User.query.filter_by(role="parent").count()
+        # Only families WITHOUT an existing pending invite need a new account;
+        # the rest were reused, which is the point.
+        record("no more accounts than families invited", 0 < after - before <= expect_ready,
+               f"{before} -> {after}, invited {expect_ready}")
+        record("the unreachable family got no account",
+               User.query.join(ParentStudent, ParentStudent.parent_id == User.id)
+               .join(Student, Student.id == ParentStudent.student_id)
+               .filter(Student.first_name == "Noemail").first() is None)
+
+    # Re-running is a nudge, not a duplicate-account machine.
+    sent.clear()
+    again = (staff.post("/api/families/portal-invites").get_json() or {})
+    record("re-running reuses the invites instead of creating more",
+           again.get("sent") == expect_ready, f"got {again}")
+    wait_for_send(2)
+    with app.app_context():
+        record("no extra accounts from the second run",
+               User.query.filter_by(role="parent").count() == after,
+               f"got {User.query.filter_by(role='parent').count()} want {after}")
+
+    # A family that already logs in is never in scope.
+    record("families that already log in stay out of the send",
+           "newfam@x.com" not in {to for to, _ in sent}, f"got {[t for t, _ in sent]}")
+
+    # A redeemed bulk invite produces a working login.
+    code2 = None
+    for _, b in sent:
+        if "code=" in b:
+            code2 = b.split("code=")[-1].split()[0].strip()
+            break
+    if code2:
+        fresh = app.test_client()
+        rd = fresh.post("/auth/register", data={
+            "invite_code": code2, "first_name": "Old", "last_name": "Parent",
+            "email": "oldparent@x.com", "password": "portal123"}, follow_redirects=True)
+        record("a bulk-sent invite redeems into a working login", rd.status_code == 200,
+               f"got {rd.status_code}")
+        with app.app_context():
+            u = User.query.filter_by(email="oldparent@x.com").first()
+            record("the redeemed bulk account is active with a dancer",
+                   u is not None and u.is_active and len(u.get_children()) >= 1,
+                   f"got {u}")
+
 finally:
     smtplib.SMTP = real_smtp
 
@@ -269,6 +371,26 @@ record("the admin is told to send the link themselves",
        f"got {res4.get('message')}")
 record("and it is not reported as emailed",
        res4.get("portal_invite_emailed") is False)
+
+# The BULK send must refuse outright rather than create an account per family
+# that nobody can be told about - dangling logins the studio thinks went out.
+with app.app_context():
+    before_bulk = User.query.filter_by(role="parent").count()
+bulk = staff.post("/api/families/portal-invites")
+record("bulk send refuses when email isn't configured", bulk.status_code == 400,
+       f"got {bulk.status_code} {bulk.get_json()}")
+record("the refusal says how to fix it",
+       "not configured" in ((bulk.get_json() or {}).get("error") or ""),
+       f"got {bulk.get_json()}")
+with app.app_context():
+    record("no accounts were created by the refused bulk send",
+           User.query.filter_by(role="parent").count() == before_bulk,
+           f"{before_bulk} -> {User.query.filter_by(role='parent').count()}")
+# The preview still works, so the admin can see the scale before fixing email.
+prev_off = staff.get("/api/families/portal-invites").get_json() or {}
+record("the preview still reports, and flags that email is off",
+       prev_off.get("email_configured") is False and "ready" in prev_off,
+       f"got {prev_off}")
 
 with app.app_context():
     Setting.set("registration_open", "0")

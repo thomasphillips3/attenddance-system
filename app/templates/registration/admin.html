@@ -21,6 +21,24 @@
 </div>
 
 <div id="msg" class="hidden mb-4 p-3 rounded-xl text-sm font-medium"></div>
+
+{# Catch-up for families approved before approval started creating logins by
+   itself. Hidden entirely when every family already has one, so it isn't a
+   permanent button that does nothing. #}
+<div id="invite-card" class="hidden bg-surface border border-line rounded-2xl shadow-soft p-5 mb-4">
+    <div class="flex flex-wrap items-center justify-between gap-3">
+        <div>
+            <h2 class="font-bold text-ink"><i class="fas fa-key text-primary-500 mr-2"></i>Parent logins</h2>
+            <p id="invite-summary" class="text-sm text-ink-2 mt-1"></p>
+            <p id="invite-warn" class="hidden text-sm text-warn mt-1"></p>
+        </div>
+        <button id="invite-btn" onclick="sendPortalInvites()"
+                class="px-4 py-2 rounded-xl bg-primary-600 text-white text-sm font-bold hover:bg-primary-700 shadow-sm disabled:opacity-50">
+            Send logins
+        </button>
+    </div>
+</div>
+
 <div class="mb-4">
     <select id="status-filter" onchange="load(1)" class="bg-surface border border-line-2 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-200 focus:border-primary-400">
         <option value="pending">Pending</option><option value="approved">Approved</option>
@@ -128,6 +146,48 @@ function renderRegPagination(p){
 }
 async function approve(id){if(!confirm('Approve and create these dancers + a family account?'))return;const r=await fetch(`/api/registrations/${id}/approve`,{method:'POST'});const d=await r.json();msg(r.ok?d.message:d.error,r.ok);if(r.ok)load();}
 async function reject(id){if(!confirm('Reject this registration?'))return;const r=await fetch(`/api/registrations/${id}/reject`,{method:'POST'});if(r.ok){msg('Rejected',true);load();}}
-loadToggle(); load();
+// ── Parent logins: catch up families approved before this was automatic ──
+async function loadPortalInvites(){
+    let d;
+    try { d = await (await fetch('/api/families/portal-invites')).json(); }
+    catch { return; }                       // never let this break the page
+    if (!d || d.ready === undefined) return;  // not an admin
+    const card = document.getElementById('invite-card');
+    const btn = document.getElementById('invite-btn');
+    const warn = document.getElementById('invite-warn');
+    // Nothing to do and nothing to fix -> don't show a dead button at all.
+    if (!d.ready && !d.no_email){ card.classList.add('hidden'); return; }
+    card.classList.remove('hidden');
+    // Plain concatenation, not template literals: every `${}` in this file is
+    // required to be esc()-wrapped (tests/test_template_escaping.py), and these
+    // strings are set via textContent where escaping would be wrong anyway.
+    // Keeping literals out of the text sinks keeps that rule absolute.
+    document.getElementById('invite-summary').textContent =
+        d.ready + " family(ies) don't have a login yet. " + d.already_have_login + ' already do.';
+    const problems = [];
+    if (d.no_email) problems.push(
+        d.no_email + ' skipped - no email on file (' + d.no_email_names.join(', ') + ').');
+    if (!d.email_configured) problems.push('Email is not set up yet, so nothing can be sent.');
+    warn.textContent = problems.join(' ');
+    warn.classList.toggle('hidden', !problems.length);
+    btn.disabled = !d.ready || !d.email_configured;
+    btn.textContent = d.ready ? 'Send logins to ' + d.ready + ' family(ies)' : 'Nothing to send';
+}
+
+async function sendPortalInvites(){
+    const btn = document.getElementById('invite-btn');
+    const summary = document.getElementById('invite-summary').textContent;
+    if (!confirm(summary + '\n\nEmail each of them a link to set up their parent login?'
+                 + '\n\nFamilies who already have one are skipped.')) return;
+    btn.disabled = true; btn.textContent = 'Sending…';
+    try {
+        const r = await fetch('/api/families/portal-invites', {method:'POST'});
+        const d = await r.json();
+        msg(d.message || d.error, r.ok);
+    } catch { msg('Network error', false); }
+    loadPortalInvites();
+}
+
+loadToggle(); load(); loadPortalInvites();
 </script>
 {% endblock %}
