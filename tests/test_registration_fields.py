@@ -470,6 +470,11 @@ with app.app_context():
             for col in cols:
                 conn.execute(sqlalchemy.text(f"ALTER TABLE {table} DROP COLUMN {col}"))
 
+
+    # Drop the pool: these columns were dropped on a different connection, and a
+    # pooled one can still hold SQLite's old schema, making the ALTER below fail
+    # with "duplicate column name" against a table that demonstrably lacks it.
+    db.engine.dispose()
     insp = sqlalchemy.inspect(db.engine)
     stripped_ok = (not set(FAM_NEW) & {c["name"] for c in insp.get_columns("families")}
                    and not set(REG_NEW) & {c["name"] for c in insp.get_columns("registrations")})

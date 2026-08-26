@@ -216,6 +216,55 @@ def allocate_family_payment(student_ids: list[int], amount: float) -> list[tuple
 
 # --- Serializers ---
 
+def _dedupe_emails(candidates):
+    """Trim, drop blanks, and de-dupe case-insensitively while keeping order.
+    Two parents who typed the same address in different cases must not each get
+    their own copy of the bill."""
+    out, seen = [], set()
+    for raw in candidates:
+        addr = (raw or '').strip()
+        if not addr or '@' not in addr:
+            continue
+        key = addr.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(addr)
+    return out
+
+
+def student_emails(student):
+    """Every address that should get mail about this dancer.
+
+    The studio asked for this (Aug 2026): a bill or reminder that reached only
+    one parent meant the other never saw it. Sources, in order: the dancer's two
+    parent addresses, then the household's two. A family that registered through
+    the public form already has the second guardian on file, so most households
+    get both parents without anyone typing anything.
+
+    The dancer's OWN address is a fallback only - it is used when no parent
+    address exists at all, never alongside one, so billing mail doesn't start
+    going to the child."""
+    fam = student.family
+    emails = _dedupe_emails([
+        student.parent_email,
+        getattr(student, 'parent_email_2', None),
+        fam.primary_email if fam else None,
+        fam.secondary_email if fam else None,
+    ])
+    return emails or _dedupe_emails([student.email])
+
+
+def family_emails(family):
+    """Every address for a household: its own two, plus every parent address on
+    its active dancers (pilot-era dancers carry the only address there is)."""
+    candidates = [family.primary_email, family.secondary_email]
+    for st in family.students.filter_by(is_active=True).all():
+        candidates.append(st.parent_email)
+        candidates.append(getattr(st, 'parent_email_2', None))
+    return _dedupe_emails(candidates)
+
+
 def student_to_dict(student) -> dict:
     return {
         'id': student.id,
@@ -229,6 +278,7 @@ def student_to_dict(student) -> dict:
         'emergency_contact_name': student.emergency_contact_name,
         'emergency_contact_phone': student.emergency_contact_phone,
         'parent_email': student.parent_email,
+        'parent_email_2': student.parent_email_2,
         'parent_phone': student.parent_phone,
         'school': student.school,
         'grade': student.grade,
@@ -398,7 +448,7 @@ def recurring_to_dict(rc) -> dict:
 # Student fields that accept simple string-or-None values
 STUDENT_STRING_FIELDS = [
     'first_name', 'last_name', 'email', 'phone',
-    'emergency_contact_name', 'emergency_contact_phone', 'parent_email', 'parent_phone',
+    'emergency_contact_name', 'emergency_contact_phone', 'parent_email', 'parent_email_2', 'parent_phone',
     'school', 'grade', 'allergies', 'special_needs',
     'height', 'weight', 'shoe_size', 'shirt_size', 'pants_size',
     'leotard_size', 'dress_size', 'waist', 'girth', 'inseam',

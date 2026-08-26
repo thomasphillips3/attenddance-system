@@ -173,7 +173,7 @@ def _send_balance_reminders(app):
     Runs off the boot/request thread so a slow SMTP/Twilio can't block the app."""
     from app import email as email_service
     from app import sms as sms_service
-    from app.helpers import calc_balance_bulk
+    from app.helpers import calc_balance_bulk, student_emails
     from app.models import Setting, Student
 
     with app.app_context():
@@ -196,7 +196,7 @@ def _send_balance_reminders(app):
                         f"${bal:.2f} with LaShelle's School of Dance. You can pay any time in the "
                         f"parent portal. Thank you!")
                 if email_ok:
-                    to = s.parent_email or s.email
+                    to = student_emails(s)   # both parents, plus the household
                     if to:
                         try:
                             email_service.send_email(to, "Balance reminder — LaShelle's School of Dance", body)

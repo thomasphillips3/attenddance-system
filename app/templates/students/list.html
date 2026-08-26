@@ -78,6 +78,11 @@
                     <div><label class="{{ lbl }}">Emergency Contact Name</label><input type="text" id="emergency_contact_name" class="{{ inp }}"></div>
                     <div><label class="{{ lbl }}">Emergency Contact Phone</label><input type="tel" id="emergency_contact_phone" class="{{ inp }}"></div>
                     <div class="col-span-2"><label class="{{ lbl }}">Parent Email</label><input type="email" id="parent_email" class="{{ inp }}"></div>
+                    <div class="col-span-2">
+                        <label class="{{ lbl }}">Second Parent Email</label>
+                        <input type="email" id="parent_email_2" class="{{ inp }}" placeholder="Optional - the other parent/guardian">
+                        <p class="text-xs text-ink-3 mt-1">Bills, receipts, reminders, and studio emails go to both addresses.</p>
+                    </div>
                 </div>
 
                 <p class="{{ sect }} mt-5">Family</p>
@@ -220,6 +225,7 @@ function editStudent(s) {
     document.getElementById('emergency_contact_name').value = s.emergency_contact_name || '';
     document.getElementById('emergency_contact_phone').value = s.emergency_contact_phone || '';
     document.getElementById('parent_email').value = s.parent_email || '';
+    document.getElementById('parent_email_2').value = s.parent_email_2 || '';
     document.getElementById('allergies').value = s.allergies || '';
     document.getElementById('special_needs').value = s.special_needs || '';
     document.getElementById('medical_notes').value = s.medical_notes || '';
@@ -260,6 +266,7 @@ async function saveStudent(e) {
         emergency_contact_name: document.getElementById('emergency_contact_name').value,
         emergency_contact_phone: document.getElementById('emergency_contact_phone').value,
         parent_email: document.getElementById('parent_email').value,
+        parent_email_2: document.getElementById('parent_email_2').value,
         allergies: document.getElementById('allergies').value,
         special_needs: document.getElementById('special_needs').value,
         medical_notes: document.getElementById('medical_notes').value,

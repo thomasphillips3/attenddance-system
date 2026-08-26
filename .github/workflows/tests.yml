@@ -58,6 +58,11 @@ jobs:
       - name: Template output-escaping harness
         run: python tests/test_template_escaping.py
 
+      - name: Parent email harness
+        env:
+          RFID_ENABLED: "false"
+        run: python tests/test_parent_emails.py
+
       - name: Parent login harness
         env:
           RFID_ENABLED: "false"

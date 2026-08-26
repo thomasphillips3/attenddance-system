@@ -26,8 +26,10 @@ from app.helpers import (
     calc_balance,
     calc_balance_bulk,
     class_to_dict,
+    family_emails,
     live_class_query,
     recurring_to_dict,
+    student_emails,
     student_to_dict,
     transaction_to_dict,
 )
@@ -2545,10 +2547,7 @@ def _resolve_recipient_emails(rtype: str, recipient_filter) -> set | tuple:
     emails: set[str] = set()
     if rtype == 'all':
         for s in Student.query.filter_by(is_active=True).all():
-            if s.parent_email:
-                emails.add(s.parent_email)
-            elif s.email:
-                emails.add(s.email)
+            emails.update(student_emails(s))
     elif rtype == 'class':
         if not recipient_filter:
             return jsonify({'error': 'recipient_filter (class_id) required for class type'}), 400
@@ -2557,17 +2556,16 @@ def _resolve_recipient_emails(rtype: str, recipient_filter) -> set | tuple:
         except (TypeError, ValueError):
             return jsonify({'error': 'Invalid class selection'}), 400
         # Use join to avoid N+1
-        rows = (
-            db.session.query(Student.parent_email, Student.email)
-            .join(ClassEnrollment, ClassEnrollment.student_id == Student.id)
-            .filter(ClassEnrollment.class_id == cid, ClassEnrollment.is_active == True)  # noqa: E712
-            .all()
-        )
-        for parent_email, student_email in rows:
-            if parent_email:
-                emails.add(parent_email)
-            elif student_email:
-                emails.add(student_email)
+        # Whole Student rows (not two columns) because the recipient list now
+        # spans the dancer's second parent address and the household's, which
+        # student_emails() resolves. Still one query, so no N+1.
+        roster = (Student.query
+                  .join(ClassEnrollment, ClassEnrollment.student_id == Student.id)
+                  .filter(ClassEnrollment.class_id == cid,
+                          ClassEnrollment.is_active == True)  # noqa: E712
+                  .all())
+        for st in roster:
+            emails.update(student_emails(st))
     elif rtype == 'individual':
         if not recipient_filter:
             return jsonify({'error': 'recipient_filter (student_id) required for individual type'}), 400
@@ -2576,8 +2574,8 @@ def _resolve_recipient_emails(rtype: str, recipient_filter) -> set | tuple:
         except (TypeError, ValueError):
             return jsonify({'error': 'Invalid student selection'}), 400
         s = Student.query.get(sid)
-        if s and (s.parent_email or s.email):
-            emails.add(s.parent_email or s.email)
+        if s:
+            emails.update(student_emails(s))
     return emails
 
 
@@ -3223,8 +3221,14 @@ def _pending_to_dict(p) -> dict:
 
 
 def _send_receipt(parent_email, who, amount, method):
-    """Best-effort payment receipt email. Never raises."""
-    if not parent_email:
+    """Best-effort payment receipt email. Never raises.
+
+    `parent_email` may be a single address or a list - a receipt goes to every
+    parent on the account, so the one who didn't send the money still sees it
+    was received."""
+    recipients = ([parent_email] if isinstance(parent_email, str)
+                  else [e for e in (parent_email or []) if e])
+    if not recipients:
         return
     from app import email as email_service
     if not email_service.is_configured():
@@ -3242,7 +3246,7 @@ def _send_receipt(parent_email, who, amount, method):
     # payment-confirm (or the Square webhook) wait on a slow SMTP send. Same
     # pattern as the admin-notify emails. The payment is already committed by
     # the time this runs, so a failed/slow receipt never affects the balance.
-    _send_email_async([parent_email], f'Payment received — {STUDIO_NAME}', body)
+    _send_email_async(recipients, f'Payment received — {STUDIO_NAME}', body)
 
 
 @bp.route('/payments/claim', methods=['POST'])
@@ -3359,7 +3363,7 @@ def confirm_pending_payment(pid):
     # Determine per-student allocation
     if p.student_id:
         allocations = [(p.student_id, amount)]
-        receipt_email = p.student.parent_email or p.student.email
+        receipt_email = student_emails(p.student)
         who = p.student.full_name
     else:
         students = p.family.students.filter_by(is_active=True).all()
@@ -3370,7 +3374,7 @@ def confirm_pending_payment(pid):
                 allocations = [(students[0].id, amount)]
             else:
                 return jsonify({'error': 'Family has no active students to credit'}), 400
-        receipt_email = p.family.primary_email or (students[0].parent_email if students else None)
+        receipt_email = family_emails(p.family)
         who = f'{p.family.name} (family)'
 
     method_label = p.method
@@ -3507,7 +3511,7 @@ def _notify_student_balance(s, balance, email_ok, sms_ok):
     used = set()
     body = _reminder_body(s.full_name, balance)
     if email_ok:
-        to = s.parent_email or s.email
+        to = student_emails(s)
         if to:
             try:
                 email_service.send_email(to, f'Balance reminder — {STUDIO_NAME}', body)
@@ -3688,7 +3692,7 @@ def square_webhook():
                     f'Auto-recorded ${amount:.2f} for {student.full_name} (invoice {invoice_id})')
     db.session.commit()
 
-    _send_receipt(student.parent_email or student.email, student.full_name, amount, 'square')
+    _send_receipt(student_emails(student), student.full_name, amount, 'square')
     return jsonify({'status': 'recorded'}), 200
 
 

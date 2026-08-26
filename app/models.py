@@ -196,6 +196,11 @@ class Student(db.Model):
     emergency_contact_name = db.Column(db.String(100))
     emergency_contact_phone = db.Column(db.String(20))
     parent_email = db.Column(db.String(120))
+    # A second parent/guardian address on the dancer. Mail about a dancer goes
+    # to BOTH, plus the household's addresses - see helpers.student_emails().
+    # Lives on the Student as well as the Family because most pilot-era dancers
+    # have no family row at all, so a household-only field would miss them.
+    parent_email_2 = db.Column(db.String(120))
     parent_phone = db.Column(db.String(20))
     
     # RFID information
