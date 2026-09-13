@@ -450,7 +450,7 @@ class Transaction(db.Model):
 
     type = db.Column(db.String(10), nullable=False, default='payment')  # charge or payment
     amount = db.Column(db.Numeric(10, 2), nullable=False)
-    category = db.Column(db.String(50), nullable=False)  # tuition, costumes, shoes, other
+    category = db.Column(db.String(50), nullable=False)  # tuition, costumes, shoes, registration, other
     payment_method = db.Column(db.String(50))  # cash, zelle, venmo, cashapp, card, tap (null for charges)
     description = db.Column(db.Text)
     transaction_date = db.Column(db.Date, default=date.today, nullable=False)

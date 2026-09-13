@@ -93,6 +93,7 @@
                             <option value="tuition">Tuition</option>
                             <option value="costumes">Costumes</option>
                             <option value="shoes">Shoes</option>
+                            <option value="registration">Registration Fee</option>
                             <option value="other">Other</option>
                         </select>
                     </div>
@@ -114,7 +115,7 @@
 {% block extra_js %}
 <script>
 function esc(str) { const d = document.createElement('div'); d.textContent = str; return d.innerHTML; }
-const categoryColors = { tuition: 'bg-info/10 text-info', costumes: 'bg-primary-50 text-primary-700', shoes: 'bg-warn/10 text-warn', other: 'bg-surface-2 text-ink-2' };
+const categoryColors = { tuition: 'bg-info/10 text-info', costumes: 'bg-primary-50 text-primary-700', shoes: 'bg-warn/10 text-warn', registration: 'bg-ok/10 text-ok', other: 'bg-surface-2 text-ink-2' };
 const methodLabels = { cash: 'Cash', zelle: 'Zelle', venmo: 'Venmo', cashapp: 'Cash App', card: 'Card', tap: 'Tap' };
 
 async function loadLedger() {
@@ -183,7 +184,7 @@ function renderCategoryBreakdown(cats) {
     const keys = Object.keys(cats);
     if (keys.length < 2) { document.getElementById('category-breakdown').classList.add('hidden'); return; }
     document.getElementById('category-breakdown').classList.remove('hidden');
-    const colors = { tuition: 'border-info', costumes: 'border-primary-400', shoes: 'border-warn', other: 'border-line-2' };
+    const colors = { tuition: 'border-info', costumes: 'border-primary-400', shoes: 'border-warn', registration: 'border-ok', other: 'border-line-2' };
     document.getElementById('category-cards').innerHTML = keys.map(cat => {
         const c = cats[cat];
         const bal = parseFloat(c.balance);

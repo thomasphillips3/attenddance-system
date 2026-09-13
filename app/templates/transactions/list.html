@@ -72,6 +72,7 @@
         <option value="tuition">Tuition</option>
         <option value="costumes">Costumes</option>
         <option value="shoes">Shoes</option>
+        <option value="registration">Registration Fee</option>
         <option value="other">Other</option>
     </select>
     <select id="filter-student" onchange="loadTransactions(1)" class="bg-surface border border-line-2 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-200 focus:border-primary-400">
@@ -142,6 +143,7 @@
                             <option value="tuition">Tuition</option>
                             <option value="costumes">Costumes</option>
                             <option value="shoes">Shoes</option>
+                            <option value="registration">Registration Fee</option>
                             <option value="other">Other</option>
                         </select>
                     </div>
@@ -206,6 +208,7 @@
                             <option value="tuition" selected>Tuition</option>
                             <option value="costumes">Costumes</option>
                             <option value="shoes">Shoes</option>
+                            <option value="registration">Registration Fee</option>
                             <option value="other">Other</option>
                         </select>
                     </div>
@@ -261,6 +264,7 @@
                             <option value="tuition" selected>Tuition</option>
                             <option value="costumes">Costumes</option>
                             <option value="shoes">Shoes</option>
+                            <option value="registration">Registration Fee</option>
                             <option value="other">Other</option>
                         </select>
                     </div>
@@ -283,7 +287,7 @@
 <script>
 function esc(str) { const d = document.createElement('div'); d.textContent = str; return d.innerHTML; }
 const methodLabels = { cash: 'Cash', zelle: 'Zelle', venmo: 'Venmo', cashapp: 'Cash App', card: 'Card', tap: 'Tap' };
-const categoryColors = { tuition: 'bg-info/10 text-info', costumes: 'bg-primary-50 text-primary-700', shoes: 'bg-gold-300 text-gold-ink', other: 'bg-surface-2 text-ink-2' };
+const categoryColors = { tuition: 'bg-info/10 text-info', costumes: 'bg-primary-50 text-primary-700', shoes: 'bg-gold-300 text-gold-ink', registration: 'bg-ok/10 text-ok', other: 'bg-surface-2 text-ink-2' };
 
 async function loadBalances() {
     try {
