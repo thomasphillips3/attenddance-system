@@ -45,6 +45,11 @@ jobs:
           RFID_ENABLED: "false"
         run: python tests/test_seasons.py
 
+      - name: Attendance card harness
+        env:
+          RFID_ENABLED: "false"
+        run: python tests/test_attendance_card.py
+
       - name: Message attachment harness
         env:
           RFID_ENABLED: "false"

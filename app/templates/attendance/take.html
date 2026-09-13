@@ -39,12 +39,37 @@
         border-color: #7c249f;
         color: #5c1976;
     }
+    /* A past week you can fill in. Dashed and tan so it can't be mistaken for
+       the solid purple current week - a teacher glancing at the card should
+       know at once which box is "today" and which is "catching up". */
+    .week-box.past-week.tappable {
+        border-style: dashed;
+        border-color: #c4b98a;
+        background: #fbf8ea;
+    }
+    /* Upcoming weeks, and past weeks the class didn't meet inside the season:
+       visible so the card reads as a whole season, but inert. In the 8-week
+       fallback (no season dates) past boxes are plain history, as before -
+       dimming them there would fade the marks a teacher is reading. */
+    .week-box.inert {
+        opacity: 0.45;
+        background: #f3f4f6;
+        cursor: default;
+    }
+    .week-box:not(.tappable) { cursor: default; }
     .week-box.tappable:hover {
         transform: scale(1.1);
         box-shadow: 0 2px 8px rgba(0,0,0,0.15);
     }
     .week-box.tappable:active {
         transform: scale(0.95);
+    }
+    .week-box[data-busy] {
+        pointer-events: none;
+        opacity: 0.7;
+    }
+    @media print {
+        .week-grid { overflow: visible !important; flex-wrap: wrap; }
     }
     .student-name {
         font-family: 'Georgia', serif;
@@ -77,6 +102,9 @@
                     <h1 class="font-display text-3xl text-white mt-1">{{ dance_class.name }}</h1>
                     <p class="text-white text-opacity-80">
                         {{ dance_class.day_name }} &middot; {{ dance_class.start_time.strftime('%I:%M %p') }} - {{ dance_class.end_time.strftime('%I:%M %p') }}
+                        {% if card_mode == 'season' and season %}
+                        &middot; {{ season.name }} &middot; {{ weeks|length }} weeks
+                        {% endif %}
                     </p>
                 </div>
                 <div class="text-right text-white">
@@ -99,9 +127,34 @@
         </div>
         {% else %}
 
+        {% if card_capped %}
+        <div class="rounded-xl bg-gold-300/40 border border-gold-400/50 p-3.5 mb-4 text-sm text-gold-ink">
+            <i class="fas fa-triangle-exclamation mr-1.5"></i>
+            This season's dates span more than {{ max_card_weeks }} weeks, so the card is showing the
+            last {{ weeks|length }} weeks instead. Check the season's start and end dates on the
+            <a href="{{ url_for('main.classes') }}" class="font-bold underline">Classes</a> page.
+        </div>
+        {% elif not today_in_season %}
+        <div class="rounded-xl bg-gold-300/40 border border-gold-400/50 p-3.5 mb-4 text-sm text-gold-ink">
+            <i class="fas fa-triangle-exclamation mr-1.5"></i>
+            Today is outside this season's dates
+            ({{ season.start_date.strftime('%m/%d/%y') }} - {{ season.end_date.strftime('%m/%d/%y') }}).
+            This week is still shown so you can take attendance.
+            {% if current_user.is_admin %}Update the dates on the
+            <a href="{{ url_for('main.classes') }}" class="font-bold underline">Classes</a> page.{% endif %}
+        </div>
+        {% endif %}
+
         <!-- Tap instruction -->
         <div class="text-center mb-4">
+            {% if backfill_enabled %}
+            <p class="text-ink-3 text-sm"><i class="fas fa-hand-pointer mr-1"></i>
+                Tap the <span class="font-bold text-primary-700">purple</span> box to mark present today.
+                Tap a <span class="font-bold" style="color:#8a7a3a">dashed</span> box to fill in a past week.
+                Grey boxes are weeks still to come.</p>
+            {% else %}
             <p class="text-ink-3 text-sm"><i class="fas fa-hand-pointer mr-1"></i> Tap the highlighted box to mark present</p>
+            {% endif %}
         </div>
 
         <div class="space-y-4" id="cards-container">
@@ -118,20 +171,24 @@
                         {% endif %}
                     </span>
                 </div>
-                <!-- Week Grid -->
-                <div class="flex items-end space-x-1 overflow-x-auto pb-1">
-                    {% for week_start in weeks %}
-                    <div class="flex flex-col items-center">
-                        <div class="week-label mb-1">{{ week_start.strftime('%m/%d') }}</div>
-                        <div class="week-box {% if week_start == current_monday %}current-week tappable{% endif %} {% if student.weeks[week_start.isoformat()] %}marked{% endif %}"
-                             {% if week_start == current_monday %}
+                <!-- Week Grid: one box per week of the season, labelled by the
+                     day this class meets that week. Each card is its own
+                     horizontal scroller; the JS below keeps them in step. -->
+                <div class="week-grid flex items-end space-x-1 overflow-x-auto pb-1">
+                    {% for col in week_cols %}
+                    {% set marked = student.weeks[col.iso] %}
+                    <div class="flex flex-col items-center" title="Week of {{ col.monday.strftime('%m/%d') }} &middot; class on {{ col.meeting.strftime('%a %m/%d') }}">
+                        <div class="week-label mb-1">{{ col.meeting.strftime('%m/%d') }}</div>
+                        <div id="box-{{ student.id }}-{{ col.iso }}"
+                             class="week-box {{ col.kind }}-week {% if col.tappable %}tappable{% endif %} {% if col.kind == 'future' or (col.kind == 'past' and backfill_enabled and not col.in_season) %}inert{% endif %} {% if marked %}marked{% endif %}"
+                             {% if col.tappable %}
                              data-student-id="{{ student.id }}"
                              data-class-id="{{ dance_class.id }}"
-                             data-date="{{ today.isoformat() }}"
+                             data-date="{{ today.isoformat() if col.kind == 'current' else col.meeting.isoformat() }}"
+                             data-week-start="{{ col.iso }}"
                              onclick="toggleMark(this)"
-                             {% endif %}
-                             id="box-{{ student.id }}-{{ week_start.isoformat() }}">
-                            {% if student.weeks[week_start.isoformat()] %}&#x2717;{% endif %}
+                             {% endif %}>
+                            {% if marked %}&#x2717;{% endif %}
                         </div>
                     </div>
                     {% endfor %}
@@ -160,40 +217,114 @@ function updateCount() {
 }
 
 async function toggleMark(el) {
+    // One request per box at a time: a double-tap on a slow connection fires
+    // two POSTs from the same DOM state, and out-of-order replies leave the
+    // box disagreeing with the database.
+    if (el.dataset.busy) return;
+    el.dataset.busy = '1';
     const sid = el.dataset.studentId;
     const cid = el.dataset.classId;
-    const d = el.dataset.date;
+    const isCurrent = el.classList.contains('current-week');
     try {
         const res = await fetch('/api/attendance/toggle', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ student_id: parseInt(sid), class_id: parseInt(cid), date: d })
+            // week_start makes the toggle week-scoped on the server: any row in
+            // the week means "present", and un-marking clears the whole week.
+            body: JSON.stringify({ student_id: parseInt(sid), class_id: parseInt(cid),
+                                   date: el.dataset.date, week_start: el.dataset.weekStart })
         });
         const data = await res.json();
-        const status = document.getElementById('status-' + sid);
+        if (!res.ok) {
+            // Never touch the box on an error: the old code fell into the
+            // "unmark" branch on any error JSON and visually cleared a box
+            // that the server hadn't changed.
+            toast(data.error || 'Could not save', false);
+            return;
+        }
         if (data.present) {
             el.classList.add('marked');
             el.innerHTML = '\u2717';
-            status.className = 'text-sm font-medium text-ok';
-            status.innerHTML = '<i class="fas fa-check-circle"></i> Here';
         } else {
             el.classList.remove('marked');
             el.innerHTML = '';
-            status.className = 'text-sm font-medium text-ink-3';
-            status.innerHTML = '&mdash;';
         }
-        updateCount();
+        // The "Here" label and the present-today count are about TODAY. A
+        // past-week tap must not flip them.
+        if (isCurrent) {
+            const status = document.getElementById('status-' + sid);
+            if (data.present) {
+                status.className = 'text-sm font-medium text-ok';
+                status.innerHTML = '<i class="fas fa-check-circle"></i> Here';
+            } else {
+                status.className = 'text-sm font-medium text-ink-3';
+                status.innerHTML = '&mdash;';
+            }
+            updateCount();
+        } else {
+            toast((data.present ? 'Marked present for ' : 'Removed ') + fmtDate(data.date), true);
+        }
     } catch (err) {
         toast('Could not save. Check your connection.', false);
+    } finally {
+        delete el.dataset.busy;
     }
 }
 
+function fmtDate(iso) {
+    // 'T00:00:00' keeps this in local time; a bare ISO date parses as UTC and
+    // shows the previous day in US zones.
+    const d = new Date(iso + 'T00:00:00');
+    return isNaN(d) ? iso : d.toLocaleDateString(undefined, {weekday: 'short', month: 'numeric', day: 'numeric'});
+}
+
 async function markAllPresent() {
+    // Today only, by construction: the selector picks the current week's boxes.
     const boxes = document.querySelectorAll('.week-box.current-week:not(.marked)');
     for (const box of boxes) {
         await toggleMark(box);
     }
 }
+
+// ── Season card: open scrolled to this week, keep every row in step ──
+// Each student card is its own horizontal scroller (so the name stays put on
+// a phone). Position all of them with the current week near the right edge,
+// like the old 8-week layout, and mirror any scroll to the siblings so the
+// columns line up while a teacher cross-references rows.
+(function () {
+    const grids = [...document.querySelectorAll('.week-grid')];
+    if (!grids.length) return;
+    grids.forEach(g => {
+        const cur = g.querySelector('.current-week');
+        const target = cur ? cur.parentElement : g.lastElementChild;
+        if (!target) return;
+        const gr = g.getBoundingClientRect(), tr = target.getBoundingClientRect();
+        // scrollLeft, not scrollIntoView: the latter also scrolls the PAGE
+        // vertically once per card and lands you on the last student.
+        g.scrollLeft += (tr.right - gr.right) + 12;
+    });
+    let syncing = false;
+    grids.forEach(g => g.addEventListener('scroll', () => {
+        if (syncing) return;
+        syncing = true;
+        grids.forEach(o => { if (o !== g) o.scrollLeft = g.scrollLeft; });
+        requestAnimationFrame(() => { syncing = false; });
+    }, {passive: true}));
+})();
+
+// A tab left open overnight still carries yesterday's data-date on the
+// current-week boxes; a tap the next morning would silently backdate. Reload
+// when the page's "today" no longer matches the device's.
+(function () {
+    const rendered = '{{ today.isoformat() }}';
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState !== 'visible') return;
+        const now = new Date();
+        const local = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0')
+                      + '-' + String(now.getDate()).padStart(2, '0');
+        if (local !== rendered) location.reload();
+    });
+})();
 
 updateCount();
 </script>

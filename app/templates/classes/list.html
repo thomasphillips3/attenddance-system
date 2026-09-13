@@ -21,10 +21,16 @@
     <i class="fas fa-layer-group text-primary-500"></i>
     <select id="season-select" onchange="onSeasonChange()" class="bg-surface border border-line-2 rounded-xl px-3 py-2 text-sm font-bold text-ink focus:outline-none focus:ring-2 focus:ring-primary-200"></select>
     <span id="season-badge" class="hidden inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold"></span>
+    {# The season's dates drive the Take Attendance card, so they get their own
+       line and their own edit button - and the nudge when they're missing. #}
+    <span id="season-dates" class="text-xs text-ink-3"></span>
     {% if current_user.is_admin %}
     <div class="ml-auto flex items-center gap-2">
         <button id="season-activate-btn" onclick="activateSeason()" class="hidden inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-gold-300 text-sm font-bold hover:opacity-90" style="color:#6e521a">
             <i class="fas fa-play"></i>Make This the Active Season
+        </button>
+        <button id="season-edit-btn" onclick="openSeasonModal(currentSeason())" class="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-line-2 text-sm font-bold text-ink-2 hover:border-primary-300 hover:text-primary-700">
+            <i class="fas fa-calendar-days"></i>Edit Dates
         </button>
         <button onclick="openSeasonModal()" class="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-line-2 text-sm font-bold text-ink-2 hover:border-primary-300 hover:text-primary-700">
             <i class="fas fa-plus"></i>New Season
@@ -37,14 +43,18 @@
     <p class="text-ink-3 col-span-full text-center py-8">Loading classes…</p>
 </div>
 
-<!-- New Season modal -->
+<!-- Season modal: creates a draft season, or edits the name and dates of an
+     existing one (any status). Editing the ACTIVE season's dates is the right
+     way to put dates on the season the studio is already running - creating
+     and activating a new one would cancel every current class. -->
 <div id="season-modal" class="fixed inset-0 z-50 hidden overflow-y-auto">
     <div class="flex items-center justify-center min-h-screen px-4">
         <div class="fixed inset-0 bg-ink/40" onclick="closeSeasonModal()"></div>
         <div class="relative bg-surface rounded-2xl shadow-pop max-w-md w-full p-6">
-            <h3 class="font-display text-2xl text-ink mb-1">New Season</h3>
-            <p class="text-sm text-ink-3 mb-4">Build the next session's schedule while this one keeps running. Nothing shows to parents or bills anyone until you activate it.</p>
+            <h3 id="season-modal-title" class="font-display text-2xl text-ink mb-1">New Season</h3>
+            <p id="season-modal-blurb" class="text-sm text-ink-3 mb-4">Build the next session's schedule while this one keeps running. Nothing shows to parents or bills anyone until you activate it.</p>
             <form onsubmit="saveSeason(event)">
+                <input type="hidden" id="season-id">
                 <div class="space-y-4">
                     <div>
                         <label class="block text-sm font-medium text-ink-2">Season Name *</label>
@@ -63,7 +73,7 @@
                 </div>
                 <div class="mt-6 flex gap-3 justify-end">
                     <button type="button" onclick="closeSeasonModal()" class="px-4 py-2 rounded-xl border border-line-2 text-sm font-bold text-ink-2 hover:bg-surface-2">Cancel</button>
-                    <button type="submit" class="px-4 py-2 rounded-xl bg-primary-500 text-white text-sm font-bold hover:bg-primary-600">Create Season</button>
+                    <button type="submit" id="season-submit" class="px-4 py-2 rounded-xl bg-primary-500 text-white text-sm font-bold hover:bg-primary-600">Create Season</button>
                 </div>
             </form>
         </div>
@@ -212,6 +222,21 @@ async function loadSeasons() {
     }
     const actBtn = document.getElementById('season-activate-btn');
     if (actBtn) actBtn.classList.toggle('hidden', !season || season.status !== 'draft');
+    const dates = document.getElementById('season-dates');
+    if (season && season.start_date && season.end_date) {
+        dates.textContent = fmtSeasonDate(season.start_date) + ' - ' + fmtSeasonDate(season.end_date);
+    } else if (season) {
+        dates.textContent = 'No dates set - Take Attendance shows the last 8 weeks';
+    } else {
+        dates.textContent = '';
+    }
+}
+
+function fmtSeasonDate(iso) {
+    // 'T00:00:00' pins this to local time. A bare 'YYYY-MM-DD' parses as UTC
+    // and renders the previous day anywhere west of Greenwich.
+    const d = new Date(iso + 'T00:00:00');
+    return isNaN(d) ? iso : d.toLocaleDateString(undefined, {month: 'short', day: 'numeric', year: 'numeric'});
 }
 
 function onSeasonChange() {
@@ -232,26 +257,52 @@ async function loadClasses() {
     }
 }
 
-function openSeasonModal() { document.getElementById('season-modal').classList.remove('hidden'); }
+function openSeasonModal(season) {
+    // With a season: edit its name and dates in place. Without: new draft.
+    const editing = !!season;
+    document.getElementById('season-id').value = editing ? season.id : '';
+    document.getElementById('season-name').value = editing ? season.name : '';
+    document.getElementById('season-start').value = editing ? (season.start_date || '') : '';
+    document.getElementById('season-end').value = editing ? (season.end_date || '') : '';
+    document.getElementById('season-modal-title').textContent = editing ? 'Edit Season' : 'New Season';
+    document.getElementById('season-modal-blurb').textContent = editing
+        ? 'The start and end dates set how many weeks the attendance card shows.'
+        : "Build the next session's schedule while this one keeps running. Nothing shows to parents or bills anyone until you activate it.";
+    document.getElementById('season-submit').textContent = editing ? 'Save' : 'Create Season';
+    document.getElementById('season-modal').classList.remove('hidden');
+}
 function closeSeasonModal() { document.getElementById('season-modal').classList.add('hidden'); }
 
 async function saveSeason(e) {
     e.preventDefault();
+    const id = document.getElementById('season-id').value;
     const body = {
         name: document.getElementById('season-name').value,
         start_date: document.getElementById('season-start').value,
         end_date: document.getElementById('season-end').value,
     };
+    // ISO dates compare correctly as strings. The server checks too; this
+    // just saves a round-trip for the obvious typo.
+    if (body.start_date && body.end_date && body.start_date > body.end_date) {
+        toast('The start date has to be on or before the end date', false);
+        return;
+    }
     try {
-        const res = await fetch('/api/seasons', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
+        const res = await fetch(id ? `/api/seasons/${id}` : '/api/seasons',
+            { method: id ? 'PUT' : 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
         const d = await res.json();
         if (res.ok) {
             closeSeasonModal();
-            currentSeasonId = d.id;   // jump straight into the new season to start building it
-            await loadSeasons();
-            await loadClasses();
-            toast(`${d.name} created - you're now viewing it. Add its classes; nothing goes live until you activate it.`, true);
-        } else { toast(d.error || 'Error creating season', false); }
+            if (id) {
+                await loadSeasons();
+                toast(`${d.name} updated. Take Attendance now shows the whole season.`, true);
+            } else {
+                currentSeasonId = d.id;   // jump straight into the new season to start building it
+                await loadSeasons();
+                await loadClasses();
+                toast(`${d.name} created - you're now viewing it. Add its classes; nothing goes live until you activate it.`, true);
+            }
+        } else { toast(d.error || (id ? 'Error saving season' : 'Error creating season'), false); }
     } catch (err) { toast('Network error', false); }
 }
 

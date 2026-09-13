@@ -8,7 +8,9 @@ from flask_login import current_user, login_required
 from sqlalchemy import desc, func
 
 from app import db
-from app.helpers import calc_balance, live_class_query
+from app.helpers import (
+    MAX_CARD_WEEKS, active_season, attendance_card_weeks, calc_balance, live_class_query,
+)
 from app.main import bp
 from app.models import (
     Attendance,
@@ -263,15 +265,49 @@ def take_attendance():
 @bp.route('/take-attendance/<int:class_id>')
 @staff_required
 def take_attendance_class(class_id):
-    """Card-based attendance for a class — prefetches all data in bulk."""
+    """Card-based attendance for a class - prefetches all data in bulk.
+
+    One column per week of the class's season (see attendance_card_weeks). Past
+    weeks are tappable so a missed class can be filled in; the tap posts the
+    date the class actually met that week, not today."""
     dance_class = DanceClass.query.get_or_404(class_id)
     today = date.today()
 
-    # Get 8 weeks of dates (current week + 7 prior)
-    current_monday = today - timedelta(days=today.weekday())
-    weeks = [(current_monday - timedelta(weeks=i)) for i in range(7, -1, -1)]
-    earliest = weeks[0]
-    latest = weeks[-1] + timedelta(days=6)
+    # The class's own season, not the active one: a last-year class opened from
+    # history should show the weeks it actually ran.
+    season = dance_class.season or active_season()
+    card = attendance_card_weeks(season, today)
+    weeks = card['weeks']
+    earliest, latest, current_monday = card['earliest'], card['latest'], card['current_monday']
+
+    # Per-column facts, computed once for the page rather than once per
+    # student in Jinja. `meeting` is the day this class met that week.
+    has_dates = bool(season and season.start_date and season.end_date)
+    backfill_enabled = card['mode'] == 'season'
+    week_cols = []
+    for monday in weeks:
+        meeting = monday + timedelta(days=dance_class.day_of_week)
+        kind = ('current' if monday == current_monday
+                else 'past' if monday < current_monday else 'future')
+        in_season = has_dates and season.start_date <= meeting <= season.end_date
+        # Current week always tappable (it posts today). A past week only when
+        # the card is in season mode AND the class actually met inside the
+        # season that week - the first column of a Friday-start season holds
+        # Mon-Thu dates before the season began, and those stay inert.
+        tappable = kind == 'current' or (kind == 'past' and backfill_enabled and in_season)
+        week_cols.append({
+            'iso': monday.isoformat(), 'monday': monday, 'meeting': meeting,
+            'kind': kind, 'in_season': in_season, 'tappable': tappable,
+        })
+    today_in_season = (not has_dates) or (season.start_date <= today <= season.end_date)
+
+    ctx = dict(
+        dance_class=dance_class, season=season, week_cols=week_cols, weeks=weeks,
+        today=today, current_monday=current_monday,
+        backfill_enabled=backfill_enabled, card_mode=card['mode'],
+        card_capped=card['capped'], today_in_season=today_in_season,
+        max_card_weeks=MAX_CARD_WEEKS,
+    )
 
     # Bulk-load enrolled students
     enrollments = (
@@ -281,14 +317,13 @@ def take_attendance_class(class_id):
     )
     student_ids = [e.student_id for e in enrollments]
     if not student_ids:
-        return render_template('attendance/take.html',
-            dance_class=dance_class, students=[], weeks=weeks,
-            today=today, current_monday=current_monday, today_checked={})
+        return render_template('attendance/take.html', students=[], today_checked={}, **ctx)
 
     enrolled_students = Student.query.filter(Student.id.in_(student_ids)).all()
     student_map = {s.id: s for s in enrolled_students}
 
-    # Prefetch ALL attendance for these students in this class across the 8-week window
+    # Prefetch ALL attendance for these students in this class across the card's span
+    # (one query; a Sep-Jun season x a full class is a few hundred rows)
     all_attendance = Attendance.query.filter(
         Attendance.student_id.in_(student_ids),
         Attendance.class_id == class_id,
@@ -329,9 +364,7 @@ def take_attendance_class(class_id):
             today_checked[s['id']] = False
 
     return render_template('attendance/take.html',
-        dance_class=dance_class, students=students,
-        weeks=weeks, today=today, current_monday=current_monday,
-        today_checked=today_checked)
+        students=students, today_checked=today_checked, **ctx)
 
 
 @bp.route('/staff')

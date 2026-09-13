@@ -1,6 +1,6 @@
 """Shared helpers for AttenDANCE — balance calculation, ledger building, serialization."""
 
-from datetime import date
+from datetime import date, timedelta
 
 from sqlalchemy import func
 from app import db
@@ -320,6 +320,56 @@ def active_season():
     bootstrap migration has run)."""
     from app.models import Season
     return Season.query.filter_by(status='active').first()
+
+
+# The Take Attendance card: one column per week. A physical attendance card
+# shows the whole season, and the studio asked for the same - the trailing
+# window that predated seasons read as "attendance stops on the 7th" to the
+# owner, because columns are labelled by a date and the last one was this week.
+TRAILING_WEEKS = 8      # the pre-season behaviour: 7 prior weeks + the current one
+MAX_CARD_WEEKS = 60     # a Sep-Jun dance year is ~41; past this the dates are a typo
+
+
+def attendance_card_weeks(season, today=None):
+    """Which weeks the attendance card shows, as Monday dates in order.
+
+    Returns {'weeks', 'earliest', 'latest', 'current_monday', 'mode', 'capped'}.
+
+    mode='season': the span of the season's start_date..end_date, Monday-aligned,
+    always widened to include the current week - a season is activated by hand
+    and lags reality by days, and the week a class is meeting must be markable
+    no matter what the dates say.
+
+    mode='trailing': the pre-season window, byte-identical to the old page.
+    Used when the season has no dates yet (production's seeded season), when
+    they're inverted, or when the span exceeds MAX_CARD_WEEKS. The cap falls back
+    rather than truncating: truncation would have to choose which end to drop,
+    and could still drop the current week. `capped` tells the template to say so."""
+    today = today or date.today()
+    current_monday = today - timedelta(days=today.weekday())
+
+    def trailing(capped=False):
+        weeks = [current_monday - timedelta(weeks=i)
+                 for i in range(TRAILING_WEEKS - 1, -1, -1)]
+        return {'weeks': weeks, 'earliest': weeks[0],
+                'latest': weeks[-1] + timedelta(days=6),
+                'current_monday': current_monday, 'mode': 'trailing', 'capped': capped}
+
+    start = getattr(season, 'start_date', None) if season else None
+    end = getattr(season, 'end_date', None) if season else None
+    if not start or not end or start > end:
+        return trailing()
+
+    first = min(start - timedelta(days=start.weekday()), current_monday)
+    last = max(end - timedelta(days=end.weekday()), current_monday)
+    count = (last - first).days // 7 + 1
+    if count > MAX_CARD_WEEKS:
+        return trailing(capped=True)
+
+    weeks = [first + timedelta(weeks=i) for i in range(count)]
+    return {'weeks': weeks, 'earliest': weeks[0],
+            'latest': weeks[-1] + timedelta(days=6),
+            'current_monday': current_monday, 'mode': 'season', 'capped': False}
 
 
 def live_class_query():

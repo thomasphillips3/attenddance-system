@@ -144,11 +144,21 @@
     <h3 class="{{ h3 }}">Building next season while this one runs</h3>
     <ol class="{{ ol }}">
       <li>Go to <strong>Classes</strong>. At the top there's a season bar with a dropdown.</li>
-      <li>Click <strong>New Season</strong>, name it (for example "Fall 2026"), optionally set start and end dates, and create it. The page switches you into the new season automatically.</li>
+      <li>Click <strong>New Season</strong>, name it (for example "Fall 2026"), and set its start and end dates - those dates decide how many weeks the attendance card shows, so set them. The page switches you into the new season automatically.</li>
       <li>While that season is selected in the dropdown, click <strong>Add Class</strong> for each class. Every class you add lands in the season you're viewing.</li>
       <li>Set up its tuition too if you want (see <a href="#autobilling" class="text-primary-600 hover:underline">Auto-billing</a>). Draft classes appear in the billing dropdowns marked "(upcoming)" and will not charge anyone.</li>
       <li>Switch the dropdown back to the active season any time to get back to what's live today.</li>
     </ol>
+
+    <h3 class="{{ h3 }}">Changing a season's dates or name</h3>
+    <p class="{{ p }}">Pick the season in the dropdown and click <strong>Edit Dates</strong>. Works on
+    any season, including the one that's running. The season bar shows the dates under the dropdown,
+    or "No dates set" when there aren't any.</p>
+    {% call danger("Don't make a new season just to add dates") %}
+      If the season you're running has no dates, use <strong>Edit Dates</strong> on it. Creating a
+      "Fall 2026" and activating it looks like the same thing but is not: activating cancels every
+      class in the current season and stops their auto-billing.
+    {% endcall %}
 
     <h3 class="{{ h3 }}">Turning the new season on</h3>
     <p class="{{ p }}">When the new session actually starts, select it in the dropdown and click
@@ -356,8 +366,20 @@
     <ol class="{{ ol }}">
       <li>Open <strong>Take Attendance</strong> on a tablet or laptop. Teachers can do this - they don't need an admin account.</li>
       <li>Pick the class. Today's classes are listed first.</li>
-      <li>Tap each dancer who's present. It saves as you go, so there's no Save button to forget.</li>
+      <li>Tap each dancer's <strong>purple box</strong> - that's this week - to mark them present. It saves as you go, so there's no Save button to forget.</li>
     </ol>
+    <p class="{{ p }}">The card shows one box per week of the season, labelled with the date that class
+    meets, and opens scrolled to this week. Drag sideways to see earlier weeks. <strong>Mark Everyone
+    Present</strong> only affects this week.</p>
+    <p class="{{ p }}"><strong>Missed taking attendance?</strong> Tap the <strong>dashed box</strong> under
+    the week you missed. It records the dancer as present on the day that class met (for a Thursday
+    class, that Thursday) and logs who filled it in. Tap it again to undo. Greyed-out boxes are weeks
+    still to come, or weeks before the season started, and can't be tapped.</p>
+    {% call tip("The card only shows the whole season once the season has dates") %}
+      With no start and end dates on the season, the card shows just the last 8 weeks and past weeks
+      can't be tapped. Set the dates under <strong>Classes &rsaquo; Edit Dates</strong> (see
+      <a href="#seasons" class="text-primary-600 hover:underline">Seasons</a>).
+    {% endcall %}
     <p class="{{ p }}"><strong>Attendance Log</strong> shows the history and lets you check a dancer in
     manually if you missed them.</p>
     {% call warn("Take attendance even on light nights") %}

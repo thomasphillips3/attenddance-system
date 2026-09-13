@@ -562,11 +562,26 @@ def create_season():
     end_date, derr = _parse_season_date(data.get('end_date'), 'end_date')
     if derr:
         return derr
+    rerr = _season_range_error(start_date, end_date)
+    if rerr:
+        return rerr
     season = Season(name=name[:100], start_date=start_date, end_date=end_date, status='draft')
     db.session.add(season)
     AuditLog.record(current_user.id, 'season.create', f'Created draft season "{season.name}"')
     db.session.commit()
     return jsonify(_season_to_dict(season)), 201
+
+
+def _season_range_error(start_date, end_date):
+    """The attendance card is built from these dates, so an inverted or absurd
+    range isn't cosmetic: end < start renders every teacher an empty grid, and a
+    fat-fingered year renders hundreds of columns. Reject both up front."""
+    if start_date and end_date:
+        if end_date < start_date:
+            return jsonify({'error': 'end_date must be on or after start_date'}), 400
+        if (end_date - start_date).days > 400:
+            return jsonify({'error': 'That season is longer than a year - check the dates'}), 400
+    return None
 
 
 @bp.route('/seasons/<int:season_id>', methods=['PUT', 'PATCH'])
@@ -582,12 +597,23 @@ def update_season(season_id):
         if not name:
             return jsonify({'error': 'name cannot be empty'}), 400
         season.name = name[:100]
+    # Parse both first and validate the PAIR before assigning anything, so a
+    # rejected request never leaves half-updated dates on the ORM object.
+    new_dates = {'start_date': season.start_date, 'end_date': season.end_date}
     for fld in ('start_date', 'end_date'):
         if fld in data:
             d, derr = _parse_season_date(data.get(fld), fld)
             if derr:
                 return derr
-            setattr(season, fld, d)
+            new_dates[fld] = d
+    rerr = _season_range_error(new_dates['start_date'], new_dates['end_date'])
+    if rerr:
+        return rerr
+    season.start_date = new_dates['start_date']
+    season.end_date = new_dates['end_date']
+    AuditLog.record(current_user.id, 'season.update',
+                    f'Updated season "{season.name}": '
+                    f'{season.start_date or "?"} .. {season.end_date or "?"}')
     db.session.commit()
     return jsonify(_season_to_dict(season))
 
@@ -1044,30 +1070,77 @@ def toggle_attendance():
         return cerr
     # Validate the student and class exist (manual_checkin does this too) so a
     # bad id can't create an orphan attendance row.
-    Student.query.get_or_404(student_id)
-    DanceClass.query.get_or_404(class_id)
+    student = Student.query.get_or_404(student_id)
+    dance_class = DanceClass.query.get_or_404(class_id)
 
-    target_date = _parse_date(data.get('date')) or date.today()
+    today = date.today()
+    target_date = _parse_date(data.get('date')) or today
+    if target_date > today:
+        return jsonify({'error': 'Cannot mark attendance for a future date'}), 400
+    # A backfill has to land inside the class's season when the season has
+    # dates. Today is always allowed: seasons are activated by hand and lag
+    # reality, and the week a class is actually meeting must stay markable.
+    season = dance_class.season
+    if (target_date != today and season and season.start_date and season.end_date
+            and not (season.start_date <= target_date <= season.end_date)):
+        return jsonify({'error': 'That date is outside the season'}), 400
 
-    existing = Attendance.query.filter(
-        Attendance.student_id == student_id,
-        Attendance.class_id == class_id,
-        func.date(Attendance.check_in_time) == target_date,
-    ).first()
+    # The attendance card marks a box for the whole WEEK (any row Mon-Sun lights
+    # it), but this endpoint used to toggle by exact date. A Saturday class marked
+    # on Monday left a row dated Monday; un-tapping that week later posted the
+    # class day, found nothing, and CREATED a second row - the box could never be
+    # cleared. With `week_start` the toggle is week-scoped: any row in the week
+    # means "present", and un-marking clears every row in it, legacy dupes
+    # included. Without `week_start` the exact-date contract is unchanged.
+    week_start = _parse_date(data.get('week_start'))
+    if week_start:
+        week_end = week_start + timedelta(days=6)
+        existing = Attendance.query.filter(
+            Attendance.student_id == student_id,
+            Attendance.class_id == class_id,
+            func.date(Attendance.check_in_time) >= week_start,
+            func.date(Attendance.check_in_time) <= week_end,
+        ).all()
+    else:
+        existing = Attendance.query.filter(
+            Attendance.student_id == student_id,
+            Attendance.class_id == class_id,
+            func.date(Attendance.check_in_time) == target_date,
+        ).all()
 
+    backfill = target_date != today
     if existing:
-        db.session.delete(existing)
+        for row in existing:
+            db.session.delete(row)
+        if backfill:
+            AuditLog.record(current_user.id, 'attendance.backfill',
+                            f'{student.full_name} / {dance_class.name} / '
+                            f'{target_date.isoformat()}: removed')
         db.session.commit()
-        return jsonify({'present': False, 'message': 'Attendance removed'})
+        return jsonify({'present': False, 'message': 'Attendance removed',
+                        'date': target_date.isoformat()})
 
+    # A same-day tap records when it was taken. A backfill records the class's
+    # scheduled time and says so, so the log reads "Thu 09/17 5:00 PM backfill"
+    # rather than pretending the teacher was there at 9:47 PM on a Tuesday.
+    if backfill:
+        stamp = datetime.combine(target_date, dance_class.start_time)
+        method = 'backfill'
+    else:
+        stamp = datetime.combine(target_date, datetime.now().time())
+        method = 'manual'
     att = Attendance(
         student_id=student_id,
         class_id=class_id,
-        check_in_time=datetime.combine(target_date, datetime.now().time()),
-        check_in_method='manual',
+        check_in_time=stamp,
+        check_in_method=method,
         is_present=True,
     )
     db.session.add(att)
+    if backfill:
+        AuditLog.record(current_user.id, 'attendance.backfill',
+                        f'{student.full_name} / {dance_class.name} / '
+                        f'{target_date.isoformat()}: present')
     try:
         db.session.commit()
     except IntegrityError:
@@ -1075,8 +1148,10 @@ def toggle_attendance():
         # index. The other request already marked them present — treat this as a
         # no-op success rather than a 500 or a duplicate row.
         db.session.rollback()
-        return jsonify({'present': True, 'message': 'Already marked present'})
-    return jsonify({'present': True, 'message': 'Marked present'}), 201
+        return jsonify({'present': True, 'message': 'Already marked present',
+                        'date': target_date.isoformat()})
+    return jsonify({'present': True, 'message': 'Marked present',
+                    'date': target_date.isoformat()}), 201
 
 
 @bp.route('/attendance', methods=['GET'])
