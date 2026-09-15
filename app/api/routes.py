@@ -245,6 +245,13 @@ def _clean_str(value, maxlen=50_000):
     return s[:maxlen] if maxlen else s
 
 
+def _truthy(value):
+    """Form fields arrive as strings ("1", "true", "on"); JSON as bools."""
+    if isinstance(value, bool):
+        return value
+    return str(value or '').strip().lower() in ('1', 'true', 'on', 'yes')
+
+
 def _valid_id(raw):
     """Coerce a JSON id to a positive int. Returns (int, None) or (None, (json, status)).
     Rejects non-numeric ('xyz'), non-positive (-1, 0), and null so a bad id can't
@@ -1607,8 +1614,8 @@ def export_students_csv():
     students = Student.query.filter_by(is_active=True).order_by(
         Student.last_name, Student.first_name).all()
     header = ['Last name', 'First name', 'Family', 'Date of birth', 'Age',
-              'Parent email', 'Parent phone', 'Emergency contact', 'Emergency phone',
-              'Allergies', 'Special needs']
+              'Parent email', 'Second parent email', 'Parent phone',
+              'Emergency contact', 'Emergency phone', 'Allergies', 'Special needs']
     bals = None
     if current_user.is_admin:
         header = header + ['Balance']
@@ -1616,7 +1623,7 @@ def export_students_csv():
     rows = ([
         s.last_name, s.first_name, s.family.name if s.family else '',
         s.date_of_birth.isoformat() if s.date_of_birth else '', s.age if s.age is not None else '',
-        s.parent_email or '', s.parent_phone or '',
+        s.parent_email or '', s.parent_email_2 or '', s.parent_phone or '',
         s.emergency_contact_name or '', s.emergency_contact_phone or '',
         s.allergies or '', s.special_needs or '',
     ] + ([f"{bals[s.id]['balance']:.2f}"] if bals is not None else [])
@@ -2429,6 +2436,52 @@ def _collect_message_attachments():
     return out
 
 
+def _recipient_scope_error(rtype):
+    """Whole-studio scope is admin-only, same rule as sending."""
+    if rtype == 'all' and not current_user.is_admin:
+        return jsonify({'error': 'Only an admin can message all parents'}), 403
+    return None
+
+
+@bp.route('/messages/recipients', methods=['GET'])
+@login_required
+def preview_message_recipients():
+    """Who a message WOULD go to, before it's sent - the same resolver the send
+    uses, so the preview can't disagree with the blast. `?format=csv` downloads
+    the list, which is also the studio's "export everyone's email" report when
+    recipient_type=all."""
+    err = _staff_only()
+    if err:
+        return err
+    rtype = _clean_str(request.args.get('recipient_type'))
+    if not rtype:
+        return jsonify({'error': 'recipient_type is required'}), 400
+    err = _recipient_scope_error(rtype)
+    if err:
+        return err
+    emails = _resolve_recipient_emails(rtype, request.args.get('recipient_filter'))
+    if isinstance(emails, tuple):
+        return emails
+    ordered = sorted(emails, key=str.lower)
+    if request.args.get('format') == 'csv':
+        label = {'all': 'all-parents', 'class': 'class', 'individual': 'family'}.get(rtype, rtype)
+        return _csv_response(f'emails-{label}-{date.today().isoformat()}.csv',
+                             ['Email'], ([e] for e in ordered))
+    return jsonify({'count': len(ordered), 'emails': ordered})
+
+
+@bp.route('/messages/<int:mid>/recipients.csv', methods=['GET'])
+@login_required
+def download_message_recipients(mid):
+    """The exact list a sent message went to, as a file."""
+    err = _staff_only()
+    if err:
+        return err
+    m = Message.query.get_or_404(mid)
+    emails = [e.strip() for e in (m.recipient_emails or '').split(',') if e.strip()]
+    return _csv_response(f'message-{mid}-recipients.csv', ['Email'], ([e] for e in emails))
+
+
 @bp.route('/messages', methods=['GET'])
 @login_required
 def get_messages():
@@ -2547,10 +2600,11 @@ def send_message():
     rtype = _clean_str(data.get('recipient_type'))
     if not subject or not body or not rtype:
         return jsonify({'error': 'subject, body, and recipient_type are required'}), 400
-    if rtype == 'all' and not current_user.is_admin:
+    err = _recipient_scope_error(rtype)
+    if err:
         # Whole-studio blasts are admin-only (least privilege); teachers can
         # still message a class or an individual family.
-        return jsonify({'error': 'Only an admin can message all parents'}), 403
+        return err
 
     # Validate attachments BEFORE the Message row exists, so a rejected file
     # doesn't leave a phantom entry in the studio's message history.
@@ -2558,12 +2612,51 @@ def send_message():
     if isinstance(attachments, tuple):
         return attachments  # error response
 
+    my_email = (current_user.email or '').strip()
+    if '@' not in my_email:
+        my_email = ''
+
+    # Test mode: the exact email - subject, body, attachments - to the sender
+    # only. Nothing is stored and nobody else is mailed, so the studio can
+    # proof a blast before it goes out. Attachments ride along in memory
+    # rather than through the DB because there is no Message row to hang them
+    # on; a single 10MB send is fine.
+    if _truthy(data.get('test')):
+        from app import email as email_service
+        if not email_service.is_configured():
+            return jsonify({'error': 'Email is not configured, so a test cannot be sent.'}), 400
+        if not my_email:
+            return jsonify({'error': 'Your account has no email address to send the test to. '
+                                     'Add one under your profile.'}), 400
+        app = current_app._get_current_object()
+        test_atts = [{'filename': a['filename'], 'content_type': a['content_type'],
+                      'data': a['data']} for a in attachments]
+
+        def _send_test():
+            with app.app_context():
+                try:
+                    email_service.send_email([my_email], f'[TEST] {subject}', body,
+                                             attachments=test_atts)
+                except Exception:
+                    logger.exception('Test message send failed')
+
+        threading.Thread(target=_send_test, daemon=True).start()
+        return jsonify({'message': f'Test sent to {my_email}', 'test': True,
+                        'sent_to': my_email}), 200
+
     emails = _resolve_recipient_emails(rtype, data.get('recipient_filter'))
     if isinstance(emails, tuple):
         return emails  # error response
 
     if not emails:
         return jsonify({'error': 'No email addresses found for selected recipients'}), 400
+
+    # "Send me a copy": the sender gets the same email every parent gets, so
+    # they can see exactly what went out. Stored with the recipients like any
+    # other address, so history shows it too.
+    copied_to_me = bool(_truthy(data.get('copy_me')) and my_email)
+    if copied_to_me:
+        emails.add(my_email)
 
     msg = Message(
         subject=subject,
@@ -2598,11 +2691,14 @@ def send_message():
         note = ''
         if attachment_meta:
             note = f' with {len(attachment_meta)} attachment(s)'
+        if copied_to_me:
+            note += f', with a copy to {my_email}'
         return jsonify({
             'message': f'Sending to {len(emails)} recipient(s){note}…',
             'message_id': msg.id,
             'queued': len(emails),
             'attachments': attachment_meta,
+            'copied_to': my_email if copied_to_me else None,
         }), 201
 
     # SMTP not configured — hand the admin the addresses to send manually.

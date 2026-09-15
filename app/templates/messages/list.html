@@ -32,6 +32,14 @@
                 <select id="msg-filter" class="{{ INPUT }}"></select>
             </div>
         </div>
+        {# Who this will actually reach, resolved by the same code the send
+           uses. The list is the thing the studio asked to see. #}
+        <div id="recipient-preview" class="mb-4 text-sm text-ink-2 hidden">
+            <span id="recipient-summary"></span>
+            <button type="button" onclick="toggleRecipientList(this)" class="text-primary-600 hover:underline ml-2">Show list</button>
+            <a id="recipient-csv" href="#" class="text-primary-600 hover:underline ml-2"><i class="fas fa-download mr-1"></i>Download list</a>
+            <textarea id="recipient-list" rows="4" readonly class="hidden mt-2 block w-full bg-surface-2 border border-line-2 rounded-xl px-3 py-2 text-xs"></textarea>
+        </div>
         <div class="mb-4">
             <label class="{{ LABEL }}">Subject *</label>
             <input type="text" id="msg-subject" required class="{{ INPUT }}" placeholder="e.g. Recital schedule update">
@@ -51,10 +59,19 @@
             </label>
             <div id="attach-list" class="mt-3 space-y-2"></div>
         </div>
-        <div class="flex justify-end">
-            <button type="submit" id="send-btn" class="inline-flex items-center px-4 py-2 rounded-xl bg-primary-500 text-white text-sm font-bold hover:bg-primary-600 shadow-sm">
-                <i class="fas fa-paper-plane mr-2"></i>Send
-            </button>
+        <div class="flex flex-wrap items-center justify-between gap-3">
+            <label class="inline-flex items-center gap-2 text-sm text-ink-2">
+                <input type="checkbox" id="msg-copy-me" checked class="rounded border-line-2 text-primary-600 focus:ring-primary-200">
+                Send a copy to me{% if current_user.email %} ({{ current_user.email }}){% endif %}
+            </label>
+            <div class="flex items-center gap-2">
+                <button type="button" id="test-btn" onclick="sendTest()" class="inline-flex items-center px-4 py-2 rounded-xl border border-line-2 text-ink-2 text-sm font-bold hover:bg-surface-2">
+                    <i class="fas fa-vial mr-2"></i>Send test to me
+                </button>
+                <button type="submit" id="send-btn" class="inline-flex items-center px-4 py-2 rounded-xl bg-primary-500 text-white text-sm font-bold hover:bg-primary-600 shadow-sm">
+                    <i class="fas fa-paper-plane mr-2"></i>Send
+                </button>
+            </div>
         </div>
     </form>
 </div>
@@ -91,10 +108,11 @@
                     <th class="text-[11px] font-bold uppercase tracking-[.06em] text-ink-3 px-5 py-3 text-left">Recipients</th>
                     <th class="text-[11px] font-bold uppercase tracking-[.06em] text-ink-3 px-5 py-3 text-left">Attachments</th>
                     <th class="text-[11px] font-bold uppercase tracking-[.06em] text-ink-3 px-5 py-3 text-left">Status</th>
+                    <th class="px-5 py-3"></th>
                 </tr>
             </thead>
             <tbody id="history-table">
-                <tr><td colspan="6" class="px-5 py-4 text-center text-ink-3">Loading...</td></tr>
+                <tr><td colspan="7" class="px-5 py-4 text-center text-ink-3">Loading...</td></tr>
             </tbody>
         </table>
         <div id="history-pagination" class="flex items-center justify-between gap-3 px-5 py-3 border-t border-line"></div>
@@ -105,6 +123,7 @@
 {% block extra_js %}
 <script>
 function esc(str) { const d = document.createElement('div'); d.textContent = str; return d.innerHTML; }
+let historyById = {};   // last loaded page of history, by id, for the detail panel
 const classes = [{% for c in classes %}{ id: {{ c.id }}, name: '{{ c.name }}' },{% endfor %}];
 const students = [{% for s in students %}{ id: {{ s.id }}, name: '{{ s.full_name }}' },{% endfor %}];
 
@@ -113,7 +132,7 @@ function updateRecipientFilter() {
     const field = document.getElementById('filter-field');
     const select = document.getElementById('msg-filter');
     const label = document.getElementById('filter-label');
-    if (type === 'all') { field.classList.add('hidden'); return; }
+    if (type === 'all') { field.classList.add('hidden'); refreshRecipientPreview(); return; }
     field.classList.remove('hidden');
     if (type === 'class') {
         label.textContent = 'Class';
@@ -122,6 +141,37 @@ function updateRecipientFilter() {
         label.textContent = 'Student';
         select.innerHTML = students.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
     }
+    select.onchange = refreshRecipientPreview;
+    refreshRecipientPreview();
+}
+
+// ── Recipient preview ────────────────────────────────────────────────
+// Resolved server-side by the same function the send uses, so what's shown
+// here is exactly who the blast goes to.
+let previewSeq = 0;
+async function refreshRecipientPreview() {
+    const type = document.getElementById('msg-type').value;
+    const filter = type === 'all' ? '' : document.getElementById('msg-filter').value;
+    const box = document.getElementById('recipient-preview');
+    const q = new URLSearchParams({recipient_type: type});
+    if (filter) q.set('recipient_filter', filter);
+    document.getElementById('recipient-csv').href = '/api/messages/recipients?' + q + '&format=csv';
+    const seq = ++previewSeq;
+    try {
+        const r = await fetch('/api/messages/recipients?' + q);
+        const d = await r.json();
+        if (seq !== previewSeq) return;   // a newer selection superseded this one
+        if (!r.ok) { box.classList.add('hidden'); return; }
+        document.getElementById('recipient-summary').innerHTML =
+            'Will go to <span class="font-bold text-ink">' + d.count + '</span> email address' + (d.count === 1 ? '' : 'es') + '.';
+        document.getElementById('recipient-list').value = d.emails.join(', ');
+        box.classList.remove('hidden');
+    } catch { box.classList.add('hidden'); }
+}
+function toggleRecipientList(btn) {
+    const ta = document.getElementById('recipient-list');
+    ta.classList.toggle('hidden');
+    btn.textContent = ta.classList.contains('hidden') ? 'Show list' : 'Hide list';
 }
 // Initialize for the default selection — teachers have no "All Parents" option,
 // so their default is "class" and the filter must populate without a change event.
@@ -177,18 +227,43 @@ function renderAttachList() {
         `<p class="text-xs text-ink-3">${selectedFiles.length} file(s), ${fmtSize(total)} total</p>`;
 }
 
-async function sendMessage(e) {
-    e.preventDefault();
-    const btn = document.getElementById('send-btn');
-    btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Sending...';
-    const type = document.getElementById('msg-type').value;
+function composeForm() {
     // Always multipart - one code path whether or not files are attached.
+    const type = document.getElementById('msg-type').value;
     const form = new FormData();
     form.append('subject', document.getElementById('msg-subject').value);
     form.append('body', document.getElementById('msg-body').value);
     form.append('recipient_type', type);
     if (type !== 'all') form.append('recipient_filter', document.getElementById('msg-filter').value);
+    if (document.getElementById('msg-copy-me').checked) form.append('copy_me', '1');
     selectedFiles.forEach(f => form.append('attachments', f));
+    return form;
+}
+
+// The exact email - subject, body, attachments - to the sender only. Nothing
+// is stored and nobody else is mailed. The compose form stays filled in so
+// the real send is one click after the proof reads right.
+async function sendTest() {
+    const subject = document.getElementById('msg-subject').value.trim();
+    const body = document.getElementById('msg-body').value.trim();
+    if (!subject || !body) { toast('Write the subject and message first', false); return; }
+    const btn = document.getElementById('test-btn');
+    btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Sending test...';
+    const form = composeForm();
+    form.append('test', '1');
+    try {
+        const res = await fetch('/api/messages', { method: 'POST', body: form });
+        const data = await res.json();
+        toast(res.ok ? data.message : (data.error || 'Could not send the test'), res.ok);
+    } catch (err) { toast('Network error', false); }
+    btn.disabled = false; btn.innerHTML = '<i class="fas fa-vial mr-2"></i>Send test to me';
+}
+
+async function sendMessage(e) {
+    e.preventDefault();
+    const btn = document.getElementById('send-btn');
+    btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Sending...';
+    const form = composeForm();
     try {
         // No Content-Type header: the browser must set the multipart boundary.
         const res = await fetch('/api/messages', { method: 'POST', body: form });
@@ -203,6 +278,7 @@ async function sendMessage(e) {
             }
             document.getElementById('compose-form').reset();
             selectedFiles = []; renderAttachList();
+            updateRecipientFilter();
             loadHistory();
         } else { toast(data.error || 'Error sending message', false); }
     } catch (err) { toast('Network error', false); }
@@ -234,7 +310,7 @@ async function loadHistory(page) {
         renderHistory(data.messages);
         renderHistoryPagination(data.pagination);
     } catch (err) {
-        document.getElementById('history-table').innerHTML = '<tr><td colspan="6" class="px-5 py-4 text-center text-danger">Failed to load</td></tr>';
+        document.getElementById('history-table').innerHTML = '<tr><td colspan="7" class="px-5 py-4 text-center text-danger">Failed to load</td></tr>';
     }
 }
 function renderHistoryPagination(p) {
@@ -253,7 +329,8 @@ function renderHistoryPagination(p) {
 }
 function renderHistory(msgs) {
     const tbody = document.getElementById('history-table');
-    if (!msgs.length) { tbody.innerHTML = '<tr><td colspan="6" class="px-5 py-4 text-center text-ink-3">No messages sent yet.</td></tr>'; return; }
+    if (!msgs.length) { tbody.innerHTML = '<tr><td colspan="7" class="px-5 py-4 text-center text-ink-3">No messages sent yet.</td></tr>'; return; }
+    historyById = Object.fromEntries(msgs.map(m => [m.id, m]));
     const typeLabels = { all: 'All Parents', class: 'Class', individual: 'Individual' };
     tbody.innerHTML = msgs.map(m => {
         const status = m.sent
@@ -270,8 +347,49 @@ function renderHistory(msgs) {
             <td class="px-5 py-3 text-sm text-ink-3">${m.recipient_count} recipient(s)</td>
             <td class="px-5 py-3 max-w-[220px]">${atts}</td>
             <td class="px-5 py-3">${status}</td>
+            <td class="px-5 py-3 text-right whitespace-nowrap">
+                <button onclick="toggleMessageDetail(${m.id})" id="detail-btn-${m.id}" class="text-sm text-primary-600 hover:underline">View</button>
+            </td>
+        </tr>
+        <tr id="detail-${m.id}" class="hidden border-b border-line last:border-0 bg-surface-2">
+            <td colspan="7" class="px-5 py-4"></td>
         </tr>`;
     }).join('');
+}
+
+// ── Message detail: what went out, and to whom ───────────────────────
+function toggleMessageDetail(id) {
+    const row = document.getElementById('detail-' + id);
+    const btn = document.getElementById('detail-btn-' + id);
+    const m = historyById[id];
+    if (!row || !m) return;
+    const open = row.classList.toggle('hidden');   // true = now hidden
+    btn.textContent = open ? 'View' : 'Hide';
+    if (open) return;
+    const emails = (m.recipient_emails || '').split(',').map(e => e.trim()).filter(Boolean);
+    row.firstElementChild.innerHTML = `
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+            <div>
+                <p class="text-[11px] font-bold uppercase tracking-[.06em] text-ink-3 mb-1">Message</p>
+                <p class="text-sm font-bold text-ink mb-1">${esc(m.subject)}</p>
+                <pre class="whitespace-pre-wrap font-sans text-sm text-ink-2 bg-surface border border-line rounded-xl p-3">${esc(m.body)}</pre>
+                <p class="text-xs text-ink-3 mt-2">Sent by ${esc(m.created_by || 'staff')}${m.sent_at ? ' on ' + esc(m.sent_at.replace('T', ' ').slice(0, 16)) : ''}</p>
+            </div>
+            <div>
+                <p class="text-[11px] font-bold uppercase tracking-[.06em] text-ink-3 mb-1">Went to ${emails.length} address${emails.length === 1 ? '' : 'es'}</p>
+                <textarea readonly rows="8" id="detail-emails-${m.id}" class="block w-full bg-surface border border-line rounded-xl px-3 py-2 text-xs">${esc(emails.join('\n'))}</textarea>
+                <div class="flex gap-2 mt-2">
+                    <button onclick="copyDetailEmails(${m.id})" class="inline-flex items-center px-3 py-1.5 rounded-xl border border-line-2 text-ink-2 font-bold hover:bg-surface text-sm"><i class="fas fa-copy mr-2"></i>Copy</button>
+                    <a href="/api/messages/${m.id}/recipients.csv" class="inline-flex items-center px-3 py-1.5 rounded-xl border border-line-2 text-ink-2 font-bold hover:bg-surface text-sm"><i class="fas fa-download mr-2"></i>Download list</a>
+                </div>
+            </div>
+        </div>`;
+}
+function copyDetailEmails(id) {
+    const ta = document.getElementById('detail-emails-' + id);
+    navigator.clipboard.writeText(ta.value.split('\n').join(', ')).then(
+        () => toast('Copied ' + ta.value.split('\n').filter(Boolean).length + ' addresses', true),
+        () => { ta.select(); document.execCommand('copy'); toast('Copied', true); });
 }
 
 loadHistory();
