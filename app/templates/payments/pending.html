@@ -30,6 +30,7 @@
                 <tr>
                     <th class="{{ thl }}">When</th>
                     <th class="{{ thl }}">For</th>
+                    <th class="{{ thl }}">Fund</th>
                     <th class="{{ thl }}">Reported by</th>
                     <th class="{{ thr }}">Amount</th>
                     <th class="{{ thl }}">Method</th>
@@ -38,7 +39,7 @@
                 </tr>
             </thead>
             <tbody id="pending-table">
-                <tr><td colspan="7" class="px-4 py-6 text-center text-ink-3">Loading…</td></tr>
+                <tr><td colspan="8" class="px-4 py-6 text-center text-ink-3">Loading…</td></tr>
             </tbody>
         </table>
     </div>
@@ -148,6 +149,7 @@
 
 {% block extra_js %}
 <script>
+const FUND_LABELS = {{ FUND_LABELS | tojson }};
 const METHOD_LABELS = {zelle: 'Zelle', cashapp: 'Cash App', square: 'Square', cash: 'Cash', venmo: 'Venmo', other: 'Other'};
 
 function showMsg(text, ok) {
@@ -170,7 +172,7 @@ async function loadPending() {
         const data = await res.json();
         const rows = data.pending_payments || [];
         if (!rows.length) {
-            tbody.innerHTML = '<tr><td colspan="7" class="px-4 py-6 text-center text-ink-3">Nothing here.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="8" class="px-4 py-6 text-center text-ink-3">Nothing here.</td></tr>';
             return;
         }
         tbody.innerHTML = rows.map(p => {
@@ -181,12 +183,13 @@ async function loadPending() {
                 ? `<span class="px-2 py-1 rounded-full text-xs font-bold bg-ok/10 text-ok">Confirmed</span>`
                 : `<span class="px-2 py-1 rounded-full text-xs font-bold bg-surface-2 text-ink-2">Rejected</span>`;
             const action = p.status === 'pending'
-                ? `<button onclick="confirmPay(${p.id})" class="px-3 py-1 bg-ok text-white rounded-lg text-xs font-bold hover:opacity-90 mr-1">Confirm</button>
+                ? `<button onclick="confirmPay(${p.id}, '${esc(p.fund)}')" class="px-3 py-1 bg-ok text-white rounded-lg text-xs font-bold hover:opacity-90 mr-1">Confirm</button>
                    <button onclick="rejectPay(${p.id})" class="px-3 py-1 border border-line-2 text-ink-2 rounded-lg text-xs font-bold hover:bg-surface-2">Reject</button>`
                 : badge + (p.admin_note ? `<div class="text-xs text-ink-3 mt-1">${esc(p.admin_note)}</div>` : '');
             return `<tr class="border-b border-line last:border-0 hover:bg-surface-2">
                 <td class="px-4 py-3 text-sm text-ink-2 tabular-nums">${when}</td>
                 <td class="px-4 py-3 text-sm font-bold text-ink">${esc(p.who)}</td>
+                <td class="px-4 py-3 text-sm"><span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold ${p.fund === 'company' ? 'bg-gold-300 text-gold-ink' : 'bg-surface-2 text-ink-2'}">${esc(FUND_LABELS[p.fund] || p.fund)}</span></td>
                 <td class="px-4 py-3 text-sm text-ink-2">${esc(p.parent_name || '')}</td>
                 <td class="px-4 py-3 text-sm text-right font-bold text-ink tabular-nums">$${p.amount}</td>
                 <td class="px-4 py-3 text-sm text-ink-2">${METHOD_LABELS[p.method] || p.method}</td>
@@ -195,12 +198,14 @@ async function loadPending() {
             </tr>`;
         }).join('');
     } catch (err) {
-        tbody.innerHTML = '<tr><td colspan="7" class="px-4 py-6 text-center text-danger">Failed to load.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" class="px-4 py-6 text-center text-danger">Failed to load.</td></tr>';
     }
 }
 
-async function confirmPay(id) {
-    if (!confirm('Confirm this payment? It will be recorded and the balance reduced.')) return;
+async function confirmPay(id, fund) {
+    // Say which balance this reduces: Company money is owed to the Foundation
+    // and confirming it must never touch the studio balance.
+    if (!confirm(`Confirm this payment? It will be recorded and the ${FUND_LABELS[fund] || fund} balance reduced.`)) return;
     try {
         const res = await fetch(`/api/pending-payments/${id}/confirm`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'});
         const d = await res.json();

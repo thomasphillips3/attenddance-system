@@ -3194,6 +3194,12 @@ PAYMENT_SETTINGS_KEYS = [
     'payments_square_enabled', 'payments_square_access_token',
     'payments_square_location_id', 'payments_square_environment',
     'payments_square_webhook_signature_key', 'payments_square_link',
+    # Company / Foundation destinations (link-only Square): where a parent
+    # sends Company money. Mirrors the studio Zelle / Cash App / Square-link
+    # keys under a company_ prefix; no Square API token for this fund.
+    'company_payments_zelle_enabled', 'company_payments_zelle_name', 'company_payments_zelle_memo',
+    'company_payments_cashapp_enabled', 'company_payments_cashapp_tag',
+    'company_payments_square_enabled', 'company_payments_square_link',
     # SMS / Twilio
     'sms_enabled', 'sms_twilio_sid', 'sms_twilio_token', 'sms_from_number',
     # Automated reminders
@@ -3214,6 +3220,18 @@ SECRET_SETTINGS_KEYS = {
 }
 
 DEFAULT_ZELLE_MEMO = "Put your dancer's full name in the memo so we can match your payment."
+DEFAULT_COMPANY_ZELLE_MEMO = "Put your dancer's full name and 'Company' in the memo."
+
+# Setting-key prefix per fund. The studio keys predate funds so they keep
+# their bare `payments_` prefix; the Foundation's live under `company_payments_`.
+FUND_SETTING_PREFIX = {'studio': 'payments_', 'company': 'company_payments_'}
+FUND_ZELLE_MEMO_DEFAULT = {'studio': DEFAULT_ZELLE_MEMO, 'company': DEFAULT_COMPANY_ZELLE_MEMO}
+SQUARE_LINK_KEYS = ('payments_square_link', 'company_payments_square_link')
+
+
+def _zelle_qr_key(fund):
+    """The Setting key holding the Zelle QR data URI for one fund."""
+    return FUND_SETTING_PREFIX[fund] + 'zelle_qr_data'
 
 
 def _owes_any_fund(funds: dict, threshold: float = 0.0) -> bool:
@@ -3287,8 +3305,12 @@ def get_payment_settings():
             settings[key] = raw
     if not settings.get('payments_zelle_memo'):
         settings['payments_zelle_memo'] = DEFAULT_ZELLE_MEMO
+    if not settings.get('company_payments_zelle_memo'):
+        settings['company_payments_zelle_memo'] = DEFAULT_COMPANY_ZELLE_MEMO
     settings['has_zelle_qr'] = bool(Setting.get('payments_zelle_qr_data') or Setting.get('payments_zelle_qr_path'))
     settings['zelle_qr'] = Setting.get('payments_zelle_qr_data') or Setting.get('payments_zelle_qr_path', '')
+    settings['has_company_zelle_qr'] = bool(Setting.get(_zelle_qr_key('company')))
+    settings['company_zelle_qr'] = Setting.get(_zelle_qr_key('company'), '')
     return jsonify({'settings': settings})
 
 
@@ -3307,19 +3329,20 @@ def update_payment_settings():
 
     # Validate BEFORE writing anything: Setting.set commits per key, so bailing
     # out mid-loop would leave the rest of the form half-saved.
-    square_link = None
-    if 'payments_square_link' in data:
-        square_link, lerr = _valid_square_link(data['payments_square_link'])
-        if lerr:
-            return jsonify({'error': lerr}), 400
+    square_links = {}
+    for key in SQUARE_LINK_KEYS:
+        if key in data:
+            square_links[key], lerr = _valid_square_link(data[key])
+            if lerr:
+                return jsonify({'error': lerr}), 400
 
     changed = []
     for key in PAYMENT_SETTINGS_KEYS:
         if key not in data:
             continue
         val = (data[key] or '').strip()
-        if key == 'payments_square_link':
-            val = square_link
+        if key in square_links:
+            val = square_links[key]
         if key in SECRET_SETTINGS_KEYS:
             # Skip masked placeholders — means "leave unchanged"
             if not val or '••••' in val:
@@ -3337,29 +3360,18 @@ def update_payment_settings():
     return jsonify({'message': 'Payment settings updated', 'changed': changed})
 
 
-@bp.route('/settings/payments/zelle-qr', methods=['POST'])
-@login_required
-def upload_zelle_qr():
-    """Upload Zelle QR code image — stored as a data URI in the DB so it
-    survives redeploys (the filesystem on Fly is ephemeral)."""
-    import base64
-    err = _admin_only()
-    if err:
-        return err
-    if 'file' not in request.files:
-        return jsonify({'error': 'No file provided'}), 400
-    f = request.files['file']
-    if not f.filename:
-        return jsonify({'error': 'No file selected'}), 400
+def _read_image_data_uri(f):
+    """(data_uri, None) for an uploaded image, or (None, error message).
 
+    Whitelists the content type to EXACT values - never trust the raw mimetype.
+    It comes from the client's multipart Content-Type header, so a prefix check
+    (startswith 'image/') would let `image/png"><script>` through and into the
+    data URI, which then renders in an unescaped src= (parent-portal XSS).
+    Shared by both funds' QR uploads so the check is written once."""
+    import base64
     raw = f.read()
     if len(raw) > 2 * 1024 * 1024:
-        return jsonify({'error': 'Image too large (max 2MB)'}), 400
-
-    # Whitelist the content type to EXACT values — never trust the raw mimetype.
-    # It comes from the client's multipart Content-Type header, so a prefix check
-    # (startswith 'image/') would let `image/png"><script>` through and into the
-    # data URI, which then renders in an unescaped src= (parent-portal XSS).
+        return None, 'Image too large (max 2MB)'
     VALID_IMAGE_TYPES = {'image/png', 'image/jpeg', 'image/gif', 'image/webp'}
     ext_map = {'png': 'image/png', 'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',
                'gif': 'image/gif', 'webp': 'image/webp'}
@@ -3368,27 +3380,61 @@ def upload_zelle_qr():
         ext = f.filename.rsplit('.', 1)[-1].lower() if '.' in f.filename else ''
         content_type = ext_map.get(ext, '')
     if content_type not in VALID_IMAGE_TYPES:
-        return jsonify({'error': 'File must be an image (PNG, JPG, GIF, or WebP)'}), 400
+        return None, 'File must be an image (PNG, JPG, GIF, or WebP)'
+    return f'data:{content_type};base64,' + base64.b64encode(raw).decode('ascii'), None
 
-    data_uri = f'data:{content_type};base64,' + base64.b64encode(raw).decode('ascii')
-    Setting.set('payments_zelle_qr_data', data_uri)
-    AuditLog.record(current_user.id, 'settings.zelle_qr', 'Uploaded Zelle QR code')
+
+def _qr_fund_from_query():
+    """Which fund's Zelle QR a request is about: `?fund=` (default studio).
+    Returns (fund, None) or (None, error response)."""
+    fund = request.args.get('fund', 'studio')
+    if not is_fund(fund):
+        return None, (jsonify({'error': 'fund must be studio or company'}), 400)
+    return fund, None
+
+
+@bp.route('/settings/payments/zelle-qr', methods=['POST'])
+@login_required
+def upload_zelle_qr():
+    """Upload a Zelle QR code image - stored as a data URI in the DB so it
+    survives redeploys (the filesystem on Fly is ephemeral). `?fund=company`
+    stores the Foundation's QR under its own key; studio is the default."""
+    err = _admin_only()
+    if err:
+        return err
+    fund, err = _qr_fund_from_query()
+    if err:
+        return err
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file provided'}), 400
+    f = request.files['file']
+    if not f.filename:
+        return jsonify({'error': 'No file selected'}), 400
+    data_uri, ierr = _read_image_data_uri(f)
+    if ierr:
+        return jsonify({'error': ierr}), 400
+    Setting.set(_zelle_qr_key(fund), data_uri)
+    AuditLog.record(current_user.id, 'settings.zelle_qr', f'Uploaded Zelle QR code ({FUND_LABELS[fund]})')
     db.session.commit()
-    return jsonify({'message': 'QR code uploaded', 'path': data_uri})
+    return jsonify({'message': 'QR code uploaded', 'path': data_uri, 'fund': fund})
 
 
 @bp.route('/settings/payments/zelle-qr', methods=['DELETE'])
 @login_required
 def delete_zelle_qr():
-    """Remove the stored Zelle QR code."""
+    """Remove the stored Zelle QR code for one fund (`?fund=`, default studio)."""
     err = _admin_only()
     if err:
         return err
-    Setting.set('payments_zelle_qr_data', '')
-    Setting.set('payments_zelle_qr_path', '')
-    AuditLog.record(current_user.id, 'settings.zelle_qr', 'Removed Zelle QR code')
+    fund, err = _qr_fund_from_query()
+    if err:
+        return err
+    Setting.set(_zelle_qr_key(fund), '')
+    if fund == 'studio':
+        Setting.set('payments_zelle_qr_path', '')  # legacy filesystem path key
+    AuditLog.record(current_user.id, 'settings.zelle_qr', f'Removed Zelle QR code ({FUND_LABELS[fund]})')
     db.session.commit()
-    return jsonify({'message': 'QR code removed'})
+    return jsonify({'message': 'QR code removed', 'fund': fund})
 
 
 @bp.route('/settings/payments/square-token', methods=['DELETE'])
@@ -3415,41 +3461,55 @@ def test_square_connection():
     return jsonify({'ok': ok, 'message': message}), (200 if ok else 400)
 
 
-@bp.route('/payment-options', methods=['GET'])
-@login_required
-def get_payment_options():
-    """Get enabled payment options for the parent portal (no sensitive data)."""
+def _options_for_fund(fund):
+    """The enabled payment destinations for one fund, safe for the parent
+    portal (no secrets). Studio reads the `payments_*` keys, Company the
+    `company_payments_*` keys; the scrubbing is the same for both."""
+    prefix = FUND_SETTING_PREFIX[fund]
     options = []
-    if Setting.get_bool('payments_zelle_enabled'):
+    if Setting.get_bool(prefix + 'zelle_enabled'):
+        qr = Setting.get(_zelle_qr_key(fund))
+        if fund == 'studio' and not qr:
+            qr = Setting.get('payments_zelle_qr_path', '')  # legacy filesystem path key
         options.append({
             'type': 'zelle',
-            'name': Setting.get('payments_zelle_name', 'Zelle'),
-            'qr': Setting.get('payments_zelle_qr_data') or Setting.get('payments_zelle_qr_path', ''),
-            'memo': Setting.get('payments_zelle_memo') or DEFAULT_ZELLE_MEMO,
+            'name': Setting.get(prefix + 'zelle_name', 'Zelle'),
+            'qr': qr or '',
+            'memo': Setting.get(prefix + 'zelle_memo') or FUND_ZELLE_MEMO_DEFAULT[fund],
         })
-    if Setting.get_bool('payments_cashapp_enabled'):
+    if Setting.get_bool(prefix + 'cashapp_enabled'):
         # A Cash App cashtag is alphanumeric/underscore; strip anything else so an
         # admin-set value can't inject into the unescaped href/URL it renders into
         # on the parent portal (defense-in-depth against an admin-account compromise).
         import re as _re
-        tag = _re.sub(r'[^A-Za-z0-9_]', '', Setting.get('payments_cashapp_tag', '').lstrip('$'))[:20]
+        tag = _re.sub(r'[^A-Za-z0-9_]', '', Setting.get(prefix + 'cashapp_tag', '').lstrip('$'))[:20]
         options.append({
             'type': 'cashapp',
             'tag': f'${tag}' if tag else '',
             'cashtag': tag,
             'url': f'https://cash.app/${tag}' if tag else '',
         })
-    if Setting.get_bool('payments_square_enabled'):
+    if Setting.get_bool(prefix + 'square_enabled'):
         # Re-validate on the way out, not just on write: this URL goes straight
         # into an href on the parent portal, and a value that bypassed the PUT
         # (direct DB edit, restored backup) must not reach parents.
-        link, lerr = _valid_square_link(Setting.get('payments_square_link', ''))
+        link, lerr = _valid_square_link(Setting.get(prefix + 'square_link', ''))
         options.append({
             'type': 'square',
-            'configured': square_service.is_configured(),
+            # Square API invoicing (card on file, webhook) is studio-only; the
+            # Company fund is link-only, so it never reports as configured.
+            'configured': square_service.is_configured() if fund == 'studio' else False,
             'link': '' if lerr else link,
         })
-    return jsonify({'payment_options': options})
+    return options
+
+
+@bp.route('/payment-options', methods=['GET'])
+@login_required
+def get_payment_options():
+    """Enabled payment destinations per fund for the parent portal (no
+    sensitive data): {'payment_options': {'studio': [...], 'company': [...]}}."""
+    return jsonify({'payment_options': {fund: _options_for_fund(fund) for fund in FUNDS}})
 
 
 @bp.route('/audit-log', methods=['GET'])
@@ -3507,12 +3567,13 @@ def _pending_to_dict(p) -> dict:
     }
 
 
-def _send_receipt(parent_email, who, amount, method):
+def _send_receipt(parent_email, who, amount, method, fund='studio'):
     """Best-effort payment receipt email. Never raises.
 
     `parent_email` may be a single address or a list - a receipt goes to every
     parent on the account, so the one who didn't send the money still sees it
-    was received."""
+    was received. `fund` names which account was paid, so a Company receipt
+    says Company / Foundation and cannot be mistaken for tuition."""
     recipients = ([parent_email] if isinstance(parent_email, str)
                   else [e for e in (parent_email or []) if e])
     if not recipients:
@@ -3525,7 +3586,7 @@ def _send_receipt(parent_email, who, amount, method):
     body = (
         f"Hi,\n\n"
         f"This confirms we've received and recorded your payment of ${amount:.2f} "
-        f"for {who} via {method_label}.\n\n"
+        f"for {who} ({FUND_LABELS.get(fund, fund)} account) via {method_label}.\n\n"
         f"You can view your balance any time in the parent portal.\n\n"
         f"Thank you,\n{STUDIO_NAME}"
     )
@@ -3533,7 +3594,7 @@ def _send_receipt(parent_email, who, amount, method):
     # payment-confirm (or the Square webhook) wait on a slow SMTP send. Same
     # pattern as the admin-notify emails. The payment is already committed by
     # the time this runs, so a failed/slow receipt never affects the balance.
-    _send_email_async(recipients, f'Payment received — {STUDIO_NAME}', body)
+    _send_email_async(recipients, f'Payment received - {STUDIO_NAME}', body)
 
 
 @bp.route('/payments/claim', methods=['POST'])
@@ -3553,6 +3614,13 @@ def claim_payment():
     amount, aerr = _valid_amount(data.get('amount'))
     if aerr:
         return aerr
+
+    # Which balance the parent says they paid. The portal always sends it; the
+    # studio default covers older clients. Allowlisted so a bad value can't
+    # file money into a fund that does not exist.
+    fund = data.get('fund') or 'studio'
+    if not is_fund(fund):
+        return jsonify({'error': 'fund must be studio or company'}), 400
 
     student_id = data.get('student_id')
     family_id = data.get('family_id')
@@ -3587,7 +3655,8 @@ def claim_payment():
         parent_id=current_user.id,
         amount=amount,
         method=method,
-        reference=_clean_str(data.get('reference'), 100) or None,  # parent input — cap length
+        fund=fund,
+        reference=_clean_str(data.get('reference'), 100) or None,  # parent input - cap length
         note=_clean_str(data.get('note'), 1000) or None,
     )
     db.session.add(p)
@@ -3601,12 +3670,13 @@ def claim_payment():
         if admin_emails:
             _send_email_async(
                 admin_emails,
-                f'New payment to confirm — {who}',
-                f'{current_user.full_name} reported a {method} payment of ${amount:.2f} for {who}.\n\n'
+                f'New payment to confirm - {who}',
+                f'{current_user.full_name} reported a {method} payment of ${amount:.2f} for {who} '
+                f'({FUND_LABELS[fund]} balance).\n\n'
                 f'Reference: {p.reference or "(none)"}\n\nConfirm it in the Pending Payments page.',
             )
 
-    return jsonify({'message': 'Payment reported — the studio will confirm it shortly.',
+    return jsonify({'message': 'Payment reported - the studio will confirm it shortly.',
                     'pending_payment': _pending_to_dict(p)}), 201
 
 
@@ -3708,7 +3778,7 @@ def confirm_pending_payment(pid):
                     f'Confirmed ${amount:.2f} {method_label} ({p.fund}) for {who}')
     db.session.commit()
 
-    _send_receipt(receipt_email, who, amount, p.method)
+    _send_receipt(receipt_email, who, amount, p.method, p.fund)
     return jsonify({'message': f'Payment of ${amount:.2f} confirmed', 'pending_payment': _pending_to_dict(p)})
 
 
@@ -4000,7 +4070,7 @@ def square_webhook():
                     f'Auto-recorded ${amount:.2f} for {student.full_name} (invoice {invoice_id})')
     db.session.commit()
 
-    _send_receipt(student_emails(student), student.full_name, amount, 'square')
+    _send_receipt(student_emails(student), student.full_name, amount, 'square', 'studio')
     return jsonify({'status': 'recorded'}), 200
 
 

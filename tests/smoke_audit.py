@@ -3744,7 +3744,7 @@ def run_cashtag_sanitize():
         db.session.commit()
     with app.test_client() as c:
         login(c, "parent_a", "pw")
-        opts = (c.get("/api/payment-options").get_json() or {}).get("payment_options", [])
+        opts = ((c.get("/api/payment-options").get_json() or {}).get("payment_options") or {}).get("studio", [])
         ca = next((o for o in opts if o.get("type") == "cashapp"), {})
         blob = str(ca.get("cashtag", "")) + str(ca.get("url", ""))
         record(f"Malicious cashtag is sanitized (served: {ca.get('cashtag')!r})",
@@ -3754,7 +3754,7 @@ def run_cashtag_sanitize():
         db.session.commit()
     with app.test_client() as c:
         login(c, "parent_a", "pw")
-        opts = (c.get("/api/payment-options").get_json() or {}).get("payment_options", [])
+        opts = ((c.get("/api/payment-options").get_json() or {}).get("payment_options") or {}).get("studio", [])
         ca = next((o for o in opts if o.get("type") == "cashapp"), {})
         record(f"Valid cashtag preserved -> {ca.get('cashtag')}",
                ca.get("cashtag") == "MyStudio_2026", f"got {ca.get('cashtag')}", "P3")

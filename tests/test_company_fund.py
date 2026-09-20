@@ -4,8 +4,9 @@ The LSODance Company collects to the Foundation's accounts; the studio
 collects tuition to its own. These tests prove the fund wall holds at every
 layer: tagging on write, the idempotent backfill, the single category map,
 the dropdowns that render from it, per-fund balances and allocation, per-fund
-late fees, the Company-visibility helper, per-fund ledgers, and the audited
-transfer between funds.
+late fees, the Company-visibility helper, per-fund ledgers, the audited
+transfer between funds, per-fund payment destinations, the parent claim's
+fund, and the receipt that names it.
 
 Run:  RFID_ENABLED=false python3 tests/test_company_fund.py
 Exit 0 = all green, 1 = failures.
@@ -23,6 +24,8 @@ os.environ["DATABASE_URL"] = f"sqlite:///{_tmp.name}"
 import sqlalchemy  # noqa: E402
 
 from app import create_app, db  # noqa: E402
+from app import email as email_service  # noqa: E402
+from app.api import routes as api_routes  # noqa: E402
 from app.funds import (  # noqa: E402
     CATEGORY_FUND, COMPANY_CATEGORIES, fund_for_category,
 )
@@ -399,6 +402,104 @@ def test_transfer():
         record("a parent calling fund-transfer -> 403", r.status_code == 403, str(r.status_code))
 
 
+def test_payment_options_per_fund():
+    """Test 11: /api/payment-options returns a list per fund built from that
+    fund's own settings, and a bad Company Square link is rejected on write."""
+    with app.app_context():
+        Setting.set("payments_zelle_enabled", "1")
+        Setting.set("payments_cashapp_enabled", "0")
+        Setting.set("company_payments_cashapp_enabled", "1")
+        Setting.set("company_payments_cashapp_tag", "LSODF")
+        Setting.set("company_payments_zelle_enabled", "0")
+        db.session.commit()
+    with app.test_client() as c:
+        login_admin(c)
+        opts = c.get("/api/payment-options").get_json()["payment_options"]
+        studio_types = [o["type"] for o in opts["studio"]]
+        company = opts["company"]
+        company_types = [o["type"] for o in company]
+        record("studio options: zelle present, cashapp absent",
+               "zelle" in studio_types and "cashapp" not in studio_types, str(opts))
+        record("company options: cashapp LSODF present, zelle absent",
+               company_types == ["cashapp"] and company[0]["cashtag"] == "LSODF", str(opts))
+        r = c.put("/api/settings/payments", json={"company_payments_square_link": "https://evil.example/pay"})
+        record("company Square link on a non-Square host -> 400", r.status_code == 400, str(r.get_json()))
+        r = c.put("/api/settings/payments", json={
+            "company_payments_square_enabled": "1",
+            "company_payments_square_link": "https://square.link/u/abc"})
+        opts = c.get("/api/payment-options").get_json()["payment_options"]
+        sq = [o for o in opts["company"] if o["type"] == "square"]
+        record("company Square link saves and is link-only (configured is False)",
+               r.status_code == 200 and sq and sq[0]["link"] == "https://square.link/u/abc"
+               and sq[0]["configured"] is False, str(opts["company"]))
+        s = c.get("/api/settings/payments").get_json()["settings"]
+        record("settings expose the company memo default and company QR flags",
+               "Company" in s["company_payments_zelle_memo"] and s["has_company_zelle_qr"] is False, str(s.get("company_payments_zelle_memo")))
+        r = c.delete("/api/settings/payments/zelle-qr?fund=bogus")
+        record("zelle-qr with an unknown fund -> 400", r.status_code == 400, str(r.get_json()))
+
+
+def _make_parent(username, student_id):
+    with app.app_context():
+        u = User(username=username, email=f"{username}@x.com", first_name="P", last_name="Q",
+                 role="parent", is_admin=False, is_active=True)
+        u.set_password("pw")
+        db.session.add(u)
+        db.session.flush()
+        db.session.add(ParentStudent(parent_id=u.id, student_id=student_id))
+        db.session.commit()
+
+
+def test_pending_fund_and_receipt():
+    """Tests 12 + 13: a parent's claim carries a fund (default studio, bad
+    value rejected); confirming a Company claim records the payment in the
+    Company fund only; the receipt names Company / Foundation."""
+    sid = new_student("Claim")
+    post_txn(sid, "charge", 60, "tuition")
+    post_txn(sid, "charge", 45, "competition")
+    with app.app_context():
+        st = db.session.get(Student, sid)
+        st.parent_email = "claimparent@x.com"
+        db.session.commit()
+    _make_parent("claimparent", sid)
+    with app.test_client() as c:
+        c.post("/auth/login", data={"username": "claimparent", "password": "pw"})
+        r = c.post("/api/payments/claim", json={"student_id": sid, "amount": 45, "method": "cashapp", "fund": "company"})
+        body = r.get_json() or {}
+        record("claim with fund=company -> 201 and pending.fund == company",
+               r.status_code == 201 and body.get("pending_payment", {}).get("fund") == "company", str(body))
+        company_pid = body.get("pending_payment", {}).get("id")
+        r = c.post("/api/payments/claim", json={"student_id": sid, "amount": 5, "method": "zelle"})
+        record("claim without fund defaults to studio",
+               r.status_code == 201 and r.get_json()["pending_payment"]["fund"] == "studio", str(r.get_json()))
+        r = c.post("/api/payments/claim", json={"student_id": sid, "amount": 5, "method": "zelle", "fund": "x"})
+        record("claim with fund=x -> 400", r.status_code == 400, str(r.get_json()))
+
+    captured = []
+    real_async = api_routes._send_email_async
+    real_configured = email_service.is_configured
+    api_routes._send_email_async = lambda emails, subject, body: captured.append((emails, subject, body))
+    email_service.is_configured = lambda: True
+    try:
+        with app.test_client() as c:
+            login_admin(c)
+            r = c.post(f"/api/pending-payments/{company_pid}/confirm", json={})
+            record("admin confirm of the company claim -> 200", r.status_code == 200, str(r.get_json()))
+    finally:
+        api_routes._send_email_async = real_async
+        email_service.is_configured = real_configured
+    with app.app_context():
+        bal = calc_balance(sid)
+        record("confirming a company claim pays the company balance only (company 0.00, studio 60.00)",
+               bal["company"]["balance"] == 0.0 and bal["studio"]["balance"] == 60.0, str(bal))
+        rows = Transaction.query.filter_by(student_id=sid, type="payment").all()
+        record("the recorded payment row is fund=company",
+               len(rows) == 1 and rows[0].fund == "company", str([(t.fund, str(t.amount)) for t in rows]))
+    receipts = [b for (_, subj, b) in captured if subj.startswith("Payment received")]
+    record("receipt body names the Company / Foundation account",
+           len(receipts) == 1 and "Company / Foundation" in receipts[0], str(captured)[:300])
+
+
 def main():
     ids = seed()
     test_tagging(ids)
@@ -411,6 +512,8 @@ def main():
     test_company_visibility()
     test_ledger_shape()
     test_transfer()
+    test_payment_options_per_fund()
+    test_pending_fund_and_receipt()
     fails = [r for r in results if not r[1]]
     print("\n" + "=" * 56)
     print(f"SUMMARY: {len(results) - len(fails)}/{len(results)} passed, {len(fails)} failed.")

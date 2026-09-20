@@ -145,6 +145,95 @@
     </div>
 </div>
 
+<!-- Company / Foundation payments: where a parent sends Company money. Mirrors
+     the studio Zelle / Cash App / Square-link controls with co- ids; no Square
+     API token, location or webhook here (Company Square is link-only). -->
+<div class="bg-gold-300/40 border border-[#e4cd8e] rounded-2xl shadow-soft mb-6 overflow-hidden">
+    <div class="px-6 py-4 border-b border-[#e4cd8e]">
+        <span class="font-display text-xl text-gold-ink">Company / Foundation payments</span>
+        <p class="mt-1 text-sm text-ink-2">Money for Company activities goes to the Foundation's own accounts. These are the destinations parents see for a Company balance.</p>
+    </div>
+
+    <div class="px-6 py-4 border-b border-[#e4cd8e]">
+        <div class="flex items-center justify-between mb-3">
+            <div class="flex items-center">
+                <span class="font-bold text-ink mr-3">Zelle</span>
+                <span class="text-xs text-ink-3">The Foundation's Zelle</span>
+            </div>
+            <label class="relative inline-flex items-center cursor-pointer">
+                <input type="checkbox" id="co-zelle-enabled" class="sr-only peer" onchange="saveSettings()">
+            <div class="w-11 h-6 bg-line-2 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-line after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary-600"></div>
+            </label>
+        </div>
+        <div class="space-y-4">
+            <div>
+                <label class="{{ lbl }}">Display Name</label>
+                <input type="text" id="co-zelle-name" placeholder="LSODANCE FOUNDATION" class="{{ inp }}">
+            </div>
+            <div>
+                <label class="{{ lbl }}">Memo instruction shown to parents</label>
+                <input type="text" id="co-zelle-memo" placeholder="Put your dancer's full name and 'Company' in the memo." class="{{ inp }}">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-ink-2 mb-1">QR Code Image</label>
+                <div class="flex items-start space-x-4">
+                    <div id="co-qr-preview" class="w-32 h-32 border-2 border-dashed border-line-2 rounded-xl flex items-center justify-center bg-surface overflow-hidden">
+                        <span class="text-ink-3 text-xs text-center px-2">No QR uploaded</span>
+                    </div>
+                    <div>
+                        <input type="file" id="co-qr-file" accept="image/*" class="hidden" onchange="uploadQR('company')">
+                        <button type="button" onclick="document.getElementById('co-qr-file').click()" class="inline-flex items-center rounded-xl border border-line-2 bg-surface text-ink-2 font-bold px-3 py-2 text-sm hover:bg-surface-2">
+                            <i class="fas fa-upload mr-2"></i>Upload QR Code
+                        </button>
+                        <button type="button" id="co-qr-remove" onclick="removeQR('company')" class="hidden ml-2 inline-flex items-center rounded-xl border border-line-2 bg-surface text-danger font-bold px-3 py-2 text-sm hover:bg-danger/10">
+                            <i class="fas fa-trash mr-2"></i>Remove
+                        </button>
+                        <p class="mt-1 text-xs text-ink-3">PNG or JPG, max 2MB. Shown to parents with a Company balance.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="px-6 py-4 border-b border-[#e4cd8e]">
+        <div class="flex items-center justify-between mb-3">
+            <div class="flex items-center">
+                <span class="font-bold text-ink mr-3">Cash App</span>
+                <span class="text-xs text-ink-3">The Foundation's cashtag</span>
+            </div>
+            <label class="relative inline-flex items-center cursor-pointer">
+                <input type="checkbox" id="co-cashapp-enabled" class="sr-only peer" onchange="saveSettings()">
+            <div class="w-11 h-6 bg-line-2 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-line after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary-600"></div>
+            </label>
+        </div>
+        <div>
+            <label class="{{ lbl }}">Cashtag</label>
+            <div class="mt-1 flex rounded-xl shadow-sm">
+                <span class="inline-flex items-center px-3 rounded-l-xl border border-r-0 border-line-2 bg-surface-2 text-ink-3 text-sm">$</span>
+                <input type="text" id="co-cashapp-tag" placeholder="LSODF" class="flex-1 block w-full bg-surface border border-line-2 rounded-none rounded-r-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-200 focus:border-primary-400">
+            </div>
+        </div>
+    </div>
+
+    <div class="px-6 py-4">
+        <div class="flex items-center justify-between mb-3">
+            <div class="flex items-center">
+                <span class="font-bold text-ink mr-3">Square payment link</span>
+                <span class="text-xs text-ink-3">Card payments to the Foundation (link only)</span>
+            </div>
+            <label class="relative inline-flex items-center cursor-pointer">
+                <input type="checkbox" id="co-square-enabled" class="sr-only peer" onchange="saveSettings()">
+            <div class="w-11 h-6 bg-line-2 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-line after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary-600"></div>
+            </label>
+        </div>
+        <div>
+            <label class="{{ lbl }}">Payment Link</label>
+            <input type="text" id="co-square-link" placeholder="https://square.link/u/..." class="{{ inpmono }}">
+            <p class="mt-1 text-xs text-ink-3">A Square checkout link on the Foundation's Square account. Emailed invoices and auto-reconcile are studio-only.</p>
+        </div>
+    </div>
+</div>
+
 <!-- SMS / Twilio -->
 <div class="bg-surface border border-line rounded-2xl shadow-soft mb-6 overflow-hidden">
     <div class="px-6 py-4 border-b border-line flex items-center justify-between">
@@ -232,9 +321,15 @@ function showMsg(text, ok) {
     setTimeout(() => m.classList.add('hidden'), 3500);
 }
 
-function renderQR(dataOrPath) {
-    const prev = document.getElementById('qr-preview');
-    const removeBtn = document.getElementById('qr-remove');
+// Zelle QR controls per fund: the studio block keeps its original ids, the
+// Company / Foundation block prefixes them with co-.
+const QR_IDS = {
+    studio:  {preview: 'qr-preview',    remove: 'qr-remove',    file: 'qr-file'},
+    company: {preview: 'co-qr-preview', remove: 'co-qr-remove', file: 'co-qr-file'},
+};
+function renderQR(fund, dataOrPath) {
+    const prev = document.getElementById(QR_IDS[fund].preview);
+    const removeBtn = document.getElementById(QR_IDS[fund].remove);
     if (dataOrPath) {
         prev.innerHTML = `<img src="${dataOrPath}" alt="Zelle QR code" class="w-full h-full object-contain">`;
         removeBtn.classList.remove('hidden');
@@ -256,6 +351,15 @@ async function loadSettings() {
         document.getElementById('cashapp-tag').value = (s.payments_cashapp_tag || '').replace(/^\$/, '');
         document.getElementById('square-enabled').checked = s.payments_square_enabled === '1';
         document.getElementById('square-link').value = s.payments_square_link || '';
+        // Company / Foundation destinations
+        document.getElementById('co-zelle-enabled').checked = s.company_payments_zelle_enabled === '1';
+        document.getElementById('co-zelle-name').value = s.company_payments_zelle_name || '';
+        document.getElementById('co-zelle-memo').value = s.company_payments_zelle_memo || '';
+        document.getElementById('co-cashapp-enabled').checked = s.company_payments_cashapp_enabled === '1';
+        document.getElementById('co-cashapp-tag').value = (s.company_payments_cashapp_tag || '').replace(/^\$/, '');
+        document.getElementById('co-square-enabled').checked = s.company_payments_square_enabled === '1';
+        document.getElementById('co-square-link').value = s.company_payments_square_link || '';
+        renderQR('company', s.company_zelle_qr || '');
         document.getElementById('square-location').value = s.payments_square_location_id || '';
         document.getElementById('square-env').value = s.payments_square_environment || 'sandbox';
 
@@ -271,7 +375,7 @@ async function loadSettings() {
         wk.value = '';
         wk.placeholder = hasWebhookKey ? 'Key saved (leave blank to keep)' : 'Paste signature key';
 
-        renderQR(s.zelle_qr || '');
+        renderQR('studio', s.zelle_qr || '');
         document.getElementById('webhook-url').value = window.location.origin + '/api/webhooks/square';
 
         // SMS
@@ -300,7 +404,15 @@ async function loadSettings() {
 
 async function saveSettings() {
     const tag = document.getElementById('cashapp-tag').value.trim();
+    const coTag = document.getElementById('co-cashapp-tag').value.trim();
     const body = {
+        company_payments_zelle_enabled: document.getElementById('co-zelle-enabled').checked ? '1' : '0',
+        company_payments_zelle_name: document.getElementById('co-zelle-name').value.trim(),
+        company_payments_zelle_memo: document.getElementById('co-zelle-memo').value.trim(),
+        company_payments_cashapp_enabled: document.getElementById('co-cashapp-enabled').checked ? '1' : '0',
+        company_payments_cashapp_tag: coTag.replace(/^\$/, ''),
+        company_payments_square_enabled: document.getElementById('co-square-enabled').checked ? '1' : '0',
+        company_payments_square_link: document.getElementById('co-square-link').value.trim(),
         payments_zelle_enabled: document.getElementById('zelle-enabled').checked ? '1' : '0',
         payments_zelle_name: document.getElementById('zelle-name').value.trim(),
         payments_zelle_memo: document.getElementById('zelle-memo').value.trim(),
@@ -345,25 +457,27 @@ async function saveSettings() {
     }
 }
 
-async function uploadQR() {
-    const file = document.getElementById('qr-file').files[0];
+async function uploadQR(fund) {
+    fund = fund || 'studio';
+    const file = document.getElementById(QR_IDS[fund].file).files[0];
     if (!file) return;
     const formData = new FormData();
     formData.append('file', file);
     try {
-        const res = await fetch('/api/settings/payments/zelle-qr', {method: 'POST', body: formData});
+        const res = await fetch('/api/settings/payments/zelle-qr?fund=' + fund, {method: 'POST', body: formData});
         const data = await res.json();
-        if (res.ok) { renderQR(data.path); showMsg('QR code uploaded', true); }
+        if (res.ok) { renderQR(fund, data.path); showMsg('QR code uploaded', true); }
         else showMsg(data.error || 'Upload failed', false);
     } catch (err) { showMsg('Network error', false); }
 }
 
-async function removeQR() {
+async function removeQR(fund) {
+    fund = fund || 'studio';
     if (!confirm('Remove the QR code?')) return;
     try {
-        const res = await fetch('/api/settings/payments/zelle-qr', {method: 'DELETE'});
+        const res = await fetch('/api/settings/payments/zelle-qr?fund=' + fund, {method: 'DELETE'});
         const d = await res.json();
-        if (res.ok) { renderQR(''); showMsg('QR code removed', true); }
+        if (res.ok) { renderQR(fund, ''); showMsg('QR code removed', true); }
         else showMsg(d.error || 'Error', false);
     } catch { showMsg('Network error', false); }
 }

@@ -266,12 +266,21 @@
 
 {% block extra_js %}
 <script>
-let PAY_OPTIONS = [];
+// Per fund: {studio: [...], company: [...]}. A Company balance is paid to the
+// Foundation's accounts, so the modal only ever shows the options for the
+// fund being paid.
+let PAY_OPTIONS = {studio: [], company: []};
+const FUND_LABELS = {{ FUND_LABELS | tojson }};
 // `fund` is which balance is being paid (studio or company); it rides along on
 // the claim so the admin records the payment in the right fund.
 let payTarget = {type: 'student', id: null, name: '', amount: 0, fund: 'studio'};
 
 const METHOD_LABELS = {zelle: 'Zelle', cashapp: 'Cash App', square: 'Square'};
+function fundPill(fund) {
+    return fund === 'company'
+        ? ` <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-gold-300 text-gold-ink">${esc(FUND_LABELS.company)}</span>`
+        : '';
+}
 
 function toast(text, ok) {
     const t = document.getElementById('toast');
@@ -297,13 +306,13 @@ function renderMethods() {
     const claimButtons = document.getElementById('pay-claim-buttons');
     let mHtml = '', cHtml = '';
 
-    PAY_OPTIONS.forEach(opt => {
+    (PAY_OPTIONS[payTarget.fund] || []).forEach(opt => {
         if (opt.type === 'zelle') {
             mHtml += `
                 <div class="border border-primary-200 rounded-xl p-3 bg-primary-50">
-                    <div class="font-bold text-primary-800 text-sm mb-1"><i class="fas fa-qrcode mr-1"></i>Zelle — ${esc(opt.name || 'the studio')}</div>
+                    <div class="font-bold text-primary-800 text-sm mb-1"><i class="fas fa-qrcode mr-1"></i>Zelle - ${esc(opt.name || (payTarget.fund === 'company' ? 'the Foundation' : 'the studio'))}</div>
                     ${opt.qr ? `<img src="${opt.qr}" alt="Zelle QR" class="mx-auto my-2 max-w-[200px]">`
-                              : '<p class="text-xs text-ink-3 my-2">QR code not uploaded yet — search the name above in your bank\'s Zelle.</p>'}
+                              : '<p class="text-xs text-ink-3 my-2">QR code not uploaded yet - search the name above in your bank\'s Zelle.</p>'}
                     ${opt.memo ? `<p class="text-xs text-primary-700">${esc(opt.memo)}</p>` : ''}
                 </div>`;
             cHtml += `<button onclick="submitClaim('zelle')" class="px-3 py-2 bg-primary-500 text-white rounded-xl text-sm font-bold hover:bg-primary-600">I sent it with Zelle</button>`;
@@ -312,7 +321,7 @@ function renderMethods() {
             const url = `https://cash.app/$${opt.cashtag}${amt ? '/' + amt.toFixed(2) : ''}`;
             mHtml += `
                 <div class="border border-ok/30 rounded-xl p-3 bg-ok/10">
-                    <div class="font-bold text-ok text-sm mb-2"><i class="fas fa-dollar-sign mr-1"></i>Cash App — $${esc(opt.cashtag)}</div>
+                    <div class="font-bold text-ok text-sm mb-2"><i class="fas fa-dollar-sign mr-1"></i>Cash App - $${esc(opt.cashtag)}</div>
                     <a href="${url}" target="_blank" class="inline-flex items-center px-3 py-2 bg-ok text-white rounded-xl text-sm font-bold hover:opacity-90">
                         Open Cash App${amt ? ' for $' + amt.toFixed(2) : ''}
                     </a>
@@ -327,10 +336,10 @@ function renderMethods() {
                     <div class="font-bold text-info text-sm mb-2"><i class="fas fa-credit-card mr-1"></i>Card / Square</div>
                     ${opt.link ? `
                     <a href="${esc(opt.link)}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center px-3 py-2 bg-info text-white rounded-xl text-sm font-bold hover:opacity-90">
-                        Pay by card${amt ? ' — $' + amt.toFixed(2) : ''}
+                        Pay by card${amt ? ' - $' + amt.toFixed(2) : ''}
                     </a>
                     <p class="text-xs text-info mt-2">Opens Square's secure checkout${amt ? `. Enter $${amt.toFixed(2)} there` : ''}, then tap "I paid by card" below.</p>`
-                    : '<p class="text-xs text-info">Ask the studio to email you a Square invoice — you can pay it online by card.</p>'}
+                    : '<p class="text-xs text-info">Ask the studio to email you a Square invoice - you can pay it online by card.</p>'}
                 </div>`;
             if (opt.link) {
                 cHtml += `<button onclick="submitClaim('square')" class="px-3 py-2 bg-info text-white rounded-xl text-sm font-bold hover:opacity-90">I paid by card</button>`;
@@ -338,14 +347,16 @@ function renderMethods() {
         }
     });
 
-    if (!mHtml) mHtml = '<p class="text-sm text-ink-3">No online payment methods are set up yet. Please contact the studio.</p>';
+    if (!mHtml) mHtml = payTarget.fund === 'company'
+        ? '<p class="text-sm text-ink-3">No Foundation payment methods are set up yet. Please contact the studio.</p>'
+        : '<p class="text-sm text-ink-3">No online payment methods are set up yet. Please contact the studio.</p>';
     methods.innerHTML = mHtml;
     claimButtons.innerHTML = cHtml;
 }
 
 function openPay(type, id, name, amount, fund) {
     payTarget = {type, id, name, amount, fund: fund || 'studio'};
-    document.getElementById('pay-target').textContent = name;
+    document.getElementById('pay-target').textContent = FUND_LABELS[payTarget.fund] + ' balance for ' + name;
     document.getElementById('pay-amount').value = amount.toFixed(2);
     document.getElementById('pay-reference').value = '';
     renderMethods();
@@ -400,8 +411,8 @@ async function loadPayOptions() {
     try {
         const res = await fetch('/api/payment-options');
         const data = await res.json();
-        PAY_OPTIONS = data.payment_options || [];
-    } catch { PAY_OPTIONS = []; }
+        PAY_OPTIONS = data.payment_options || {studio: [], company: []};
+    } catch { PAY_OPTIONS = {studio: [], company: []}; }
 }
 
 async function loadMyPayments() {
@@ -433,7 +444,7 @@ async function loadMyPayments() {
                 <div class="bg-warn/10 border border-warn/30 rounded-2xl p-4">
                     <h3 class="text-sm font-bold text-warn mb-2"><i class="fas fa-clock mr-1"></i>Awaiting confirmation</h3>
                     ${pending.map(p => `<div class="text-sm text-ink-2 flex justify-between py-1">
-                        <span>$${p.amount} via ${METHOD_LABELS[p.method] || p.method} for ${esc(p.who)}</span>
+                        <span>$${p.amount} via ${METHOD_LABELS[p.method] || p.method} for ${esc(p.who)}${fundPill(p.fund)}</span>
                         <span class="text-xs text-warn">${new Date(p.created_at).toLocaleDateString()}</span>
                     </div>`).join('')}
                     <p class="text-xs text-warn mt-2">The studio will confirm and apply these to your balance.</p>
@@ -461,8 +472,8 @@ async function loadMyPayments() {
                     <tbody>
                         ${hist.map(t => `<tr class="border-b border-line last:border-0">
                             <td class="px-4 py-2 text-sm text-ink tabular-nums">${new Date(t.transaction_date+'T00:00').toLocaleDateString()}</td>
-                            <td class="px-4 py-2 text-sm text-ink">${esc(t.student_name)}</td>
-                            <td class="px-4 py-2 text-sm text-ink-2">${esc(t.payment_method || '—')}</td>
+                            <td class="px-4 py-2 text-sm text-ink">${esc(t.student_name)}${fundPill(t.fund)}</td>
+                            <td class="px-4 py-2 text-sm text-ink-2">${esc(t.payment_method || '-')}</td>
                             <td class="px-4 py-2 text-sm text-right font-bold text-ok tabular-nums">$${t.amount}</td>
                         </tr>`).join('')}
                     </tbody>
