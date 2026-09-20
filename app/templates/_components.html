@@ -69,3 +69,18 @@
 } %}
 <a href="{{ href }}" class="inline-flex items-center justify-center gap-2 font-bold rounded-xl whitespace-nowrap {{ sizes[size] }} {{ variants[variant] }}">{% if icon %}<i class="fas fa-{{ icon }}"></i>{% endif %}{{ label }}</a>
 {% endmacro %}
+
+{# Charge-category <option>s grouped by fund, rendered from the one map in
+   app/funds.py (FUND_CATEGORIES / FUND_LABELS are jinja globals). Never type
+   a category list into a template: that is how Company money gets mis-filed.
+   `selected` preselects one value; `blank` adds a leading placeholder option. #}
+{% macro category_options(selected='', blank='') %}
+{% if blank %}<option value="">{{ blank }}</option>{% endif %}
+{% for fund in FUNDS %}
+<optgroup label="{{ FUND_LABELS[fund] }}">
+{% for value, label, f in FUND_CATEGORIES if f == fund %}
+<option value="{{ value }}"{% if value == selected %} selected{% endif %}>{{ label }}</option>
+{% endfor %}
+</optgroup>
+{% endfor %}
+{% endmacro %}

@@ -4,6 +4,8 @@ Adds columns to existing tables on startup (SQLite ALTER TABLE).
 
 import sqlalchemy
 
+from app.funds import COMPANY_CATEGORIES
+
 
 STUDENT_COLUMNS = [
     ('school', 'VARCHAR(150)'), ('grade', 'VARCHAR(30)'),
@@ -29,6 +31,11 @@ USER_COLUMNS = [
 TRANSACTION_COLUMNS = [
     ('type', "VARCHAR(10) DEFAULT 'payment'"),
     ('recurring_charge_id', 'INTEGER'),
+    ('fund', "VARCHAR(10) DEFAULT 'studio'"),
+]
+
+PENDING_PAYMENT_COLUMNS = [
+    ('fund', "VARCHAR(10) DEFAULT 'studio'"),
 ]
 
 CLASS_COLUMNS = [
@@ -71,6 +78,27 @@ def _add_missing_columns(conn, inspector, table, columns):
     for col, coltype in columns:
         if col not in existing:
             conn.execute(sqlalchemy.text(f'ALTER TABLE {table} ADD COLUMN {col} {coltype}'))
+
+
+def _backfill_transaction_fund(conn):
+    """Give every transaction a fund derived from its category, in one UPDATE.
+
+    Rows written before the fund column existed have fund NULL (ALTER TABLE
+    default applies only to new rows on some SQLite versions) or '' (an ORM
+    write that bypassed the model default). Today every prod row is a studio
+    category, so this is a no-op there, but it must exist so a restored
+    pre-fund backup heals on boot. The WHERE clause makes a second run touch
+    zero rows, and the single statement keeps the 256MB machine's boot cheap:
+    no per-row Python loop. The company list is bound from app/funds.py, never
+    typed here, so the map stays the only source of truth."""
+    placeholders = ', '.join(f':c{i}' for i in range(len(COMPANY_CATEGORIES)))
+    params = {f'c{i}': cat for i, cat in enumerate(COMPANY_CATEGORIES)}
+    conn.execute(sqlalchemy.text(
+        'UPDATE transactions SET fund = CASE '
+        f"WHEN category IN ({placeholders}) THEN 'company' ELSE 'studio' END "
+        "WHERE fund IS NULL OR fund = ''"), params)
+    conn.execute(sqlalchemy.text(
+        'CREATE INDEX IF NOT EXISTS ix_transactions_fund ON transactions(fund)'))
 
 
 def _reconcile_admin_role(conn):
@@ -130,6 +158,9 @@ def run_migrations(db):
             _reconcile_admin_role(conn)
         if 'transactions' in inspector.get_table_names():
             _add_missing_columns(conn, inspector, 'transactions', TRANSACTION_COLUMNS)
+            _backfill_transaction_fund(conn)
+        if 'pending_payments' in inspector.get_table_names():
+            _add_missing_columns(conn, inspector, 'pending_payments', PENDING_PAYMENT_COLUMNS)
         if 'classes' in inspector.get_table_names():
             _add_missing_columns(conn, inspector, 'classes', CLASS_COLUMNS)
         if 'performances' in inspector.get_table_names():

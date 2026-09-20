@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_components.html" import category_options %}
 
 {% block content %}
 <div class="flex flex-wrap items-start justify-between gap-3 mb-6">
@@ -90,11 +91,7 @@
                     <div>
                         <label class="{{ lpl }}">Category</label>
                         <select id="lp-category" class="{{ lpi }}">
-                            <option value="tuition">Tuition</option>
-                            <option value="costumes">Costumes</option>
-                            <option value="shoes">Shoes</option>
-                            <option value="registration">Registration Fee</option>
-                            <option value="other">Other</option>
+                            {{ category_options(selected='tuition') }}
                         </select>
                     </div>
                     <div class="col-span-2">
@@ -115,7 +112,20 @@
 {% block extra_js %}
 <script>
 function esc(str) { const d = document.createElement('div'); d.textContent = str; return d.innerHTML; }
-const categoryColors = { tuition: 'bg-info/10 text-info', costumes: 'bg-primary-50 text-primary-700', shoes: 'bg-warn/10 text-warn', registration: 'bg-ok/10 text-ok', other: 'bg-surface-2 text-ink-2' };
+// value -> fund, from the one map in app/funds.py. Studio categories keep
+// their own colours; every Company category shares the gold pill.
+const CATEGORY_FUND = Object.fromEntries({{ FUND_CATEGORIES | tojson }}.map(c => [c[0], c[2]]));
+const FUND_LABELS = {{ FUND_LABELS | tojson }};
+const studioColors = { tuition: 'bg-info/10 text-info', costumes: 'bg-primary-50 text-primary-700', shoes: 'bg-warn/10 text-warn', registration: 'bg-ok/10 text-ok' };
+function pillClass(category) {
+    if (CATEGORY_FUND[category] === 'company') return 'bg-gold-300 text-gold-ink';
+    return studioColors[category] || 'bg-surface-2 text-ink-2';
+}
+function fundPill(fund) {
+    return fund === 'company'
+        ? ` <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-gold-300 text-gold-ink" title="${esc(FUND_LABELS.company)}">Company</span>`
+        : '';
+}
 const methodLabels = { cash: 'Cash', zelle: 'Zelle', venmo: 'Venmo', cashapp: 'Cash App', card: 'Card', tap: 'Tap' };
 
 async function loadLedger() {
@@ -162,7 +172,7 @@ function renderLedger(rows) {
         return `<tr class="border-b border-line last:border-0">
             <td class="px-5 py-3.5 whitespace-nowrap text-sm text-ink tabular-nums">${esc(r.transaction_date)}</td>
             <td class="px-5 py-3.5 text-sm text-ink-2">${esc(desc)}${isCharge ? '' : '<span class="text-ink-3 text-xs">' + esc(method) + '</span>'}</td>
-            <td class="px-5 py-3.5 whitespace-nowrap"><span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold ${categoryColors[r.category] || categoryColors.other}">${esc(r.category)}</span></td>
+            <td class="px-5 py-3.5 whitespace-nowrap"><span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold ${pillClass(r.category)}">${esc(r.category)}</span>${fundPill(r.fund)}</td>
             <td class="px-5 py-3.5 whitespace-nowrap text-sm text-right tabular-nums ${isCharge ? 'text-danger' : ''}">${isCharge ? '$' + parseFloat(r.amount).toFixed(2) : ''}</td>
             <td class="px-5 py-3.5 whitespace-nowrap text-sm text-right tabular-nums ${!isCharge ? 'text-ok' : ''}">${!isCharge ? '$' + parseFloat(r.amount).toFixed(2) : ''}</td>
             <td class="px-5 py-3.5 whitespace-nowrap text-sm text-right tabular-nums ${balClass}">$${runBal.toFixed(2)}</td>

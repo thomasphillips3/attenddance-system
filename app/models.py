@@ -450,7 +450,8 @@ class Transaction(db.Model):
 
     type = db.Column(db.String(10), nullable=False, default='payment')  # charge or payment
     amount = db.Column(db.Numeric(10, 2), nullable=False)
-    category = db.Column(db.String(50), nullable=False)  # tuition, costumes, shoes, registration, other
+    category = db.Column(db.String(50), nullable=False)  # a value from app/funds.py CATEGORIES, or a system category
+    fund = db.Column(db.String(10), nullable=False, default='studio', index=True)  # studio or company; see app/funds.py
     payment_method = db.Column(db.String(50))  # cash, zelle, venmo, cashapp, card, tap (null for charges)
     description = db.Column(db.Text)
     transaction_date = db.Column(db.Date, default=date.today, nullable=False)
@@ -623,6 +624,7 @@ class PendingPayment(db.Model):
 
     amount = db.Column(db.Numeric(10, 2), nullable=False)
     method = db.Column(db.String(20), nullable=False)  # zelle, cashapp, square, cash, other
+    fund = db.Column(db.String(10), nullable=False, default='studio')  # which balance the parent says they paid
     reference = db.Column(db.String(120))  # confirmation # / memo the parent entered
     note = db.Column(db.Text)  # optional parent note
 

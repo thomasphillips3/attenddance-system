@@ -473,6 +473,7 @@ def transaction_to_dict(t) -> dict:
         'type': t.type,
         'amount': str(t.amount),
         'category': t.category,
+        'fund': t.fund,
         'payment_method': t.payment_method if t.payment_method != 'n/a' else None,
         'description': t.description,
         'transaction_date': t.transaction_date.isoformat(),

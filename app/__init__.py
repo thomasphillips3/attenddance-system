@@ -48,6 +48,7 @@ def _process_recurring_charges(today=None):
     import calendar
     from datetime import date
 
+    from app.funds import fund_for_category
     from app.models import ClassEnrollment, DanceClass, RecurringCharge, Season, Transaction
 
     if today is None:
@@ -98,6 +99,7 @@ def _process_recurring_charges(today=None):
                 type='charge',
                 amount=rc.amount,
                 category=rc.category,
+                fund=fund_for_category(rc.category),  # a rule's fund follows its category
                 payment_method='n/a',
                 description=rc.description or f'{class_name} - {rc.category}',
                 transaction_date=charge_date,
@@ -417,6 +419,12 @@ def create_app(config_name=None):
             'APP_VERSION': app.config['APP_VERSION'],
             'STUDIO_URL': app.config.get('STUDIO_URL', ''),
         }
+
+    # The category dropdowns and fund pills on every money page render from
+    # the one map in app/funds.py, never from a list typed into a template.
+    from app import funds
+    app.jinja_env.globals.update(FUND_CATEGORIES=funds.CATEGORIES, FUNDS=funds.FUNDS,
+                                 FUND_LABELS=funds.FUND_LABELS)
 
     @app.context_processor
     def inject_pending_count():

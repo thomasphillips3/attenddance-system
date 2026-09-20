@@ -16,6 +16,7 @@ from werkzeug.utils import secure_filename
 
 from app import db, square_service
 from app.api import bp
+from app.funds import FUNDS, FUND_LABELS, fund_for_category, is_fund
 from app.helpers import (
     active_season,
     allocate_family_payment,
@@ -1400,12 +1401,17 @@ def get_transactions():
     per_page = min(request.args.get('per_page', 50, type=int), 100)
     student_id = request.args.get('student_id', type=int)
     category = request.args.get('category', '').strip()
+    fund = request.args.get('fund', '').strip()
+    if fund and not is_fund(fund):
+        return jsonify({'error': 'fund must be studio or company'}), 400
 
     query = Transaction.query
     if student_id:
         query = query.filter_by(student_id=student_id)
     if category:
         query = query.filter_by(category=category)
+    if fund:
+        query = query.filter_by(fund=fund)
     query = query.order_by(desc(Transaction.transaction_date), desc(Transaction.created_at))
     pagination = query.paginate(page=page, per_page=per_page, error_out=False)
 
@@ -1444,6 +1450,12 @@ def create_transaction():
     txn_date, err = _parse_txn_date(data.get('transaction_date'))
     if err:
         return err
+    # A charge's fund follows its category; a payment names the balance it
+    # settles. An explicit fund wins either way, anything else is rejected so a
+    # typo can't quietly file Company money as studio money.
+    if data.get('fund') is not None and not is_fund(data.get('fund')):
+        return jsonify({'error': 'fund must be studio or company'}), 400
+    fund = fund_for_category(data['category'], data.get('fund'))
 
     student = Student.query.get(data['student_id'])
     if not student:
@@ -1455,17 +1467,18 @@ def create_transaction():
             type=txn_type,
             amount=amount,
             category=data['category'],
+            fund=fund,
             payment_method=data.get('payment_method') or 'n/a',
             description=_clean_str(data.get('description')) or None,
             transaction_date=txn_date,
             created_by=current_user.id,
         )
         db.session.add(t)
-        # Log money creation to the audit trail, same as deletion/confirmation —
+        # Log money creation to the audit trail, same as deletion/confirmation -
         # otherwise the trail shows who *removed* a charge but not who *posted* one
         # (matters since staff, not only admins, can post charges).
         AuditLog.record(current_user.id, 'transaction.create',
-                        f'{txn_type} ${float(amount):.2f} {data["category"]} for {student.full_name}')
+                        f'{txn_type} ${float(amount):.2f} {data["category"]} ({fund}) for {student.full_name}')
         db.session.commit()
         return jsonify(transaction_to_dict(t)), 201
     except Exception:
@@ -1883,6 +1896,7 @@ def bulk_charge():
             type='charge',
             amount=amount,
             category=data['category'],
+            fund=fund_for_category(data['category']),
             payment_method='n/a',
             description=_clean_str(data.get('description')) or f'{dance_class.name} - {data["category"]}',
             transaction_date=txn_date,
@@ -1908,7 +1922,7 @@ def delete_transaction(tid):
     if err:
         return err
     t = Transaction.query.get_or_404(tid)
-    detail = (f'{t.type} ${float(t.amount):.2f} {t.category} for '
+    detail = (f'{t.type} ${float(t.amount):.2f} {t.category} ({t.fund}) for '
               f'{t.student.full_name if t.student else t.student_id} on {t.transaction_date}')
     # Clear the two back-references that FK to transactions so nothing dangles.
     PendingPayment.query.filter_by(transaction_id=t.id).update(
@@ -3381,6 +3395,7 @@ def _pending_to_dict(p) -> dict:
         'parent_name': p.parent.full_name if p.parent else None,
         'amount': f'{float(p.amount):.2f}',
         'method': p.method,
+        'fund': p.fund,
         'reference': p.reference,
         'note': p.note,
         'status': p.status,
@@ -3557,6 +3572,7 @@ def confirm_pending_payment(pid):
             type='payment',
             amount=portion,
             category=category,
+            fund='studio',  # per-fund in a later commit
             payment_method=method_label,
             description=f'Online payment via {method_label}{desc_ref}',
             transaction_date=date.today(),
@@ -3840,6 +3856,7 @@ def square_webhook():
         type='payment',
         amount=amount,
         category='tuition',
+        fund='studio',  # Square API invoicing is studio-only; the Company fund is link-only
         payment_method='square',
         description=f'Square invoice {invoice_id} ({event_type})',
         transaction_date=date.today(),
@@ -4708,6 +4725,7 @@ def charge_costume(cid):
                 type='charge',
                 amount=fee,
                 category='costumes',
+                fund=fund_for_category('costumes'),  # recital costumes are a studio category
                 payment_method='n/a',
                 description=f'Costume: {c.name}',
                 transaction_date=date.today(),
@@ -4988,6 +5006,7 @@ def apply_late_fees():
                 continue
             db.session.add(Transaction(
                 student_id=s.id, type='charge', amount=amount, category='late fee',
+                fund='studio',  # per-fund in a later commit
                 payment_method='n/a', description='Late fee', transaction_date=date.today(),
                 created_by=current_user.id,
             ))
