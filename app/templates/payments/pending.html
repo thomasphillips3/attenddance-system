@@ -309,10 +309,12 @@ async function createPlan() {
     const sel = document.getElementById('plan-student');
     if (!PLAN_STUDENTS.length) {
         const data = await (await fetch('/api/balances')).json();
-        PLAN_STUDENTS = (data.balances || []).map(b => ({id: b.student_id, name: b.student_name, balance: b.balance}));
+        // Payment plans are a studio (tuition) tool, so the picker shows each
+        // dancer's studio balance; Company money is not put on a plan here.
+        PLAN_STUDENTS = (data.balances || []).map(b => ({id: b.student_id, name: b.student_name, balance: b.funds.studio.balance}));
     }
     sel.innerHTML = '<option value="">Pick a student…</option>' +
-        PLAN_STUDENTS.map(s => `<option value="${s.id}">${esc(s.name)} (owes $${s.balance})</option>`).join('');
+        PLAN_STUDENTS.map(s => `<option value="${s.id}">${esc(s.name)} (owes $${s.balance} studio)</option>`).join('');
     for (const id of ['plan-amount', 'plan-num', 'plan-note']) document.getElementById(id).value = '';
     document.getElementById('plan-day').value = '1';
     document.getElementById('plan-modal').classList.remove('hidden');

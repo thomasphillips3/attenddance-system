@@ -31,6 +31,7 @@
                 <tr>
                     <th class="{{ thl }}">Student</th>
                     <th class="{{ thl }}">Family</th>
+                    <th class="{{ thl }}">Fund</th>
                     <th class="{{ thr }}">Current</th>
                     <th class="{{ thr }}">31–60</th>
                     <th class="{{ thr }}">61–90</th>
@@ -47,6 +48,7 @@
 </div>
 
 <script>
+const FUND_LABELS = {{ FUND_LABELS | tojson }};
 function money(v) { return '$' + Number(v).toFixed(2); }
 function esc(s) { return (s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function ageCell(v, danger) {
@@ -75,21 +77,36 @@ async function load() {
     document.getElementById('rows').innerHTML = d.rows.map(row => `
         <tr class="hover:bg-surface-2">
             <td class="px-5 py-3 text-ink font-medium">${esc(row.student_name)}${row.withdrawn?' <span class="ml-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-surface-2 text-ink-3 align-middle">Withdrawn</span>':''}</td>
-            <td class="px-5 py-3 text-ink-2">${esc(row.family_name) || '—'}</td>
+            <td class="px-5 py-3 text-ink-2">${esc(row.family_name) || '-'}</td>
+            <td class="px-5 py-3"><span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold ${row.fund === 'company' ? 'bg-gold-300 text-gold-ink' : 'bg-surface-2 text-ink-2'}">${esc(FUND_LABELS[row.fund] || row.fund)}</span></td>
             ${ageCell(row.current, false)}
             ${ageCell(row.d31_60, false)}
             ${ageCell(row.d61_90, true)}
             ${ageCell(row.d90_plus, true)}
             <td class="px-5 py-3 text-right text-ink font-bold">${money(row.total)}</td>
         </tr>`).join('');
+    // One totals row per fund first (a student owing in both funds is two rows
+    // above, and the Foundation's receivables must reconcile on their own),
+    // then the grand row.
     const t = d.totals;
-    document.getElementById('totals-row').innerHTML = `
-        <td class="px-5 py-3 text-ink" colspan="2">${d.count} ${d.count === 1 ? 'family member owes' : 'owe'}</td>
+    const fundRows = Object.keys(t.by_fund || {}).map(fund => {
+        const b = t.by_fund[fund];
+        return `<tr class="font-normal text-ink-2">
+        <td class="px-5 py-2" colspan="2"></td>
+        <td class="px-5 py-2">${esc(FUND_LABELS[fund] || fund)}</td>
+        <td class="px-5 py-2 text-right">${money(b.current)}</td>
+        <td class="px-5 py-2 text-right">${money(b.d31_60)}</td>
+        <td class="px-5 py-2 text-right">${money(b.d61_90)}</td>
+        <td class="px-5 py-2 text-right">${money(b.d90_plus)}</td>
+        <td class="px-5 py-2 text-right">${money(b.total)}</td></tr>`;
+    }).join('');
+    document.getElementById('totals-row').outerHTML = fundRows + `<tr id="totals-row">
+        <td class="px-5 py-3 text-ink" colspan="3">${d.count} ${d.count === 1 ? 'balance owed' : 'balances owed'}</td>
         <td class="px-5 py-3 text-right text-ink">${money(t.current)}</td>
         <td class="px-5 py-3 text-right text-ink">${money(t.d31_60)}</td>
         <td class="px-5 py-3 text-right text-danger">${money(t.d61_90)}</td>
         <td class="px-5 py-3 text-right text-danger">${money(t.d90_plus)}</td>
-        <td class="px-5 py-3 text-right text-ink">${money(t.total)}</td>`;
+        <td class="px-5 py-3 text-right text-ink">${money(t.total)}</td></tr>`;
 }
 load();
 </script>

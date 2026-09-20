@@ -16,18 +16,20 @@
     </div>
     {% endif %}
 
+    {# One banner per (family, fund): a family owing only Company money sees only
+       the Foundation's destinations, never a summed "combined balance". #}
     {% for fam in families %}
     <div class="bg-gold-300 border border-[#e4cd8e] rounded-2xl mb-5 p-4 flex items-center justify-between flex-wrap gap-3">
         <div class="flex items-center gap-3 flex-1 min-w-[150px]">
             <i class="fas fa-people-roof text-gold-ink text-lg"></i>
             <div>
-                <div class="font-bold text-gold-ink">{{ fam.name }} — combined balance</div>
+                <div class="font-bold text-gold-ink">{{ fam.name }} - combined {{ FUND_LABELS[fam.fund] }} balance</div>
                 <div class="text-sm text-gold-ink/80">{{ fam.members | join(', ') }} &middot; total due ${{ '%.2f' % fam.balance }}</div>
             </div>
         </div>
-        <button onclick="openPay('family', {{ fam.family_id }}, '{{ fam.name|e }} (whole family)', {{ '%.2f' % fam.balance }})"
+        <button onclick="openPay('family', {{ fam.family_id }}, '{{ fam.name|e }} (whole family)', {{ '%.2f' % fam.balance }}, '{{ fam.fund }}')"
                 class="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-[#3a2c08] bg-gradient-to-b from-gold-400 to-gold-500 text-sm font-bold hover:brightness-105 shadow-sm">
-            <i class="fas fa-credit-card"></i>Pay ${{ '%.2f' % fam.balance }} for everyone
+            <i class="fas fa-credit-card"></i>Pay ${{ '%.2f' % fam.balance }} ({{ FUND_LABELS[fam.fund] }}) for everyone
         </button>
     </div>
     {% endfor %}
@@ -40,31 +42,45 @@
                 <h2 class="font-display text-2xl text-white leading-tight">{{ child.student.full_name }}</h2>
                 <p class="text-sm text-white/80">{% if child.student.school %}{{ child.student.school }}{% endif %}{% if child.student.grade %} &middot; {{ child.student.grade }}{% endif %}</p>
             </div>
-            {% if child.balance > 0 %}
-            <span class="shrink-0 px-3 py-1.5 rounded-full text-sm font-bold" style="background:var(--warn-bg);color:var(--warn-ink)">${{ '%.2f' % child.balance }} due</span>
-            {% elif child.balance < 0 %}
-            <span class="shrink-0 px-3 py-1.5 rounded-full text-sm font-bold bg-white/20 text-white">${{ '%.2f' % (-child.balance) }} credit</span>
+            {# One badge per fund. The Company badge only shows for dancers with
+               Company history so studio-only families are not shown a second $0. #}
+            <div class="shrink-0 flex flex-col items-end gap-1">
+            {% for fund in FUNDS if fund == 'studio' or child.has_company %}
+            {% set bal = child.funds[fund]['balance'] %}
+            {% if bal > 0 %}
+            <span class="px-3 py-1.5 rounded-full text-sm font-bold" style="background:var(--warn-bg);color:var(--warn-ink)">{{ FUND_LABELS[fund] }}: ${{ '%.2f' % bal }} due</span>
+            {% elif bal < 0 %}
+            <span class="px-3 py-1.5 rounded-full text-sm font-bold bg-white/20 text-white">{{ FUND_LABELS[fund] }}: ${{ '%.2f' % (-bal) }} credit</span>
             {% else %}
-            <span class="shrink-0 px-3 py-1.5 rounded-full text-sm font-bold bg-white/20 text-white">Paid up</span>
+            <span class="px-3 py-1.5 rounded-full text-sm font-bold bg-white/20 text-white">{{ FUND_LABELS[fund] }}: paid up</span>
             {% endif %}
+            {% endfor %}
+            </div>
         </div>
 
         <div class="p-5">
             <div class="flex flex-wrap gap-6 mb-4">
-                <div><div class="text-[11px] font-bold uppercase tracking-[.09em] text-ink-3">Charged</div><div class="font-bold text-ink mt-0.5">${{ '%.2f' % child.total_charges }}</div></div>
-                <div><div class="text-[11px] font-bold uppercase tracking-[.09em] text-ink-3">Paid</div><div class="font-bold text-ink mt-0.5">${{ '%.2f' % child.total_payments }}</div></div>
+                {% for fund in FUNDS if fund == 'studio' or child.has_company %}
+                <div><div class="text-[11px] font-bold uppercase tracking-[.09em] text-ink-3">{{ FUND_LABELS[fund] }} charged</div><div class="font-bold text-ink mt-0.5">${{ '%.2f' % child.funds[fund]['total_charges'] }}</div></div>
+                <div><div class="text-[11px] font-bold uppercase tracking-[.09em] text-ink-3">{{ FUND_LABELS[fund] }} paid</div><div class="font-bold text-ink mt-0.5">${{ '%.2f' % child.funds[fund]['total_payments'] }}</div></div>
+                {% endfor %}
                 {% if child.student.age is not none %}<div><div class="text-[11px] font-bold uppercase tracking-[.09em] text-ink-3">Age</div><div class="font-bold text-ink mt-0.5">{{ child.student.age }}</div></div>{% endif %}
             </div>
             {% if child.student.allergies %}<div class="mb-4 text-sm"><span class="text-ink-3">Allergies:</span> <span class="text-danger font-medium">{{ child.student.allergies }}</span></div>{% endif %}
 
-            {% if child.balance > 0 %}
-            <button onclick="openPay('student', {{ child.student.id }}, '{{ child.student.full_name|e }}', {{ '%.2f' % child.balance }})"
+            {# One Pay button per fund the dancer owes in; each opens the modal
+               with that fund's destinations (studio accounts vs the Foundation). #}
+            {% for fund in FUNDS %}
+            {% set bal = child.funds[fund]['balance'] %}
+            {% if bal > 0 %}
+            <button onclick="openPay('student', {{ child.student.id }}, '{{ child.student.full_name|e }}', {{ '%.2f' % bal }}, '{{ fund }}')"
                     class="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-[#3a2c08] bg-gradient-to-b from-gold-400 to-gold-500 font-bold hover:brightness-105 shadow-sm mb-4">
-                <i class="fas fa-credit-card"></i>Pay ${{ '%.2f' % child.balance }}
+                <i class="fas fa-credit-card"></i>Pay ${{ '%.2f' % bal }} ({{ FUND_LABELS[fund] }})
             </button>
-            {% elif child.balance < 0 %}
-            <div class="mb-4 p-3 rounded-xl bg-info/10 text-info text-sm">You have a credit of ${{ '%.2f' % (-child.balance) }} — it'll apply to your next charge.</div>
+            {% elif bal < 0 %}
+            <div class="mb-4 p-3 rounded-xl bg-info/10 text-info text-sm">You have a {{ FUND_LABELS[fund] }} credit of ${{ '%.2f' % (-bal) }} - it'll apply to your next {{ FUND_LABELS[fund] }} charge.</div>
             {% endif %}
+            {% endfor %}
 
             {% set chip = "inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-line-2 text-sm font-bold text-ink-2 hover:border-primary-300 hover:text-primary-700 transition-colors" %}
             <div class="flex flex-wrap gap-2 mb-5">
@@ -251,7 +267,9 @@
 {% block extra_js %}
 <script>
 let PAY_OPTIONS = [];
-let payTarget = {type: 'student', id: null, name: '', amount: 0};
+// `fund` is which balance is being paid (studio or company); it rides along on
+// the claim so the admin records the payment in the right fund.
+let payTarget = {type: 'student', id: null, name: '', amount: 0, fund: 'studio'};
 
 const METHOD_LABELS = {zelle: 'Zelle', cashapp: 'Cash App', square: 'Square'};
 
@@ -325,8 +343,8 @@ function renderMethods() {
     claimButtons.innerHTML = cHtml;
 }
 
-function openPay(type, id, name, amount) {
-    payTarget = {type, id, name, amount};
+function openPay(type, id, name, amount, fund) {
+    payTarget = {type, id, name, amount, fund: fund || 'studio'};
     document.getElementById('pay-target').textContent = name;
     document.getElementById('pay-amount').value = amount.toFixed(2);
     document.getElementById('pay-reference').value = '';
@@ -349,6 +367,7 @@ async function submitClaim(method) {
         amount,
         method,
         reference: document.getElementById('pay-reference').value.trim(),
+        fund: payTarget.fund,
     };
     if (payTarget.type === 'family') body.family_id = payTarget.id;
     else body.student_id = payTarget.id;

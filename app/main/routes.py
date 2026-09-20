@@ -8,8 +8,10 @@ from flask_login import current_user, login_required
 from sqlalchemy import desc, func
 
 from app import db
+from app.funds import FUNDS
 from app.helpers import (
-    MAX_CARD_WEEKS, active_season, attendance_card_weeks, calc_balance, live_class_query,
+    MAX_CARD_WEEKS, active_season, attendance_card_weeks, calc_balance,
+    has_company_activity_bulk, live_class_query,
 )
 from app.main import bp
 from app.models import (
@@ -123,7 +125,10 @@ def parent_dashboard():
         return redirect(url_for('main.dashboard'))
     children = current_user.get_children()
     child_data = []
-    family_groups = {}  # family_id -> {name, balance, member_ids, member_names}
+    # family_id -> {name, funds: {fund: balance}, members}; each fund sums on its
+    # own so a family's Company total never nets against its studio total.
+    family_groups = {}
+    company_ids = has_company_activity_bulk([c.id for c in children])
     for child in children:
         bal = calc_balance(child.id)
         recent_att = Attendance.query.filter_by(student_id=child.id).order_by(
@@ -146,9 +151,10 @@ def parent_dashboard():
         } for e in active_enr]
         child_data.append({
             'student': child,
-            'balance': bal['balance'],
-            'total_charges': bal['total_charges'],
-            'total_payments': bal['total_payments'],
+            'funds': bal,
+            # Show the Company side when the dancer has any Company history, or
+            # a non-zero Company balance (a credit still needs to be visible).
+            'has_company': child.id in company_ids or bal['company']['balance'] != 0,
             'recent_attendance': recent_att,
             'classes': child_classes,
         })
@@ -156,14 +162,21 @@ def parent_dashboard():
             g = family_groups.setdefault(child.family_id, {
                 'family_id': child.family_id,
                 'name': child.family.name if child.family else 'Family',
-                'balance': 0.0,
+                'funds': {fund: 0.0 for fund in FUNDS},
                 'members': [],
             })
-            g['balance'] += bal['balance']
+            for fund in FUNDS:
+                g['funds'][fund] += bal[fund]['balance']
             g['members'].append(child.full_name)
 
-    # Only offer combined pay when a family has 2+ of this parent's children and owes money
-    families = [g for g in family_groups.values() if len(g['members']) > 1 and g['balance'] > 0]
+    # Only offer combined pay when a family has 2+ of this parent's children and
+    # owes money in a fund; one banner per (family, fund) so a family owing only
+    # Company money sees only the Foundation's destinations.
+    families = [
+        {**g, 'fund': fund, 'balance': g['funds'][fund]}
+        for g in family_groups.values() if len(g['members']) > 1
+        for fund in FUNDS if g['funds'][fund] > 0
+    ]
     return render_template('parent/dashboard.html', children=child_data, families=families)
 
 
@@ -190,6 +203,7 @@ def student_detail(student_id):
     enrollments = ClassEnrollment.query.filter_by(student_id=student_id, is_active=True).all()
     classes = [e.dance_class for e in enrollments if e.dance_class]
     bal = calc_balance(student_id)
+    has_company = bool(has_company_activity_bulk([student_id])) or bal['company']['balance'] != 0
     recent_att = Attendance.query.filter_by(student_id=student_id).order_by(
         desc(Attendance.check_in_time)).limit(10).all()
     # Parent portal accounts linked to this student (admin card: invite + reset).
@@ -198,8 +212,7 @@ def student_detail(student_id):
                       .filter(ParentStudent.student_id == student_id)
                       .order_by(User.first_name).all())
     return render_template('students/detail.html', student=student, classes=classes,
-        balance=bal['balance'], total_charges=bal['total_charges'],
-        total_payments=bal['total_payments'], recent_attendance=recent_att,
+        funds=bal, has_company=has_company, recent_attendance=recent_att,
         portal_parents=portal_parents)
 
 

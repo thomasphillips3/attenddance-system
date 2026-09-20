@@ -438,9 +438,9 @@ def run_teacher_authz(ids):
                f"toggle_shown={'toggle-btn' in detail_body} is_admin_flag={'IS_ADMIN = false' in classes_body}", "P3")
         # Family list still works for teachers but carries NO money fields.
         fams = (c.get("/api/families").get_json() or {}).get("families", [])
-        leak = any("balance" in f or "total_charges" in f for f in fams)
+        leak = any("balance" in f or "total_charges" in f or "funds" in f for f in fams)
         record(f"Teacher family list has no money fields ({len(fams)} families)",
-               not leak, "balance/total_charges present for a teacher", "P1")
+               not leak, "balance/total_charges/funds present for a teacher", "P1")
         # Still CAN message a class (instructional need preserved).
         cm = c.post("/api/messages", json={"subject": "Bring jazz shoes", "body": "b",
                                            "recipient_type": "class", "recipient_filter": "1"})
@@ -993,7 +993,7 @@ def run_reconciliation(ids):
         db.session.add(Transaction(student_id=sid, type="charge", amount=100,
                                    category="tuition", payment_method="n/a", description="fall tuition"))
         db.session.commit()
-        start_bal = calc_balance(sid)["balance"]
+        start_bal = calc_balance(sid)["studio"]["balance"]
 
     # Parent claims a $60 Zelle payment
     with app.test_client() as c:
@@ -1029,7 +1029,7 @@ def run_reconciliation(ids):
             record(f"Admin confirms the payment -> {r.status_code}", r.status_code == 200,
                    r.get_data(as_text=True)[:60], "P1")
             with app.app_context():
-                new_bal = calc_balance(sid)["balance"]
+                new_bal = calc_balance(sid)["studio"]["balance"]
                 pay = Transaction.query.filter_by(student_id=sid, type="payment").count()
             record(f"Balance dropped by $60 ({start_bal:.2f} -> {new_bal:.2f})",
                    round(start_bal - new_bal, 2) == 60.0 and pay >= 1, "", "P1")
@@ -3068,14 +3068,14 @@ def run_transaction_delete(ids):
     # Admin posts a distinctive charge. (Separate, non-nested clients — nesting
     # test_client() context managers bleeds the session between them.)
     with app.app_context():
-        base = calc_balance(sid)["balance"]
+        base = calc_balance(sid)["studio"]["balance"]
     with app.test_client() as c:
         login(c, "admin", "admin123")
         r = c.post("/api/transactions",
                    json={"student_id": sid, "type": "charge", "amount": 123.45, "category": "tuition"})
         tid = r.get_json().get("id")
     with app.app_context():
-        after_charge = calc_balance(sid)["balance"]
+        after_charge = calc_balance(sid)["studio"]["balance"]
     record(f"charge raised balance by 123.45 ({base:.2f}->{after_charge:.2f})",
            round(after_charge - base, 2) == 123.45, f"delta={after_charge-base}", "P2")
 
@@ -3086,7 +3086,7 @@ def run_transaction_delete(ids):
     record(f"Parent blocked from deleting a transaction -> {rp.status_code}",
            rp.status_code in (401, 403), f"got {rp.status_code}", "P0")
     with app.app_context():
-        still_there = calc_balance(sid)["balance"]
+        still_there = calc_balance(sid)["studio"]["balance"]
     record("Parent's blocked delete did NOT change the balance",
            round(still_there - after_charge, 2) == 0.0, f"bal moved to {still_there}", "P0")
 
@@ -3096,7 +3096,7 @@ def run_transaction_delete(ids):
         rd = c.delete(f"/api/transactions/{tid}")
         r404 = c.delete("/api/transactions/999999")
     with app.app_context():
-        after_delete = calc_balance(sid)["balance"]
+        after_delete = calc_balance(sid)["studio"]["balance"]
     record(f"Admin delete removes the charge; balance back to baseline ({after_delete:.2f})",
            rd.status_code == 200 and round(after_delete - base, 2) == 0.0,
            f"status={rd.status_code} bal={after_delete} base={base}", "P2")
@@ -3573,7 +3573,7 @@ def run_csv_exports(ids):
         atext = ra.get_data(as_text=True)
         alines = atext.splitlines()
         header_ok = ra.status_code == 200 and alines and alines[0].startswith(
-            "Student,Family,Status,Current (0-30),31-60,61-90,90+,Total")
+            "Student,Family,Status,Fund,Current (0-30),31-60,61-90,90+,Total")
         record(f"Aging CSV export well-formed -> {ra.status_code}", header_ok,
                f"status={ra.status_code} head={alines[0][:50]!r}" if alines else "empty", "P2")
         record("Aging CSV lists an owing student and a TOTAL footer",
@@ -3651,7 +3651,9 @@ def run_revenue_math():
         return {
             'charged': cm.get('charged', 0), 'collected': cm.get('collected', 0),
             'cm_total': t.get('collected_this_month', 0), 'cy': t.get('collected_this_year', 0),
-            'all': t.get('collected_all_time', 0), 'out': t.get('outstanding', 0),
+            # Outstanding is per fund (Company money is owed to the Foundation);
+            # this check posts studio rows, so it watches the studio figure.
+            'all': t.get('collected_all_time', 0), 'out': (t.get('outstanding') or {}).get('studio', 0),
         }
 
     with app.app_context():
@@ -4603,7 +4605,7 @@ def run_withdraw_frees_enrollment():
     with app.app_context():
         enroll = ClassEnrollment.query.filter_by(class_id=cid, is_active=True).count()
         wait = WaitlistEntry.query.filter_by(student_id=sid, status="waiting").count()
-        bal = _cb(sid)["balance"]
+        bal = _cb(sid)["studio"]["balance"]
     record(f"Withdrawing a student frees their spot + clears waitlist, keeps balance (enroll={enroll}, wait={wait}, bal={bal})",
            enroll == 0 and wait == 0 and bal == 50.0,
            f"enroll={enroll} wait={wait} bal={bal}", "P1")

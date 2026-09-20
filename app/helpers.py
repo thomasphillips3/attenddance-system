@@ -1,9 +1,10 @@
-"""Shared helpers for AttenDANCE — balance calculation, ledger building, serialization."""
+"""Shared helpers for AttenDANCE - balance calculation, ledger building, serialization."""
 
 from datetime import date, timedelta
 
 from sqlalchemy import func
 from app import db
+from app.funds import COMPANY, FUNDS, empty_fund_totals, empty_totals, is_fund
 from app.models import Transaction
 
 
@@ -58,61 +59,98 @@ def build_aging(txns: list, as_of: date | None = None) -> dict:
 
 
 def calc_balance(student_id: int) -> dict:
-    """Calculate charges, payments, and balance for a student using SQL aggregation.
+    """Charges, payments and balance for one student, per fund, via SQL aggregation.
 
-    Returns dict with keys: total_charges, total_payments, balance (all float).
+    Returns {'studio': {total_charges, total_payments, balance},
+             'company': {...}} (all float). Both funds are always present.
+
+    There is never a combined number: a studio credit must not hide a Company
+    debt, and Company money is owed to the Foundation, not the studio (CONTEXT:
+    hard wall). Callers that need one fund index it explicitly.
     """
     rows = (
         db.session.query(
+            Transaction.fund,
             Transaction.type,
             func.sum(Transaction.amount),
         )
         .filter_by(student_id=student_id)
-        .group_by(Transaction.type)
+        .group_by(Transaction.fund, Transaction.type)
         .all()
     )
-    totals = {r[0]: float(r[1]) for r in rows}
-    charges = totals.get('charge', 0.0)
-    payments = totals.get('payment', 0.0)
-    return {
-        'total_charges': charges,
-        'total_payments': payments,
-        'balance': charges - payments,
-    }
+    result = empty_fund_totals()
+    for fund, txn_type, total in rows:
+        bucket = result.setdefault(fund, empty_totals())
+        if txn_type == 'charge':
+            bucket['total_charges'] = float(total)
+        else:
+            bucket['total_payments'] = float(total)
+    for bucket in result.values():
+        bucket['balance'] = bucket['total_charges'] - bucket['total_payments']
+    return result
 
 
 def calc_balance_bulk(student_ids: list[int]) -> dict[int, dict]:
-    """Calculate balances for multiple students in one query.
+    """Per-fund balances for many students in one query.
 
-    Returns {student_id: {total_charges, total_payments, balance}}.
+    Returns {student_id: {'studio': {total_charges, total_payments, balance},
+                          'company': {...}}}. Every requested id is present with
+    both funds, even with no rows at all.
     """
     if not student_ids:
         return {}
     rows = (
         db.session.query(
             Transaction.student_id,
+            Transaction.fund,
             Transaction.type,
             func.sum(Transaction.amount),
         )
         .filter(Transaction.student_id.in_(student_ids))
-        .group_by(Transaction.student_id, Transaction.type)
+        .group_by(Transaction.student_id, Transaction.fund, Transaction.type)
         .all()
     )
-    result: dict[int, dict] = {}
-    for sid, txn_type, total in rows:
-        if sid not in result:
-            result[sid] = {'total_charges': 0.0, 'total_payments': 0.0, 'balance': 0.0}
+    result: dict[int, dict] = {sid: empty_fund_totals() for sid in student_ids}
+    for sid, fund, txn_type, total in rows:
+        bucket = result.setdefault(sid, empty_fund_totals()).setdefault(fund, empty_totals())
         if txn_type == 'charge':
-            result[sid]['total_charges'] = float(total)
+            bucket['total_charges'] = float(total)
         else:
-            result[sid]['total_payments'] = float(total)
-    for sid in result:
-        result[sid]['balance'] = result[sid]['total_charges'] - result[sid]['total_payments']
-    # Fill in students with no transactions
-    for sid in student_ids:
-        if sid not in result:
-            result[sid] = {'total_charges': 0.0, 'total_payments': 0.0, 'balance': 0.0}
+            bucket['total_payments'] = float(total)
+    for funds in result.values():
+        for bucket in funds.values():
+            bucket['balance'] = bucket['total_charges'] - bucket['total_payments']
     return result
+
+
+def has_company_activity_bulk(student_ids: list[int]) -> set[int]:
+    """Which of these students have any Company money history: at least one
+    fund=company transaction, or an active CompanyMembership.
+
+    Used to hide the Company balance for studio-only families (CONTEXT: about
+    90% of families never touch the Company fund, and a second zero balance on
+    every card is noise). Two small queries, no per-student round trips.
+    """
+    if not student_ids:
+        return set()
+    from app.models import CompanyMembership
+    with_rows = {
+        sid for (sid,) in db.session.query(Transaction.student_id)
+        .filter(Transaction.student_id.in_(student_ids), Transaction.fund == COMPANY)
+        .distinct().all()
+    }
+    members = {
+        sid for (sid,) in db.session.query(CompanyMembership.student_id)
+        .filter(CompanyMembership.student_id.in_(student_ids),
+                CompanyMembership.is_active.is_(True))
+        .distinct().all()
+    }
+    return with_rows | members
+
+
+def has_company_activity(student_id: int) -> bool:
+    """Single-student wrapper around has_company_activity_bulk."""
+    return student_id in has_company_activity_bulk([student_id])
 
 
 def build_ledger(txns: list) -> dict:
@@ -170,22 +208,30 @@ def build_ledger(txns: list) -> dict:
     }
 
 
-def allocate_family_payment(student_ids: list[int], amount: float) -> list[tuple[int, float]]:
-    """Split a lump family payment across children by outstanding balance.
+def allocate_family_payment(student_ids: list[int], amount: float, fund: str) -> list[tuple[int, float]]:
+    """Split a lump family payment across children by outstanding balance,
+    within ONE fund.
 
-    Children with the largest balances are paid down first; each is capped at
-    its own balance. Any leftover (an overpayment) is appended to the first
-    student as a credit so the full amount is always accounted for.
+    `fund` is required: a Company payment settles Company balances only, a
+    studio payment settles studio balances only, and any leftover credit stays
+    in the same fund (CONTEXT: no cross-fund netting, ever). Children with the
+    largest balance in that fund are paid down first; each is capped at its own
+    balance. Any leftover (an overpayment) is appended to the first student as a
+    credit so the full amount is always accounted for.
 
     Returns a list of (student_id, amount) tuples, amounts rounded to cents.
+    Raises ValueError for an unknown fund so a typo can't silently pick one.
     """
+    if not is_fund(fund):
+        raise ValueError(f'fund must be one of {FUNDS}, got {fund!r}')
     if not student_ids or amount <= 0:
         return []
 
     balances = calc_balance_bulk(student_ids)
-    # Order by balance descending; only those who actually owe
+    # Order by this fund's balance descending; only those who actually owe in it
     owing = sorted(
-        ((sid, balances[sid]['balance']) for sid in student_ids if balances[sid]['balance'] > 0),
+        ((sid, balances[sid][fund]['balance']) for sid in student_ids
+         if balances[sid][fund]['balance'] > 0),
         key=lambda x: x[1], reverse=True,
     )
 
@@ -200,7 +246,7 @@ def allocate_family_payment(student_ids: list[int], amount: float) -> list[tuple
         allocations.append((sid, portion))
         remaining = round(remaining - portion, 2)
 
-    # Leftover overpayment (or nobody owed) → credit the first student
+    # Leftover overpayment (or nobody owed) -> credit the first student, same fund
     if remaining > 0:
         target = allocations[0][0] if allocations else student_ids[0]
         # Merge into existing allocation if present

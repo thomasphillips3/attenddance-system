@@ -63,19 +63,20 @@ def seed():
 def test_allocation(ids):
     with app.app_context():
         sids = [ids["a"], ids["b"]]
-        # Exact, partial, over, and odd-cent amounts — sum must always equal input.
+        # Exact, partial, over, and odd-cent amounts - sum must always equal input.
+        # These are all studio charges, so the allocation runs in the studio fund.
         for pay in [250.0, 100.0, 300.0, 33.33, 0.01, 175.50]:
-            allocs = allocate_family_payment(sids, pay)
+            allocs = allocate_family_payment(sids, pay, "studio")
             total = round(sum(a for _, a in allocs), 2)
             record(f"allocation sum exact for ${pay:.2f} (got ${total:.2f})",
                    total == round(pay, 2), f"sum {total} != {pay}")
         # Each child capped at its balance for a partial payment (A=200,B=50; pay 100).
-        allocs = dict(allocate_family_payment(sids, 100.0))
+        allocs = dict(allocate_family_payment(sids, 100.0, "studio"))
         record("largest-balance-first: A gets the $100 partial",
                allocs.get(ids["a"], 0) == 100.0 and ids["b"] not in allocs,
                f"{allocs}")
         # Overpayment (pay 300 vs 250 owed) fully accounted, leftover credited.
-        allocs = allocate_family_payment(sids, 300.0)
+        allocs = allocate_family_payment(sids, 300.0, "studio")
         record("overpayment $300 vs $250 owed fully allocated",
                round(sum(a for _, a in allocs), 2) == 300.0, f"{allocs}")
 
@@ -255,7 +256,7 @@ def test_money_precision():
                                        category="tuition", payment_method="cash", description="p"))
         db.session.commit()
         exact = float(Decimal("10.01") * 100 - Decimal("3.33") * 50)  # 834.50
-        b = calc_balance(s.id)
+        b = calc_balance(s.id)["studio"]
         record(f"balance of 100x$10.01 - 50x$3.33 == ${exact:.2f} (got ${b['balance']:.2f})",
                round(b["balance"], 2) == exact, f"{b['balance']} != {exact}")
 

@@ -27,14 +27,16 @@
             <thead class="bg-surface-2 border-b border-line">
                 <tr>
                     <th class="{{ thl }}">Student</th>
-                    <th class="{{ thr }}">Charges</th>
-                    <th class="{{ thr }}">Payments</th>
-                    <th class="{{ thr }}">Balance</th>
+                    {# One balance column per fund; hover a cell for that fund's
+                       charges and payments. There is no combined column on purpose. #}
+                    {% for fund in FUNDS %}
+                    <th class="{{ thr }}">{{ FUND_LABELS[fund] }} balance</th>
+                    {% endfor %}
                     <th class="{{ thr }}"></th>
                 </tr>
             </thead>
             <tbody id="balances-table">
-                <tr><td colspan="5" class="px-5 py-4 text-center text-ink-3">Loading…</td></tr>
+                <tr><td colspan="4" class="px-5 py-4 text-center text-ink-3">Loading…</td></tr>
             </tbody>
         </table>
     </div>
@@ -280,6 +282,7 @@ const methodLabels = { cash: 'Cash', zelle: 'Zelle', venmo: 'Venmo', cashapp: 'C
 // money is recognisable at a glance.
 const CATEGORY_FUND = Object.fromEntries({{ FUND_CATEGORIES | tojson }}.map(c => [c[0], c[2]]));
 const FUND_LABELS = {{ FUND_LABELS | tojson }};
+const FUNDS = {{ FUNDS | list | tojson }};
 const studioColors = { tuition: 'bg-info/10 text-info', costumes: 'bg-primary-50 text-primary-700', shoes: 'bg-gold-300 text-gold-ink', registration: 'bg-ok/10 text-ok' };
 function pillClass(category) {
     if (CATEGORY_FUND[category] === 'company') return 'bg-gold-300 text-gold-ink';
@@ -297,25 +300,35 @@ async function loadBalances() {
         const data = await res.json();
         renderBalances(data.balances);
     } catch (err) {
-        document.getElementById('balances-table').innerHTML = '<tr><td colspan="5" class="px-5 py-4 text-center text-danger">Failed to load</td></tr>';
+        document.getElementById('balances-table').innerHTML = '<tr><td colspan="4" class="px-5 py-4 text-center text-danger">Failed to load</td></tr>';
     }
 }
 function renderBalances(balances) {
     const tbody = document.getElementById('balances-table');
-    const withActivity = balances.filter(b => parseFloat(b.total_charges) > 0 || parseFloat(b.total_payments) > 0);
+    // "Activity" means money moved in EITHER fund; the two are never summed.
+    const hasActivity = f => parseFloat(f.total_charges) > 0 || parseFloat(f.total_payments) > 0;
+    const withActivity = balances.filter(b => FUNDS.some(fund => hasActivity(b.funds[fund])));
     if (!withActivity.length) {
-        tbody.innerHTML = '<tr><td colspan="5" class="px-5 py-4 text-center text-ink-3">No billing activity yet. Use "Add Charge" or "Bulk Charge" to get started.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="4" class="px-5 py-4 text-center text-ink-3">No billing activity yet. Use "Add Charge" or "Bulk Charge" to get started.</td></tr>';
         return;
     }
-    tbody.innerHTML = withActivity.map(b => {
-        const bal = parseFloat(b.balance);
+    const fundCell = (b, fund) => {
+        const f = b.funds[fund];
+        // A studio-only dancer shows a muted dash in the Company column so the
+        // Foundation's column reads as "not applicable", not "paid up".
+        if (fund === 'company' && !b.has_company && parseFloat(f.balance) === 0) {
+            return `<td class="px-5 py-3 text-sm text-right text-ink-3" title="No Company activity">&ndash;</td>`;
+        }
+        const bal = parseFloat(f.balance);
         const balClass = bal > 0 ? 'text-danger font-bold' : bal < 0 ? 'text-info' : 'text-ink';
         const balText = bal > 0 ? `$${bal.toFixed(2)} due` : bal < 0 ? `$${Math.abs(bal).toFixed(2)} credit` : 'Paid up';
+        const tip = `${FUND_LABELS[fund]}: $${parseFloat(f.total_charges).toFixed(2)} charged, $${parseFloat(f.total_payments).toFixed(2)} paid`;
+        return `<td class="px-5 py-3 text-sm text-right tabular-nums ${balClass}" title="${esc(tip)}">${balText}</td>`;
+    };
+    tbody.innerHTML = withActivity.map(b => {
         return `<tr class="border-b border-line last:border-0 hover:bg-surface-2">
             <td class="px-5 py-3 text-sm font-bold text-ink">${esc(b.student_name)}${b.withdrawn?' <span class="ml-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-surface-2 text-ink-3 align-middle">Withdrawn</span>':''}</td>
-            <td class="px-5 py-3 text-sm text-ink-2 text-right tabular-nums">$${parseFloat(b.total_charges).toFixed(2)}</td>
-            <td class="px-5 py-3 text-sm text-ink-2 text-right tabular-nums">$${parseFloat(b.total_payments).toFixed(2)}</td>
-            <td class="px-5 py-3 text-sm text-right tabular-nums ${balClass}">${balText}</td>
+            ${FUNDS.map(fund => fundCell(b, fund)).join('')}
             <td class="px-5 py-3 text-sm text-right"><a href="/students/${b.student_id}/ledger" class="text-primary-600 hover:text-primary-800 font-bold">View Ledger</a></td>
         </tr>`;
     }).join('');

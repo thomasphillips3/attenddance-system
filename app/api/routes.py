@@ -28,6 +28,7 @@ from app.helpers import (
     calc_balance_bulk,
     class_to_dict,
     family_emails,
+    has_company_activity_bulk,
     live_class_query,
     recurring_to_dict,
     student_emails,
@@ -1503,63 +1504,71 @@ def get_balances():
     inactive_owing = []
     if inactive:
         inactive_bals = calc_balance_bulk([s.id for s in inactive])
-        inactive_owing = [s for s in inactive
-                          if inactive_bals.get(s.id, {}).get('balance', 0) > 0]
+        inactive_owing = [s for s in inactive if _owes_any_fund(inactive_bals[s.id])]
     students = students + inactive_owing
     student_ids = [s.id for s in students]
     balances_map = calc_balance_bulk(student_ids)
+    company_ids = has_company_activity_bulk(student_ids)
 
+    # One entry per student with a per-fund block; no combined balance key,
+    # because a studio credit must never read as paying down Company money.
     balances = []
     for s in students:
-        bal = balances_map[s.id]
         balances.append({
             'student_id': s.id,
             'student_name': s.full_name,
             'withdrawn': not s.is_active,
-            'total_charges': f'{bal["total_charges"]:.2f}',
-            'total_payments': f'{bal["total_payments"]:.2f}',
-            'balance': f'{bal["balance"]:.2f}',
+            'funds': _funds_2dp(balances_map[s.id]),
+            'has_company': s.id in company_ids,
         })
     return jsonify({'balances': balances})
 
 
 def _compute_aging():
     """Shared A/R aging computation for both the JSON report and the CSV export
-    so the two can never drift. Returns (rows, totals, as_of): per-student unpaid
-    balance bucketed by how overdue each charge is (0-30 / 31-60 / 61-90 / 90+),
-    owe-most first, amounts as 2dp strings."""
+    so the two can never drift. Returns (rows, totals, as_of): one row per
+    (student, fund) with an unpaid balance, bucketed by how overdue each charge
+    is (0-30 / 31-60 / 61-90 / 90+), owe-most first, amounts as 2dp strings.
+    A student who owes in both funds gets two rows; payments in one fund never
+    age against charges in the other. `totals` carries the grand buckets plus a
+    `by_fund` dict of the same buckets per fund."""
     students = Student.query.filter_by(is_active=True).all()
     # Include WITHDRAWN students who still owe: a deactivated student's unpaid
     # balance must stay visible so the studio can collect it, not silently vanish
-    # from A/R. Only pull inactive students who actually have a balance (one bulk
-    # query) so long-settled withdrawals don't bloat the report.
+    # from A/R. Only pull inactive students who actually have a balance in some
+    # fund (one bulk query) so long-settled withdrawals don't bloat the report.
     inactive = Student.query.filter_by(is_active=False).all()
     if inactive:
         inactive_bals = calc_balance_bulk([s.id for s in inactive])
-        students += [s for s in inactive
-                     if inactive_bals.get(s.id, {}).get('balance', 0) > 0]
+        students += [s for s in inactive if _owes_any_fund(inactive_bals[s.id])]
     sid_ids = [s.id for s in students]
-    # One query for all transactions, grouped in memory (hundreds of rows).
-    txns_by_student: dict[int, list] = {sid: [] for sid in sid_ids}
+    # One query for all transactions, grouped in memory by (student, fund).
+    txns_by_student_fund: dict[tuple, list] = {
+        (sid, fund): [] for sid in sid_ids for fund in FUNDS}
     if sid_ids:
         for t in Transaction.query.filter(Transaction.student_id.in_(sid_ids)).all():
-            txns_by_student[t.student_id].append(t)
+            txns_by_student_fund.setdefault((t.student_id, t.fund), []).append(t)
 
+    buckets = ('current', 'd31_60', 'd61_90', 'd90_plus', 'total')
     rows = []
-    totals = {'current': 0.0, 'd31_60': 0.0, 'd61_90': 0.0, 'd90_plus': 0.0, 'total': 0.0}
+    totals = {k: 0.0 for k in buckets}
+    totals['by_fund'] = {fund: {k: 0.0 for k in buckets} for fund in FUNDS}
     for s in students:
-        ag = build_aging(txns_by_student[s.id])
-        if ag['total'] <= 0:
-            continue  # only show entities that actually owe
-        for k in totals:
-            totals[k] = round(totals[k] + ag[k], 2)
-        rows.append({
-            'student_id': s.id,
-            'student_name': s.full_name,
-            'family_name': s.family.name if s.family else None,
-            'withdrawn': not s.is_active,
-            **{k: f'{ag[k]:.2f}' for k in ('current', 'd31_60', 'd61_90', 'd90_plus', 'total')},
-        })
+        for fund in FUNDS:
+            ag = build_aging(txns_by_student_fund[(s.id, fund)])
+            if ag['total'] <= 0:
+                continue  # only show (student, fund) pairs that actually owe
+            for k in buckets:
+                totals[k] = round(totals[k] + ag[k], 2)
+                totals['by_fund'][fund][k] = round(totals['by_fund'][fund][k] + ag[k], 2)
+            rows.append({
+                'student_id': s.id,
+                'student_name': s.full_name,
+                'family_name': s.family.name if s.family else None,
+                'withdrawn': not s.is_active,
+                'fund': fund,
+                **{k: f'{ag[k]:.2f}' for k in buckets},
+            })
     # Owe-most first.
     rows.sort(key=lambda r: float(r['total']), reverse=True)
     return rows, totals, date.today().isoformat()
@@ -1574,9 +1583,13 @@ def aging_report():
     if err:
         return err
     rows, totals, as_of = _compute_aging()
+    by_fund = totals.pop('by_fund')
     return jsonify({
         'rows': rows,
-        'totals': {k: f'{totals[k]:.2f}' for k in totals},
+        'totals': {
+            **{k: f'{totals[k]:.2f}' for k in totals},
+            'by_fund': {fund: {k: f'{v:.2f}' for k, v in by_fund[fund].items()} for fund in FUNDS},
+        },
         'as_of': as_of,
         'count': len(rows),
     })
@@ -1618,9 +1631,9 @@ def _csv_response(filename, header, rows):
 @bp.route('/reports/students.csv', methods=['GET'])
 @login_required
 def export_students_csv():
-    """Roster export — for the accountant, mail-merge, or an owner-held backup.
-    The Balance column is admin-only (billing); a teacher's export is the plain
-    roster (class lists, allergy sheets)."""
+    """Roster export - for the accountant, mail-merge, or an owner-held backup.
+    The two balance columns (one per fund) are admin-only (billing); a teacher's
+    export is the plain roster (class lists, allergy sheets)."""
     err = _staff_only()
     if err:
         return err
@@ -1631,7 +1644,7 @@ def export_students_csv():
               'Emergency contact', 'Emergency phone', 'Allergies', 'Special needs']
     bals = None
     if current_user.is_admin:
-        header = header + ['Balance']
+        header = header + ['Studio balance', 'Company balance']
         bals = calc_balance_bulk([s.id for s in students])
     rows = ([
         s.last_name, s.first_name, s.family.name if s.family else '',
@@ -1639,7 +1652,7 @@ def export_students_csv():
         s.parent_email or '', s.parent_email_2 or '', s.parent_phone or '',
         s.emergency_contact_name or '', s.emergency_contact_phone or '',
         s.allergies or '', s.special_needs or '',
-    ] + ([f"{bals[s.id]['balance']:.2f}"] if bals is not None else [])
+    ] + ([f"{bals[s.id][fund]['balance']:.2f}" for fund in FUNDS] if bals is not None else [])
         for s in students)
     return _csv_response(f'students-{date.today().isoformat()}.csv', header, rows)
 
@@ -1681,14 +1694,20 @@ def export_aging_csv():
     if err:
         return err
     rows, totals, as_of = _compute_aging()
-    header = ['Student', 'Family', 'Status', 'Current (0-30)', '31-60', '61-90', '90+', 'Total']
+    header = ['Student', 'Family', 'Status', 'Fund', 'Current (0-30)', '31-60', '61-90', '90+', 'Total']
     body = [[
         r['student_name'], r['family_name'] or '',
-        'Withdrawn' if r['withdrawn'] else 'Active',
+        'Withdrawn' if r['withdrawn'] else 'Active', FUND_LABELS[r['fund']],
         r['current'], r['d31_60'], r['d61_90'], r['d90_plus'], r['total'],
     ] for r in rows]
-    # Footer totals row so the export reconciles without re-summing by hand.
-    body.append(['TOTAL', '', '',
+    # Footer rows: one per fund, then the grand total, so the export reconciles
+    # without re-summing by hand and the Foundation's receivables stay separate.
+    for fund in FUNDS:
+        bf = totals['by_fund'][fund]
+        body.append([f'TOTAL {FUND_LABELS[fund]}', '', '', FUND_LABELS[fund],
+                     f"{bf['current']:.2f}", f"{bf['d31_60']:.2f}",
+                     f"{bf['d61_90']:.2f}", f"{bf['d90_plus']:.2f}", f"{bf['total']:.2f}"])
+    body.append(['TOTAL', '', '', '',
                  f"{totals['current']:.2f}", f"{totals['d31_60']:.2f}",
                  f"{totals['d61_90']:.2f}", f"{totals['d90_plus']:.2f}",
                  f"{totals['total']:.2f}"])
@@ -1801,13 +1820,15 @@ def revenue_report():
     if err:
         return err
 
-    def _sum(type_, start=None, end=None):
+    def _sum(type_, start=None, end=None, fund=None):
         q = db.session.query(func.coalesce(func.sum(Transaction.amount), 0)).filter(
             Transaction.type == type_)
         if start is not None:
             q = q.filter(Transaction.transaction_date >= start)
         if end is not None:
             q = q.filter(Transaction.transaction_date < end)
+        if fund is not None:
+            q = q.filter(Transaction.fund == fund)
         return float(q.scalar() or 0)
 
     monthly = [{
@@ -1826,7 +1847,11 @@ def revenue_report():
 
     students = Student.query.filter_by(is_active=True).all()
     bals = calc_balance_bulk([s.id for s in students])
-    outstanding = round(sum(b['balance'] for b in bals.values() if b['balance'] > 0), 2)
+    # Outstanding is reported per fund and never summed: the Company figure is
+    # owed to the Foundation, so a single studio-wide number would be wrong.
+    outstanding = {
+        fund: round(sum(b[fund]['balance'] for b in bals.values() if b[fund]['balance'] > 0), 2)
+        for fund in FUNDS}
     month_start = date.today().replace(day=1)
 
     return jsonify({
@@ -1837,6 +1862,10 @@ def revenue_report():
             'collected_this_year': round(_sum('payment', year_start), 2),
             'collected_all_time': round(_sum('payment'), 2),
             'outstanding': outstanding,
+            'by_fund': {fund: {
+                'collected_this_month': round(_sum('payment', month_start, fund=fund), 2),
+                'collected_this_year': round(_sum('payment', year_start, fund=fund), 2),
+            } for fund in FUNDS},
         },
         'active_students': len(students),
     })
@@ -2076,14 +2105,16 @@ def send_student_invoice(student_id):
         return jsonify({'error': 'Square is not configured. Set SQUARE_ACCESS_TOKEN and SQUARE_LOCATION_ID in environment.'}), 400
 
     student = Student.query.get_or_404(student_id)
-    bal = calc_balance(student_id)
+    # Square API invoicing is studio-only: the Company fund is paid to the
+    # Foundation's own accounts (link-only), so only the studio balance is billed.
+    bal = calc_balance(student_id)['studio']
 
     if bal['balance'] <= 0:
-        return jsonify({'error': 'No outstanding balance to invoice'}), 400
+        return jsonify({'error': 'No outstanding studio balance to invoice'}), 400
 
     # Square derives the order total from the SUM of line items (amount_cents is
     # ignored by the SDK), so the line items must sum to the OUTSTANDING balance,
-    # not to gross charges — otherwise a family that has paid down their balance
+    # not to gross charges - otherwise a family that has paid down their balance
     # gets billed the full original amount. Invoice the net balance as one line.
     amount_cents = int(round(bal['balance'] * 100))
     line_items = [{
@@ -2769,7 +2800,7 @@ def _resolve_recipient_emails(rtype: str, recipient_filter) -> set | tuple:
 @bp.route('/families', methods=['GET'])
 @login_required
 def get_families():
-    """Get all families with balances — bulk query."""
+    """Get all families with per-fund balances - bulk query."""
     err = _staff_only()
     if err:
         return err
@@ -2783,8 +2814,9 @@ def get_families():
         family_students[f.id] = students
         all_student_ids.extend(s.id for s in students)
 
-    # Single bulk balance query
+    # Single bulk balance query, plus who has any Company history
     balances_map = calc_balance_bulk(all_student_ids)
+    company_ids = has_company_activity_bulk(all_student_ids) if current_user.is_admin else set()
 
     result = []
     for f in families:
@@ -2802,12 +2834,16 @@ def get_families():
         # Billing is admin-only: teachers get the family list (for forms and
         # sibling context) but not the money columns.
         if current_user.is_admin:
-            total_charges = sum(balances_map[s.id]['total_charges'] for s in students)
-            total_payments = sum(balances_map[s.id]['total_payments'] for s in students)
+            funds = {}
+            for fund in FUNDS:
+                charges = sum(balances_map[s.id][fund]['total_charges'] for s in students)
+                payments = sum(balances_map[s.id][fund]['total_payments'] for s in students)
+                funds[fund] = {'total_charges': f'{charges:.2f}',
+                               'total_payments': f'{payments:.2f}',
+                               'balance': f'{charges - payments:.2f}'}
             row.update({
-                'total_charges': f'{total_charges:.2f}',
-                'total_payments': f'{total_payments:.2f}',
-                'balance': f'{total_charges - total_payments:.2f}',
+                'funds': funds,
+                'has_company': any(s.id in company_ids for s in students),
             })
         result.append(row)
     return jsonify({'families': result})
@@ -3124,6 +3160,17 @@ SECRET_SETTINGS_KEYS = {
 }
 
 DEFAULT_ZELLE_MEMO = "Put your dancer's full name in the memo so we can match your payment."
+
+
+def _owes_any_fund(funds: dict, threshold: float = 0.0) -> bool:
+    """True when the balance in EITHER fund is above `threshold`. The funds
+    never net against each other, so "owes money" means owes in at least one."""
+    return any(funds[f]['balance'] > threshold for f in FUNDS)
+
+
+def _funds_2dp(funds: dict) -> dict:
+    """Per-fund totals as 2dp strings for JSON, same shape as the input."""
+    return {fund: {k: f'{v:.2f}' for k, v in funds[fund].items()} for fund in FUNDS}
 
 
 def _admin_only():
@@ -3553,7 +3600,7 @@ def confirm_pending_payment(pid):
         who = p.student.full_name
     else:
         students = p.family.students.filter_by(is_active=True).all()
-        allocations = allocate_family_payment([s.id for s in students], amount)
+        allocations = allocate_family_payment([s.id for s in students], amount, p.fund)
         if not allocations:
             # Nobody owed and no students — record against first student if any
             if students:
@@ -3572,7 +3619,7 @@ def confirm_pending_payment(pid):
             type='payment',
             amount=portion,
             category=category,
-            fund='studio',  # per-fund in a later commit
+            fund=p.fund,  # the balance the parent said they paid; never the other one
             payment_method=method_label,
             description=f'Online payment via {method_label}{desc_ref}',
             transaction_date=date.today(),
@@ -3604,7 +3651,7 @@ def confirm_pending_payment(pid):
         return jsonify({'error': 'Already processed'}), 400
 
     AuditLog.record(current_user.id, 'payment.confirm',
-                    f'Confirmed ${amount:.2f} {method_label} for {who}')
+                    f'Confirmed ${amount:.2f} {method_label} ({p.fund}) for {who}')
     db.session.commit()
 
     _send_receipt(receipt_email, who, amount, p.method)
@@ -3676,11 +3723,30 @@ def donation_info():
 
 # ── Balance reminder emails ─────────────────────────────────────────
 
-def _reminder_body(name, balance):
+# One reminder line per fund. Company money is paid to the Foundation's own
+# accounts, so the line says so; the portal shows the matching destinations.
+FUND_REMINDER_LINES = {
+    'studio': "Studio (LaShelle's School of Dance): ${amount:.2f}",
+    'company': ("Company (LSODance Foundation - paid to the Foundation's accounts, "
+                "see the portal): ${amount:.2f}"),
+}
+
+
+def _owing_lines(fund_balances, threshold=0.0):
+    """The reminder lines for every fund whose balance is over `threshold`."""
+    return [FUND_REMINDER_LINES[fund].format(amount=fund_balances[fund]['balance'])
+            for fund in FUNDS if fund_balances[fund]['balance'] > threshold]
+
+
+def _reminder_body(name, fund_balances, threshold=0.0):
+    """Reminder email body listing each fund the family owes in, separately.
+    `fund_balances` is the per-fund dict from calc_balance; funds at or under
+    `threshold` are left out so a paid-up fund is not mentioned."""
+    lines = _owing_lines(fund_balances, threshold)
     return (
         f"Hi,\n\n"
-        f"This is a friendly reminder that {name} has an outstanding balance of "
-        f"${balance:.2f} with {STUDIO_NAME}.\n\n"
+        f"This is a friendly reminder that {name} has an outstanding balance:\n\n"
+        + "\n".join(f"  {line}" for line in lines) + "\n\n"
         f"You can pay any time through the parent portal. Thank you!\n\n"
         f"{STUDIO_NAME}"
     )
@@ -3690,13 +3756,14 @@ def _student_phone(s):
     return s.parent_phone or (s.family.primary_phone if s.family else None) or s.phone
 
 
-def _notify_student_balance(s, balance, email_ok, sms_ok):
+def _notify_student_balance(s, fund_balances, email_ok, sms_ok, threshold=0.0):
     """Send a balance reminder to one student's parent via the available channels.
-    Returns a set of channels actually used."""
+    `fund_balances` is the per-fund dict from calc_balance; only funds over
+    `threshold` are listed. Returns a set of channels actually used."""
     from app import email as email_service
     from app import sms as sms_service
     used = set()
-    body = _reminder_body(s.full_name, balance)
+    body = _reminder_body(s.full_name, fund_balances, threshold)
     if email_ok:
         to = student_emails(s)
         if to:
@@ -3722,10 +3789,9 @@ def _send_reminders_to(app, student_ids, email_ok, sms_ok):
             balances = calc_balance_bulk([s.id for s in students])
             notified = 0
             for s in students:
-                bal = balances[s.id]['balance']
-                if bal <= 0:
+                if not _owes_any_fund(balances[s.id]):
                     continue
-                if _notify_student_balance(s, bal, email_ok, sms_ok):
+                if _notify_student_balance(s, balances[s.id], email_ok, sms_ok):
                     notified += 1
             logger.info("Manual balance reminders sent: %d", notified)
         except Exception:
@@ -3751,7 +3817,7 @@ def send_balance_reminders():
 
     students = Student.query.filter_by(is_active=True).all()
     balances = calc_balance_bulk([s.id for s in students])
-    owing = [s.id for s in students if balances[s.id]['balance'] > 0]
+    owing = [s.id for s in students if _owes_any_fund(balances[s.id])]
 
     AuditLog.record(current_user.id, 'reminders.send', f'Queued {len(owing)} balance reminders')
     db.session.commit()
@@ -3775,10 +3841,10 @@ def send_student_reminder(student_id):
     if not email_ok and not sms_ok:
         return jsonify({'error': 'Configure email (SMTP) or SMS (Twilio) first'}), 400
     student = Student.query.get_or_404(student_id)
-    bal = calc_balance(student_id)['balance']
-    if bal <= 0:
+    funds = calc_balance(student_id)
+    if not _owes_any_fund(funds):
         return jsonify({'error': 'No outstanding balance'}), 400
-    used = _notify_student_balance(student, bal, email_ok, sms_ok)
+    used = _notify_student_balance(student, funds, email_ok, sms_ok)
     if not used:
         return jsonify({'error': 'No email or phone on file for this student'}), 400
     AuditLog.record(current_user.id, 'reminders.send', f'Sent reminder to {student.full_name} via {", ".join(used)}')
@@ -4972,7 +5038,11 @@ _costume_charge_lock = threading.Lock()
 @bp.route('/balances/apply-late-fees', methods=['POST'])
 @login_required
 def apply_late_fees():
-    """Apply a late fee charge to every student over a balance threshold."""
+    """Apply a late fee charge to every student over a balance threshold, per
+    fund: a Company balance draws a Company late fee and a studio balance a
+    studio one, each tested against the threshold on its own. A student over
+    the line in both funds gets one fee in each (they are owed to different
+    accounts). Idempotent per (student, fund) within a calendar month."""
     err = _admin_only()
     if err:
         return err
@@ -4992,32 +5062,36 @@ def apply_late_fees():
         month_start = date.today().replace(day=1)
         applied = 0
         skipped = 0
+        per_fund = {fund: 0 for fund in FUNDS}
         for s in students:
-            if balances[s.id]['balance'] <= min_balance:
-                continue
-            # Idempotency: never stack a second late fee on a student in the same
-            # calendar month. Without this, a double-click or a refresh that
-            # re-POSTs charges every over-threshold family twice.
-            already = Transaction.query.filter_by(
-                student_id=s.id, type='charge', category='late fee',
-            ).filter(Transaction.transaction_date >= month_start).first()
-            if already:
-                skipped += 1
-                continue
-            db.session.add(Transaction(
-                student_id=s.id, type='charge', amount=amount, category='late fee',
-                fund='studio',  # per-fund in a later commit
-                payment_method='n/a', description='Late fee', transaction_date=date.today(),
-                created_by=current_user.id,
-            ))
-            applied += 1
+            for fund in FUNDS:
+                if balances[s.id][fund]['balance'] <= min_balance:
+                    continue
+                # Idempotency: never stack a second late fee on a student in the
+                # same fund and calendar month. Without this, a double-click or a
+                # refresh that re-POSTs charges every over-threshold family twice.
+                already = Transaction.query.filter_by(
+                    student_id=s.id, type='charge', category='late fee', fund=fund,
+                ).filter(Transaction.transaction_date >= month_start).first()
+                if already:
+                    skipped += 1
+                    continue
+                db.session.add(Transaction(
+                    student_id=s.id, type='charge', amount=amount, category='late fee',
+                    fund=fund, payment_method='n/a',
+                    description=f'Late fee ({FUND_LABELS[fund]})', transaction_date=date.today(),
+                    created_by=current_user.id,
+                ))
+                applied += 1
+                per_fund[fund] += 1
         AuditLog.record(current_user.id, 'late_fee.apply',
-                        f'Applied ${amount:.2f} late fee to {applied} students '
-                        f'({skipped} already charged this month; balance > ${min_balance:.2f})')
+                        f'Applied ${amount:.2f} late fee to {applied} balances '
+                        f'({", ".join(f"{per_fund[f]} {f}" for f in FUNDS)}; '
+                        f'{skipped} already charged this month; balance > ${min_balance:.2f})')
         db.session.commit()
-    msg = f'Applied ${amount:.2f} late fee to {applied} students'
+    msg = f'Applied ${amount:.2f} late fee to {applied} balances'
     if skipped:
-        msg += f' ({skipped} already had one this month — skipped)'
+        msg += f' ({skipped} already had one this month - skipped)'
     return jsonify({'message': msg, 'count': applied, 'skipped': skipped})
 
 

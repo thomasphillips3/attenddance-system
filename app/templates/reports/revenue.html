@@ -14,22 +14,30 @@
     </div>
 </div>
 
-<div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6" id="tiles">
+{# Outstanding is one tile per fund, never summed: the Company figure is owed
+   to the Foundation. The collected tiles show the per-fund split underneath. #}
+<div class="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-6" id="tiles">
     <div class="bg-surface border border-line rounded-2xl shadow-soft p-4">
         <div class="text-[11px] font-bold uppercase tracking-[.08em] text-ink-3">Collected this month</div>
-        <div id="t-month" class="font-display text-2xl text-ink mt-1">—</div>
+        <div id="t-month" class="font-display text-2xl text-ink mt-1">-</div>
+        <div id="t-month-split" class="text-xs text-ink-3 mt-1"></div>
     </div>
     <div class="bg-surface border border-line rounded-2xl shadow-soft p-4">
         <div class="text-[11px] font-bold uppercase tracking-[.08em] text-ink-3">Collected this year</div>
-        <div id="t-year" class="font-display text-2xl text-ink mt-1">—</div>
+        <div id="t-year" class="font-display text-2xl text-ink mt-1">-</div>
+        <div id="t-year-split" class="text-xs text-ink-3 mt-1"></div>
     </div>
     <div class="bg-surface border border-line rounded-2xl shadow-soft p-4">
         <div class="text-[11px] font-bold uppercase tracking-[.08em] text-ink-3">Collected all-time</div>
-        <div id="t-all" class="font-display text-2xl text-ink mt-1">—</div>
+        <div id="t-all" class="font-display text-2xl text-ink mt-1">-</div>
     </div>
     <div class="bg-surface border border-line rounded-2xl shadow-soft p-4">
-        <div class="text-[11px] font-bold uppercase tracking-[.08em] text-ink-3">Outstanding</div>
-        <div id="t-out" class="font-display text-2xl text-danger mt-1">—</div>
+        <div class="text-[11px] font-bold uppercase tracking-[.08em] text-ink-3">Outstanding: {{ FUND_LABELS['studio'] }}</div>
+        <div id="t-out" class="font-display text-2xl text-danger mt-1">-</div>
+    </div>
+    <div class="bg-surface border border-line rounded-2xl shadow-soft p-4">
+        <div class="text-[11px] font-bold uppercase tracking-[.08em] text-gold-ink">Outstanding: {{ FUND_LABELS['company'] }}</div>
+        <div id="t-out-company" class="font-display text-2xl text-danger mt-1">-</div>
     </div>
 </div>
 
@@ -56,6 +64,7 @@
 
 {% block extra_js %}
 <script>
+const FUND_LABELS = {{ FUND_LABELS | tojson }};
 function money(v) { return '$' + Number(v).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}); }
 async function load() {
     let d;
@@ -64,7 +73,11 @@ async function load() {
     document.getElementById('t-month').textContent = money(d.totals.collected_this_month);
     document.getElementById('t-year').textContent = money(d.totals.collected_this_year);
     document.getElementById('t-all').textContent = money(d.totals.collected_all_time);
-    document.getElementById('t-out').textContent = money(d.totals.outstanding);
+    document.getElementById('t-out').textContent = money(d.totals.outstanding.studio);
+    document.getElementById('t-out-company').textContent = money(d.totals.outstanding.company);
+    const split = key => Object.keys(d.totals.by_fund).map(f => `${FUND_LABELS[f]} ${money(d.totals.by_fund[f][key])}`).join(' / ');
+    document.getElementById('t-month-split').textContent = split('collected_this_month');
+    document.getElementById('t-year-split').textContent = split('collected_this_year');
 
     const cats = document.getElementById('cat-rows');
     cats.innerHTML = d.by_category.length

@@ -52,6 +52,7 @@
 
 {% block extra_js %}
 <script>
+const FUND_LABELS = {{ FUND_LABELS | tojson }};
 function esc(str) { const d = document.createElement('div'); d.textContent = str; return d.innerHTML; }
 
 async function loadFamilies() {
@@ -71,15 +72,25 @@ function renderFamilies(families) {
     }
     el.innerHTML = families.map(f => {
         const kids = f.students.map(s => esc(s.full_name)).join(', ') || 'No students assigned';
-        // The API only includes money fields for admins — billing is admin-only.
+        // The API only includes money fields for admins - billing is admin-only.
+        // One line per fund, never summed: Company money is owed to the
+        // Foundation. The Company line only shows for families with Company history.
         let moneyRow = '';
-        if (f.balance !== undefined) {
-            const bal = parseFloat(f.balance);
-            const balClass = bal > 0 ? 'text-danger' : 'text-ok';
-            const balText = bal > 0 ? '$' + bal.toFixed(2) + ' due' : bal === 0 ? 'Paid up' : '$' + Math.abs(bal).toFixed(2) + ' credit';
-            moneyRow = `<div class="mt-3 pt-3 border-t border-line flex justify-between items-center">
-                    <span class="text-sm font-bold ${balClass} tabular-nums">${balText}</span>
-                    <a href="/families/${f.id}/ledger" class="text-sm text-primary-600 hover:text-primary-700">View Ledger</a>
+        if (f.funds !== undefined) {
+            const fundLine = (fund, label, cls) => {
+                const bal = parseFloat(f.funds[fund].balance);
+                const balClass = bal > 0 ? 'text-danger' : 'text-ok';
+                const balText = bal > 0 ? '$' + bal.toFixed(2) + ' due' : bal === 0 ? 'Paid up' : '$' + Math.abs(bal).toFixed(2) + ' credit';
+                return `<div class="flex justify-between items-center"><span class="text-xs ${cls}">${label}</span>
+                    <span class="text-sm font-bold ${balClass} tabular-nums">${balText}</span></div>`;
+            };
+            const lines = [fundLine('studio', FUND_LABELS.studio, 'text-ink-3')];
+            if (f.has_company || parseFloat(f.funds.company.balance) !== 0) {
+                lines.push(fundLine('company', FUND_LABELS.company, 'text-gold-ink'));
+            }
+            moneyRow = `<div class="mt-3 pt-3 border-t border-line space-y-1">
+                    ${lines.join('')}
+                    <div class="text-right"><a href="/families/${f.id}/ledger" class="text-sm text-primary-600 hover:text-primary-700">View Ledger</a></div>
                 </div>`;
         }
         return `<div class="bg-surface border border-line rounded-2xl shadow-soft overflow-hidden">
