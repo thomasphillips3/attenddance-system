@@ -1874,7 +1874,8 @@ def revenue_report():
 @bp.route('/students/<int:student_id>/ledger', methods=['GET'])
 @login_required
 def get_student_ledger(student_id):
-    """Full ledger with running balance — single pass."""
+    """Full per-fund ledger with a running balance per fund - single pass.
+    `has_company` tells the page whether to show the Company side at all."""
     err = _require_student_money_access(student_id)
     if err:
         return err
@@ -1886,8 +1887,60 @@ def get_student_ledger(student_id):
     return jsonify({
         'student_id': student.id,
         'student_name': student.full_name,
+        'has_company': student.id in has_company_activity_bulk([student.id]),
         **result,
     })
+
+
+@bp.route('/students/<int:student_id>/fund-transfer', methods=['POST'])
+@login_required
+def fund_transfer(student_id):
+    """Move money between a dancer's two funds (admin only).
+
+    For the rare mistake where a parent paid the wrong account. This never
+    edits an existing row: it posts two offsetting rows that share a
+    reference, a charge in `from_fund` and a payment in `to_fund`, so both
+    ledgers stay append-only and auditable and the original payment is still
+    visible exactly as it was recorded (CONTEXT: hard wall + explicit
+    transfer). The AuditLog entry carries the same reference.
+    """
+    err = _admin_only()
+    if err:
+        return err
+    student = Student.query.get_or_404(student_id)
+    data = request.get_json() or {}
+    amount, err = _valid_amount(data.get('amount'))
+    if err:
+        return err
+    from_fund, to_fund = data.get('from_fund'), data.get('to_fund')
+    if not is_fund(from_fund) or not is_fund(to_fund):
+        return jsonify({'error': 'from_fund and to_fund must be studio or company'}), 400
+    if from_fund == to_fund:
+        return jsonify({'error': 'from_fund and to_fund must differ'}), 400
+    note = _clean_str(data.get('note'), 300)
+    suffix = f' - {note}' if note else ''
+    ref = 'xfer-' + secrets.token_hex(4)
+    today = date.today()
+    out_row = Transaction(
+        student_id=student.id, type='charge', amount=amount, category='transfer',
+        fund=from_fund, payment_method='n/a',
+        description=f'Transfer to {FUND_LABELS[to_fund]} [{ref}]{suffix}',
+        transaction_date=today, created_by=current_user.id,
+    )
+    in_row = Transaction(
+        student_id=student.id, type='payment', amount=amount, category='transfer',
+        fund=to_fund, payment_method='transfer',
+        description=f'Transfer from {FUND_LABELS[from_fund]} [{ref}]{suffix}',
+        transaction_date=today, created_by=current_user.id,
+    )
+    db.session.add_all([out_row, in_row])
+    AuditLog.record(current_user.id, 'fund.transfer',
+                    f'{ref}: ${amount:.2f} {from_fund} -> {to_fund} for {student.full_name}{suffix}')
+    db.session.commit()
+    return jsonify({
+        'reference': ref,
+        'transactions': [transaction_to_dict(out_row), transaction_to_dict(in_row)],
+    }), 201
 
 
 @bp.route('/transactions/bulk-charge', methods=['POST'])
@@ -2879,7 +2932,7 @@ def create_family():
 @bp.route('/families/<int:family_id>/ledger', methods=['GET'])
 @login_required
 def get_family_ledger(family_id):
-    """Combined ledger for all students in a family — single pass."""
+    """Combined per-fund ledger for all students in a family - single pass."""
     err = _require_family_money_access(family_id)
     if err:
         return err
@@ -2898,6 +2951,7 @@ def get_family_ledger(family_id):
     return jsonify({
         'family_id': family.id, 'family_name': family.name,
         'students': [{'id': s.id, 'full_name': s.full_name} for s in students],
+        'has_company': bool(has_company_activity_bulk(student_ids)),
         **result,
     })
 

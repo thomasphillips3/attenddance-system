@@ -154,31 +154,43 @@ def has_company_activity(student_id: int) -> bool:
 
 
 def build_ledger(txns: list) -> dict:
-    """Build a running-balance ledger from a list of Transaction objects.
+    """Build a per-fund running-balance ledger from a list of Transaction objects.
 
     Expects txns already sorted by (transaction_date, created_at).
-    Returns dict with keys: ledger (list), total_charges, total_payments, balance, by_category.
+    Returns {
+        'ledger': [ {**transaction_to_dict(t), 'running_balance': '<2dp>'} ],
+        'funds': {fund: {'total_charges', 'total_payments', 'balance'}},  # 2dp strings
+        'by_category': {category: {'charges', 'payments', 'balance', 'fund'}},
+    }
+
+    Each row's running_balance is the balance of THAT row's fund after the
+    row is applied; a Company payment never moves the studio line and vice
+    versa (CONTEXT: hard wall). There is no combined total: the two funds are
+    owed to different accounts. by_category reports the fund the rows were
+    actually posted in, which for the system categories (late fee, transfer)
+    can be either.
     """
-    running = 0.0
+    running = {fund: 0.0 for fund in FUNDS}
+    totals = {fund: {'charges': 0.0, 'payments': 0.0} for fund in FUNDS}
     ledger = []
-    total_charges = 0.0
-    total_payments = 0.0
     cat_totals: dict[str, dict] = {}
 
     for t in txns:
         amt = float(t.amount)
         is_charge = t.type == 'charge'
+        fund = t.fund if is_fund(t.fund) else FUNDS[0]
         if is_charge:
-            running += amt
-            total_charges += amt
+            running[fund] += amt
+            totals[fund]['charges'] += amt
         else:
-            running -= amt
-            total_payments += amt
+            running[fund] -= amt
+            totals[fund]['payments'] += amt
 
-        # Per-category tracking
+        # Per-category tracking; a category is filed under the fund its rows
+        # carry (the map decides that on write, so the two agree).
         cat = t.category
         if cat not in cat_totals:
-            cat_totals[cat] = {'charges': 0.0, 'payments': 0.0}
+            cat_totals[cat] = {'charges': 0.0, 'payments': 0.0, 'fund': fund}
         if is_charge:
             cat_totals[cat]['charges'] += amt
         else:
@@ -186,7 +198,7 @@ def build_ledger(txns: list) -> dict:
 
         ledger.append({
             **transaction_to_dict(t),
-            'running_balance': f'{running:.2f}',
+            'running_balance': f'{running[fund]:.2f}',
         })
 
     by_category = {}
@@ -197,13 +209,16 @@ def build_ledger(txns: list) -> dict:
             'charges': f'{c:.2f}',
             'payments': f'{p:.2f}',
             'balance': f'{c - p:.2f}',
+            'fund': cat_totals[cat]['fund'],
         }
 
     return {
         'ledger': ledger,
-        'total_charges': f'{total_charges:.2f}',
-        'total_payments': f'{total_payments:.2f}',
-        'balance': f'{total_charges - total_payments:.2f}',
+        'funds': {fund: {
+            'total_charges': f"{totals[fund]['charges']:.2f}",
+            'total_payments': f"{totals[fund]['payments']:.2f}",
+            'balance': f"{totals[fund]['charges'] - totals[fund]['payments']:.2f}",
+        } for fund in FUNDS},
         'by_category': by_category,
     }
 

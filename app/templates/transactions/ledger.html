@@ -6,8 +6,13 @@
     <div>
         <a href="{{ url_for('main.transactions') }}" class="text-sm text-ink-2 hover:text-ink"><i class="fas fa-arrow-left mr-1"></i>Back to Billing</a>
         <h1 class="font-display text-3xl text-ink mt-1">{{ student.full_name }}</h1>
-        <p class="mt-1 text-sm text-ink-2">Account ledger — all charges and payments</p>
-        <button onclick="openLedgerPay()" class="mt-3 inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-ok text-white text-sm font-bold hover:opacity-90 shadow-sm"><i class="fas fa-money-bill-wave"></i>Record Payment</button>
+        <p class="mt-1 text-sm text-ink-2">Account ledger - all charges and payments, kept per fund</p>
+        <div class="mt-3 flex flex-wrap gap-2">
+            <button onclick="openLedgerPay()" class="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-ok text-white text-sm font-bold hover:opacity-90 shadow-sm"><i class="fas fa-money-bill-wave"></i>Record Payment</button>
+            {% if current_user.is_admin %}
+            <button onclick="openTransfer()" class="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-surface border border-line text-ink-2 text-sm font-bold hover:bg-surface-2"><i class="fas fa-right-left"></i>Move money between funds</button>
+            {% endif %}
+        </div>
     </div>
     <div id="balance-badge" class="text-right">
         <button id="send-invoice-btn" onclick="sendInvoice()" class="hidden inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-primary-500 text-white text-sm font-bold hover:bg-primary-600 shadow-sm mt-2">
@@ -16,26 +21,33 @@
     </div>
 </div>
 
-<!-- Summary Cards -->
-<div class="grid grid-cols-3 gap-4 mb-6">
-    <div class="bg-surface border border-line rounded-2xl shadow-soft p-4 text-center">
-        <p class="text-xs font-medium text-ink-3 uppercase">Total Charges</p>
-        <p id="sum-charges" class="text-2xl font-bold text-danger tabular-nums">-</p>
-    </div>
-    <div class="bg-surface border border-line rounded-2xl shadow-soft p-4 text-center">
-        <p class="text-xs font-medium text-ink-3 uppercase">Total Payments</p>
-        <p id="sum-payments" class="text-2xl font-bold text-ok tabular-nums">-</p>
-    </div>
-    <div class="bg-surface border border-line rounded-2xl shadow-soft p-4 text-center">
-        <p class="text-xs font-medium text-ink-3 uppercase">Balance</p>
-        <p id="sum-balance" class="text-2xl font-bold tabular-nums">-</p>
+<!-- Summary Cards: one row per fund. Company money is owed to the Foundation,
+     so the two rows are never added together. The Company row is hidden for
+     studio-only dancers (no Company history and a zero Company balance). -->
+{% for fund in FUNDS %}
+<div id="fund-row-{{ fund }}" class="mb-6{% if fund == 'company' %} hidden{% endif %}">
+    <h3 class="text-sm font-semibold uppercase tracking-wider mb-2 {% if fund == 'company' %}text-gold-ink{% else %}text-ink-2{% endif %}">{{ FUND_LABELS[fund] }}</h3>
+    <div class="grid grid-cols-3 gap-4">
+        <div class="bg-surface border border-line rounded-2xl shadow-soft p-4 text-center">
+            <p class="text-xs font-medium text-ink-3 uppercase">Charges</p>
+            <p id="sum-charges-{{ fund }}" class="text-2xl font-bold text-danger tabular-nums">-</p>
+        </div>
+        <div class="bg-surface border border-line rounded-2xl shadow-soft p-4 text-center">
+            <p class="text-xs font-medium text-ink-3 uppercase">Payments</p>
+            <p id="sum-payments-{{ fund }}" class="text-2xl font-bold text-ok tabular-nums">-</p>
+        </div>
+        <div class="bg-surface border border-line rounded-2xl shadow-soft p-4 text-center">
+            <p class="text-xs font-medium text-ink-3 uppercase">Balance</p>
+            <p id="sum-balance-{{ fund }}" class="text-2xl font-bold tabular-nums">-</p>
+        </div>
     </div>
 </div>
+{% endfor %}
 
 <!-- Per-Category Balances -->
 <div id="category-breakdown" class="hidden mb-6">
     <h3 class="text-sm font-semibold text-ink-2 uppercase tracking-wider mb-2">Balance by Category</h3>
-    <div id="category-cards" class="grid grid-cols-2 md:grid-cols-4 gap-3"></div>
+    <div id="category-cards" class="space-y-3"></div>
 </div>
 
 <!-- Ledger Table -->
@@ -46,15 +58,16 @@
                 <tr>
                     <th class="px-5 py-3 text-left text-[11px] font-bold uppercase tracking-[.06em] text-ink-3">Date</th>
                     <th class="px-5 py-3 text-left text-[11px] font-bold uppercase tracking-[.06em] text-ink-3">Description</th>
+                    <th class="px-5 py-3 text-left text-[11px] font-bold uppercase tracking-[.06em] text-ink-3">Fund</th>
                     <th class="px-5 py-3 text-left text-[11px] font-bold uppercase tracking-[.06em] text-ink-3">Category</th>
                     <th class="px-5 py-3 text-right text-[11px] font-bold uppercase tracking-[.06em] text-ink-3">Charge</th>
                     <th class="px-5 py-3 text-right text-[11px] font-bold uppercase tracking-[.06em] text-ink-3">Payment</th>
-                    <th class="px-5 py-3 text-right text-[11px] font-bold uppercase tracking-[.06em] text-ink-3">Balance</th>
+                    <th class="px-5 py-3 text-right text-[11px] font-bold uppercase tracking-[.06em] text-ink-3" title="Runs within that row's fund only; Studio and Company never net against each other">Fund balance</th>
                     {% if current_user.is_admin %}<th class="px-3 py-3 text-right text-[11px] font-bold uppercase tracking-[.06em] text-ink-3"><span class="sr-only">Actions</span></th>{% endif %}
                 </tr>
             </thead>
             <tbody id="ledger-table">
-                <tr><td colspan="7" class="px-5 py-8 text-center text-ink-3">Loading...</td></tr>
+                <tr><td colspan="8" class="px-5 py-8 text-center text-ink-3">Loading...</td></tr>
             </tbody>
         </table>
     </div>
@@ -77,6 +90,12 @@
                     <div>
                         <label class="{{ lpl }}">Date *</label>
                         <input id="lp-date" type="date" required class="{{ lpi }}">
+                    </div>
+                    <div class="col-span-2">
+                        <label class="{{ lpl }}">Which balance is this paying? *</label>
+                        <select id="lp-fund" required class="{{ lpi }}">
+                            {% for fund in FUNDS %}<option value="{{ fund }}">{{ FUND_LABELS[fund] }}</option>{% endfor %}
+                        </select>
                     </div>
                     <div>
                         <label class="{{ lpl }}">Method *</label>
@@ -107,6 +126,46 @@
         </div>
     </div>
 </div>
+{% if current_user.is_admin %}
+<div id="transfer-modal" class="fixed inset-0 z-50 hidden overflow-y-auto">
+    <div class="flex items-center justify-center min-h-screen px-4">
+        <div class="fixed inset-0 bg-ink/40" onclick="closeTransfer()"></div>
+        <div class="relative bg-surface rounded-2xl shadow-pop max-w-md w-full p-6">
+            <h3 class="font-display text-2xl text-ink mb-1">Move money between funds</h3>
+            <p class="text-sm text-ink-3 mb-4">For {{ student.full_name }}. Use this when a payment landed in the wrong account. It posts two offsetting entries (one per fund) that share a reference; nothing already recorded is changed.</p>
+            <form id="transfer-form" onsubmit="saveTransfer(event)">
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="{{ lpl }}">Amount *</label>
+                        <input id="xf-amount" type="number" step="0.01" min="0.01" required class="{{ lpi }}">
+                    </div>
+                    <div></div>
+                    <div>
+                        <label class="{{ lpl }}">From *</label>
+                        <select id="xf-from" required class="{{ lpi }}">
+                            {% for fund in FUNDS %}<option value="{{ fund }}">{{ FUND_LABELS[fund] }}</option>{% endfor %}
+                        </select>
+                    </div>
+                    <div>
+                        <label class="{{ lpl }}">To *</label>
+                        <select id="xf-to" required class="{{ lpi }}">
+                            {% for fund in FUNDS %}<option value="{{ fund }}"{% if fund == 'company' %} selected{% endif %}>{{ FUND_LABELS[fund] }}</option>{% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-span-2">
+                        <label class="{{ lpl }}">Note</label>
+                        <input id="xf-note" type="text" maxlength="300" placeholder="e.g. paid to the studio Zelle by mistake" class="{{ lpi }}">
+                    </div>
+                </div>
+                <div class="mt-5 flex justify-end gap-2">
+                    <button type="button" onclick="closeTransfer()" class="px-4 py-2 rounded-xl border border-line-2 text-sm font-bold text-ink-2 hover:bg-surface-2">Cancel</button>
+                    <button type="submit" class="px-4 py-2 rounded-xl bg-primary-500 text-white text-sm font-bold hover:bg-primary-600 shadow-sm">Move money</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endif %}
 {% endblock %}
 
 {% block extra_js %}
@@ -121,34 +180,47 @@ function pillClass(category) {
     if (CATEGORY_FUND[category] === 'company') return 'bg-gold-300 text-gold-ink';
     return studioColors[category] || 'bg-surface-2 text-ink-2';
 }
-function fundPill(fund) {
-    return fund === 'company'
-        ? ` <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-gold-300 text-gold-ink" title="${esc(FUND_LABELS.company)}">Company</span>`
-        : '';
-}
-const methodLabels = { cash: 'Cash', zelle: 'Zelle', venmo: 'Venmo', cashapp: 'Cash App', card: 'Card', tap: 'Tap' };
+const methodLabels = { cash: 'Cash', zelle: 'Zelle', venmo: 'Venmo', cashapp: 'Cash App', card: 'Card', tap: 'Tap', transfer: 'Fund transfer' };
+const FUNDS = {{ FUNDS | list | tojson }};
 
 async function loadLedger() {
     try {
         const res = await fetch('/api/students/{{ student.id }}/ledger');
         const data = await res.json();
 
-        document.getElementById('sum-charges').textContent = '$' + parseFloat(data.total_charges).toFixed(2);
-        document.getElementById('sum-payments').textContent = '$' + parseFloat(data.total_payments).toFixed(2);
-        const bal = parseFloat(data.balance);
-        const balEl = document.getElementById('sum-balance');
-        balEl.textContent = bal > 0 ? '$' + bal.toFixed(2) + ' due' : bal < 0 ? '$' + Math.abs(bal).toFixed(2) + ' credit' : 'Paid up';
-        balEl.className = 'text-2xl font-bold tabular-nums ' + (bal > 0 ? 'text-danger' : bal < 0 ? 'text-info' : 'text-ink');
-
+        const balText = bal => bal > 0 ? '$' + bal.toFixed(2) + ' due' : bal < 0 ? '$' + Math.abs(bal).toFixed(2) + ' credit' : 'Paid up';
+        const balTone = bal => bal > 0 ? 'text-danger' : bal < 0 ? 'text-info' : 'text-ink';
+        const badges = [];
+        FUNDS.forEach(fund => {
+            const f = data.funds[fund];
+            const bal = parseFloat(f.balance);
+            document.getElementById('sum-charges-' + fund).textContent = '$' + parseFloat(f.total_charges).toFixed(2);
+            document.getElementById('sum-payments-' + fund).textContent = '$' + parseFloat(f.total_payments).toFixed(2);
+            const balEl = document.getElementById('sum-balance-' + fund);
+            balEl.textContent = balText(bal);
+            balEl.className = 'text-2xl font-bold tabular-nums ' + balTone(bal);
+            // The Company row only appears once the dancer has Company history.
+            if (fund === 'company') {
+                document.getElementById('fund-row-company').classList.toggle('hidden', !data.has_company && bal === 0);
+            }
+            if (bal !== 0) {
+                badges.push(`<span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold ${bal > 0 ? 'bg-danger/10 text-danger' : 'bg-info/10 text-info'} tabular-nums">${esc(FUND_LABELS[fund])}: ${balText(bal)}</span>`);
+            }
+        });
         const badge = document.getElementById('balance-badge');
-        badge.innerHTML = bal > 0
-            ? `<span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-danger/10 text-danger tabular-nums">$${bal.toFixed(2)} due</span>`
+        badge.innerHTML = badges.length
+            ? `<div class="flex flex-wrap justify-end gap-1">${badges.join('')}</div>`
             : `<span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-ok/10 text-ok">Paid up</span>`;
+        // Preselect the fund the parent most likely paid: Company when it is the
+        // only one with a balance due, otherwise Studio.
+        const studioDue = parseFloat(data.funds.studio.balance) > 0;
+        const companyDue = parseFloat(data.funds.company.balance) > 0;
+        document.getElementById('lp-fund').value = (companyDue && !studioDue) ? 'company' : 'studio';
 
         renderLedger(data.ledger);
         renderCategoryBreakdown(data.by_category || {});
     } catch (err) {
-        document.getElementById('ledger-table').innerHTML = '<tr><td colspan="7" class="px-5 py-8 text-center text-danger">Failed to load ledger</td></tr>';
+        document.getElementById('ledger-table').innerHTML = '<tr><td colspan="8" class="px-5 py-8 text-center text-danger">Failed to load ledger</td></tr>';
     }
 }
 
@@ -157,7 +229,7 @@ const isAdmin = {{ 'true' if current_user.is_admin else 'false' }};
 function renderLedger(rows) {
     const tbody = document.getElementById('ledger-table');
     if (!rows.length) {
-        tbody.innerHTML = '<tr><td colspan="7" class="px-5 py-8 text-center text-ink-3">No transactions yet.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" class="px-5 py-8 text-center text-ink-3">No transactions yet.</td></tr>';
         return;
     }
     tbody.innerHTML = rows.map(r => {
@@ -172,7 +244,8 @@ function renderLedger(rows) {
         return `<tr class="border-b border-line last:border-0">
             <td class="px-5 py-3.5 whitespace-nowrap text-sm text-ink tabular-nums">${esc(r.transaction_date)}</td>
             <td class="px-5 py-3.5 text-sm text-ink-2">${esc(desc)}${isCharge ? '' : '<span class="text-ink-3 text-xs">' + esc(method) + '</span>'}</td>
-            <td class="px-5 py-3.5 whitespace-nowrap"><span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold ${pillClass(r.category)}">${esc(r.category)}</span>${fundPill(r.fund)}</td>
+            <td class="px-5 py-3.5 whitespace-nowrap"><span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold ${r.fund === 'company' ? 'bg-gold-300 text-gold-ink' : 'bg-surface-2 text-ink-2'}">${esc(FUND_LABELS[r.fund] || r.fund)}</span></td>
+            <td class="px-5 py-3.5 whitespace-nowrap"><span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold ${pillClass(r.category)}">${esc(r.category)}</span></td>
             <td class="px-5 py-3.5 whitespace-nowrap text-sm text-right tabular-nums ${isCharge ? 'text-danger' : ''}">${isCharge ? '$' + parseFloat(r.amount).toFixed(2) : ''}</td>
             <td class="px-5 py-3.5 whitespace-nowrap text-sm text-right tabular-nums ${!isCharge ? 'text-ok' : ''}">${!isCharge ? '$' + parseFloat(r.amount).toFixed(2) : ''}</td>
             <td class="px-5 py-3.5 whitespace-nowrap text-sm text-right tabular-nums ${balClass}">$${runBal.toFixed(2)}</td>
@@ -195,20 +268,32 @@ function renderCategoryBreakdown(cats) {
     if (keys.length < 2) { document.getElementById('category-breakdown').classList.add('hidden'); return; }
     document.getElementById('category-breakdown').classList.remove('hidden');
     const colors = { tuition: 'border-info', costumes: 'border-primary-400', shoes: 'border-warn', registration: 'border-ok', other: 'border-line-2' };
-    document.getElementById('category-cards').innerHTML = keys.map(cat => {
+    const card = cat => {
         const c = cats[cat];
         const bal = parseFloat(c.balance);
         const balClass = bal > 0 ? 'text-danger' : bal < 0 ? 'text-info' : 'text-ink';
         const balText = bal > 0 ? '$' + bal.toFixed(2) + ' due' : bal < 0 ? '$' + Math.abs(bal).toFixed(2) + ' credit' : 'Paid';
-        return `<div class="bg-surface border border-line rounded-2xl shadow-soft p-3 border-l-4 ${colors[cat] || colors.other}">
+        const edge = c.fund === 'company' ? 'border-gold-400' : (colors[cat] || colors.other);
+        return `<div class="bg-surface border border-line rounded-2xl shadow-soft p-3 border-l-4 ${edge}">
             <p class="text-xs font-medium text-ink-3 uppercase">${esc(cat)}</p>
             <p class="text-lg font-bold tabular-nums ${balClass}">${balText}</p>
             <p class="text-xs text-ink-3 tabular-nums">$${parseFloat(c.charges).toFixed(2)} charged &middot; $${parseFloat(c.payments).toFixed(2)} paid</p>
         </div>`;
+    };
+    // Grouped under a heading per fund so Company categories read as the
+    // Foundation's money, not as more studio line items.
+    document.getElementById('category-cards').innerHTML = FUNDS.map(fund => {
+        const inFund = keys.filter(cat => cats[cat].fund === fund);
+        if (!inFund.length) return '';
+        return `<div>
+            <p class="text-xs font-bold uppercase tracking-wider mb-2 ${fund === 'company' ? 'text-gold-ink' : 'text-ink-3'}">${esc(FUND_LABELS[fund])}</p>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-3">${inFund.map(card).join('')}</div>
+        </div>`;
     }).join('');
 }
 
-// Show Send Invoice button if Square is configured and balance > 0
+// Show Send Invoice button if Square is configured and the STUDIO balance > 0.
+// Square API invoicing is studio-only; the Company fund is paid to the Foundation.
 async function checkSquare() {
     try {
         const res = await fetch('/api/square/status');
@@ -216,10 +301,11 @@ async function checkSquare() {
         if (data.configured) {
             const ledgerRes = await fetch('/api/students/{{ student.id }}/ledger');
             const ledgerData = await ledgerRes.json();
-            if (parseFloat(ledgerData.balance) > 0) {
+            const studioBal = parseFloat(ledgerData.funds.studio.balance);
+            if (studioBal > 0) {
                 const btn = document.getElementById('send-invoice-btn');
                 btn.textContent = '';
-                btn.innerHTML = `<i class="fas fa-paper-plane mr-2"></i>Send Invoice ($${parseFloat(ledgerData.balance).toFixed(2)})`;
+                btn.innerHTML = `<i class="fas fa-paper-plane mr-2"></i>Send Invoice ($${studioBal.toFixed(2)} studio)`;
                 btn.classList.remove('hidden');
             }
         }
@@ -227,7 +313,7 @@ async function checkSquare() {
 }
 
 async function sendInvoice() {
-    if (!confirm('Send a Square invoice to the parent\'s email for the outstanding balance?')) return;
+    if (!confirm('Send a Square invoice to the parent\'s email for the outstanding Studio balance?')) return;
     const btn = document.getElementById('send-invoice-btn');
     btn.disabled = true;
     btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Sending...';
@@ -254,7 +340,9 @@ async function sendInvoice() {
 }
 
 function openLedgerPay() {
+    const fund = document.getElementById('lp-fund').value;  // preselected by loadLedger
     document.getElementById('ledger-pay-form').reset();
+    document.getElementById('lp-fund').value = fund;
     document.getElementById('lp-date').value = new Date().toISOString().split('T')[0];
     document.getElementById('ledger-pay-modal').classList.remove('hidden');
 }
@@ -271,6 +359,7 @@ async function saveLedgerPay(e) {
         amount: document.getElementById('lp-amount').value,
         transaction_date: document.getElementById('lp-date').value,
         payment_method: document.getElementById('lp-method').value,
+        fund: document.getElementById('lp-fund').value,
         category: document.getElementById('lp-category').value,
         description: document.getElementById('lp-desc').value,
     };
@@ -281,6 +370,35 @@ async function saveLedgerPay(e) {
     } catch (err) { toast('Network error', false); }
     finally { btn.disabled = false; }
 }
+
+{% if current_user.is_admin %}
+function openTransfer() {
+    document.getElementById('transfer-form').reset();
+    document.getElementById('transfer-modal').classList.remove('hidden');
+}
+function closeTransfer() { document.getElementById('transfer-modal').classList.add('hidden'); }
+async function saveTransfer(e) {
+    e.preventDefault();
+    const btn = e.target.querySelector('button[type="submit"]');
+    if (btn.disabled) return;
+    const body = {
+        amount: document.getElementById('xf-amount').value,
+        from_fund: document.getElementById('xf-from').value,
+        to_fund: document.getElementById('xf-to').value,
+        note: document.getElementById('xf-note').value,
+    };
+    if (body.from_fund === body.to_fund) { toast('Pick two different funds', false); return; }
+    if (!confirm(`Move $${parseFloat(body.amount).toFixed(2)} from ${FUND_LABELS[body.from_fund]} to ${FUND_LABELS[body.to_fund]}? This adds two offsetting entries and is logged.`)) return;
+    btn.disabled = true;
+    try {
+        const res = await fetch('/api/students/{{ student.id }}/fund-transfer', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
+        const d = await res.json().catch(() => ({}));
+        if (res.ok) { closeTransfer(); loadLedger(); toast('Moved (' + d.reference + ')', true); }
+        else { toast(d.error || 'Could not move money', false); }
+    } catch (err) { toast('Network error', false); }
+    finally { btn.disabled = false; }
+}
+{% endif %}
 
 loadLedger();
 checkSquare();

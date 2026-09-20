@@ -4,23 +4,30 @@
 <div class="mb-6">
     <a href="{{ url_for('main.families_page') }}" class="text-sm text-ink-2 hover:text-ink"><i class="fas fa-arrow-left mr-1"></i>Back to Families</a>
     <h1 class="font-display text-3xl text-ink mt-1">{{ family.name }}</h1>
-    <p class="mt-1 text-sm text-ink-2">Combined family ledger — all students' charges and payments</p>
+    <p class="mt-1 text-sm text-ink-2">Combined family ledger - all students' charges and payments, kept per fund</p>
 </div>
 
-<div class="grid grid-cols-3 gap-4 mb-6">
-    <div class="bg-surface border border-line rounded-2xl shadow-soft p-4 text-center">
-        <p class="text-xs font-medium text-ink-3 uppercase">Total Charges</p>
-        <p id="sum-charges" class="text-2xl font-bold text-danger tabular-nums">-</p>
-    </div>
-    <div class="bg-surface border border-line rounded-2xl shadow-soft p-4 text-center">
-        <p class="text-xs font-medium text-ink-3 uppercase">Total Payments</p>
-        <p id="sum-payments" class="text-2xl font-bold text-ok tabular-nums">-</p>
-    </div>
-    <div class="bg-surface border border-line rounded-2xl shadow-soft p-4 text-center">
-        <p class="text-xs font-medium text-ink-3 uppercase">Family Balance</p>
-        <p id="sum-balance" class="text-2xl font-bold tabular-nums">-</p>
+{# One summary row per fund, never summed: Company money is owed to the
+   Foundation. The Company row is hidden for studio-only families. #}
+{% for fund in FUNDS %}
+<div id="fund-row-{{ fund }}" class="mb-6{% if fund == 'company' %} hidden{% endif %}">
+    <h3 class="text-sm font-semibold uppercase tracking-wider mb-2 {% if fund == 'company' %}text-gold-ink{% else %}text-ink-2{% endif %}">{{ FUND_LABELS[fund] }}</h3>
+    <div class="grid grid-cols-3 gap-4">
+        <div class="bg-surface border border-line rounded-2xl shadow-soft p-4 text-center">
+            <p class="text-xs font-medium text-ink-3 uppercase">Charges</p>
+            <p id="sum-charges-{{ fund }}" class="text-2xl font-bold text-danger tabular-nums">-</p>
+        </div>
+        <div class="bg-surface border border-line rounded-2xl shadow-soft p-4 text-center">
+            <p class="text-xs font-medium text-ink-3 uppercase">Payments</p>
+            <p id="sum-payments-{{ fund }}" class="text-2xl font-bold text-ok tabular-nums">-</p>
+        </div>
+        <div class="bg-surface border border-line rounded-2xl shadow-soft p-4 text-center">
+            <p class="text-xs font-medium text-ink-3 uppercase">Family Balance</p>
+            <p id="sum-balance-{{ fund }}" class="text-2xl font-bold tabular-nums">-</p>
+        </div>
     </div>
 </div>
+{% endfor %}
 
 <div id="students-list" class="mb-4 text-sm text-ink-2"></div>
 
@@ -31,14 +38,15 @@
                 <tr>
                     <th class="px-5 py-3 text-left text-[11px] font-bold uppercase tracking-[.06em] text-ink-3">Date</th>
                     <th class="px-5 py-3 text-left text-[11px] font-bold uppercase tracking-[.06em] text-ink-3">Student</th>
+                    <th class="px-5 py-3 text-left text-[11px] font-bold uppercase tracking-[.06em] text-ink-3">Fund</th>
                     <th class="px-5 py-3 text-left text-[11px] font-bold uppercase tracking-[.06em] text-ink-3">Description</th>
                     <th class="px-5 py-3 text-right text-[11px] font-bold uppercase tracking-[.06em] text-ink-3">Charge</th>
                     <th class="px-5 py-3 text-right text-[11px] font-bold uppercase tracking-[.06em] text-ink-3">Payment</th>
-                    <th class="px-5 py-3 text-right text-[11px] font-bold uppercase tracking-[.06em] text-ink-3">Balance</th>
+                    <th class="px-5 py-3 text-right text-[11px] font-bold uppercase tracking-[.06em] text-ink-3" title="Runs within that row's fund only; Studio and Company never net against each other">Fund balance</th>
                 </tr>
             </thead>
             <tbody id="ledger-table">
-                <tr><td colspan="6" class="px-5 py-8 text-center text-ink-3">Loading...</td></tr>
+                <tr><td colspan="7" class="px-5 py-8 text-center text-ink-3">Loading...</td></tr>
             </tbody>
         </table>
     </div>
@@ -48,24 +56,33 @@
 {% block extra_js %}
 <script>
 function esc(str) { const d = document.createElement('div'); d.textContent = str; return d.innerHTML; }
+const FUNDS = {{ FUNDS | list | tojson }};
+const FUND_LABELS = {{ FUND_LABELS | tojson }};
+const methodLabels = { cash: 'Cash', zelle: 'Zelle', venmo: 'Venmo', cashapp: 'Cash App', card: 'Card', tap: 'Tap', transfer: 'Fund transfer' };
 
 async function loadLedger() {
     try {
         const res = await fetch('/api/families/{{ family.id }}/ledger');
         const data = await res.json();
 
-        document.getElementById('sum-charges').textContent = '$' + parseFloat(data.total_charges).toFixed(2);
-        document.getElementById('sum-payments').textContent = '$' + parseFloat(data.total_payments).toFixed(2);
-        const bal = parseFloat(data.balance);
-        const balEl = document.getElementById('sum-balance');
-        balEl.textContent = bal > 0 ? '$' + bal.toFixed(2) + ' due' : bal < 0 ? '$' + Math.abs(bal).toFixed(2) + ' credit' : 'Paid up';
-        balEl.className = 'text-2xl font-bold tabular-nums ' + (bal > 0 ? 'text-danger' : bal < 0 ? 'text-info' : 'text-ink');
+        FUNDS.forEach(fund => {
+            const f = data.funds[fund];
+            const bal = parseFloat(f.balance);
+            document.getElementById('sum-charges-' + fund).textContent = '$' + parseFloat(f.total_charges).toFixed(2);
+            document.getElementById('sum-payments-' + fund).textContent = '$' + parseFloat(f.total_payments).toFixed(2);
+            const balEl = document.getElementById('sum-balance-' + fund);
+            balEl.textContent = bal > 0 ? '$' + bal.toFixed(2) + ' due' : bal < 0 ? '$' + Math.abs(bal).toFixed(2) + ' credit' : 'Paid up';
+            balEl.className = 'text-2xl font-bold tabular-nums ' + (bal > 0 ? 'text-danger' : bal < 0 ? 'text-info' : 'text-ink');
+            if (fund === 'company') {
+                document.getElementById('fund-row-company').classList.toggle('hidden', !data.has_company && bal === 0);
+            }
+        });
 
         document.getElementById('students-list').innerHTML = '<i class="fas fa-users mr-1"></i>Students: ' + data.students.map(s => esc(s.full_name)).join(', ');
 
         const tbody = document.getElementById('ledger-table');
         if (!data.ledger.length) {
-            tbody.innerHTML = '<tr><td colspan="6" class="px-5 py-8 text-center text-ink-3">No transactions yet.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="7" class="px-5 py-8 text-center text-ink-3">No transactions yet.</td></tr>';
             return;
         }
         tbody.innerHTML = data.ledger.map(r => {
@@ -75,14 +92,15 @@ async function loadLedger() {
             return `<tr class="border-b border-line last:border-0">
                 <td class="px-5 py-3.5 whitespace-nowrap text-sm text-ink tabular-nums">${esc(r.transaction_date)}</td>
                 <td class="px-5 py-3.5 text-sm text-ink-2">${esc(r.student_name)}</td>
-                <td class="px-5 py-3.5 text-sm text-ink-2">${esc(r.description || r.category)}</td>
+                <td class="px-5 py-3.5 whitespace-nowrap"><span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold ${r.fund === 'company' ? 'bg-gold-300 text-gold-ink' : 'bg-surface-2 text-ink-2'}">${esc(FUND_LABELS[r.fund] || r.fund)}</span></td>
+                <td class="px-5 py-3.5 text-sm text-ink-2">${esc(r.description || r.category)}${isCharge || !r.payment_method ? '' : ' <span class="text-ink-3 text-xs">(' + esc(methodLabels[r.payment_method] || r.payment_method) + ')</span>'}</td>
                 <td class="px-5 py-3.5 whitespace-nowrap text-sm text-right tabular-nums ${isCharge ? 'text-danger' : ''}">${isCharge ? '$' + parseFloat(r.amount).toFixed(2) : ''}</td>
                 <td class="px-5 py-3.5 whitespace-nowrap text-sm text-right tabular-nums ${!isCharge ? 'text-ok' : ''}">${!isCharge ? '$' + parseFloat(r.amount).toFixed(2) : ''}</td>
                 <td class="px-5 py-3.5 whitespace-nowrap text-sm text-right tabular-nums ${balClass}">$${runBal.toFixed(2)}</td>
             </tr>`;
         }).join('');
     } catch (err) {
-        document.getElementById('ledger-table').innerHTML = '<tr><td colspan="6" class="px-5 py-8 text-center text-danger">Failed to load</td></tr>';
+        document.getElementById('ledger-table').innerHTML = '<tr><td colspan="7" class="px-5 py-8 text-center text-danger">Failed to load</td></tr>';
     }
 }
 

@@ -4,7 +4,8 @@ The LSODance Company collects to the Foundation's accounts; the studio
 collects tuition to its own. These tests prove the fund wall holds at every
 layer: tagging on write, the idempotent backfill, the single category map,
 the dropdowns that render from it, per-fund balances and allocation, per-fund
-late fees, and the Company-visibility helper.
+late fees, the Company-visibility helper, per-fund ledgers, and the audited
+transfer between funds.
 
 Run:  RFID_ENABLED=false python3 tests/test_company_fund.py
 Exit 0 = all green, 1 = failures.
@@ -26,11 +27,13 @@ from app.funds import (  # noqa: E402
     CATEGORY_FUND, COMPANY_CATEGORIES, fund_for_category,
 )
 from app.helpers import (  # noqa: E402
-    allocate_family_payment, calc_balance, calc_balance_bulk, has_company_activity_bulk,
+    allocate_family_payment, build_ledger, calc_balance, calc_balance_bulk,
+    has_company_activity_bulk,
 )
 from app.migrations import run_migrations  # noqa: E402
 from app.models import (  # noqa: E402
-    CompanyMembership, Family, PerformanceGroup, Setting, Student, Transaction, User,
+    AuditLog, CompanyMembership, Family, ParentStudent, PerformanceGroup, Setting, Student,
+    Transaction, User,
 )
 
 app = create_app("development")
@@ -315,6 +318,87 @@ def test_company_visibility():
         record("student with Company activity shows the Company block",
                "Company / Foundation" in account_card(with_row), account_card(with_row)[:200])
 
+def test_ledger_shape():
+    """Test 9: build_ledger keeps one running balance per fund and files each
+    category under the fund its rows carry."""
+    sid = new_student("Ledger")
+    post_txn(sid, "charge", 100, "tuition")
+    post_txn(sid, "charge", 40, "competition")
+    post_txn(sid, "payment", 40, "tuition", fund="company")
+    post_txn(sid, "payment", 30, "tuition", fund="studio")
+    with app.app_context():
+        txns = Transaction.query.filter_by(student_id=sid).order_by(Transaction.id).all()
+        led = build_ledger(txns)
+        record("ledger funds.studio.balance == '70.00' and funds.company.balance == '0.00'",
+               led["funds"]["studio"]["balance"] == "70.00"
+               and led["funds"]["company"]["balance"] == "0.00", str(led["funds"]))
+        record("build_ledger has no flat balance key", "balance" not in led, str(led.keys()))
+        running = [(r["fund"], r["running_balance"]) for r in led["ledger"]]
+        record("running balance only moves within the row's fund",
+               running == [("studio", "100.00"), ("company", "40.00"),
+                           ("company", "0.00"), ("studio", "70.00")], str(running))
+        record("by_category carries the fund of its rows",
+               led["by_category"]["tuition"]["fund"] == "studio"
+               and led["by_category"]["competition"]["fund"] == "company", str(led["by_category"]))
+    with app.test_client() as c:
+        login_admin(c)
+        d = c.get(f"/api/students/{sid}/ledger").get_json()
+        record("/api/students/<id>/ledger spreads funds + has_company",
+               d["funds"]["studio"]["balance"] == "70.00" and d["has_company"] is True, str(d.get("funds")))
+        html = c.get(f"/students/{sid}/ledger").get_data(as_text=True)
+        record("ledger page renders the fund-transfer modal and a per-fund summary",
+               "fund-transfer" in html and 'id="lp-fund"' in html and 'id="fund-row-company"' in html)
+
+
+def test_transfer():
+    """Test 10: an admin transfer posts two offsetting rows sharing a reference
+    plus an audit entry; bad input is rejected; parents cannot call it."""
+    sid = new_student("Xfer")
+    post_txn(sid, "charge", 25, "tuition")
+    post_txn(sid, "payment", 25, "tuition", fund="company")  # paid the wrong account
+    with app.test_client() as c:
+        login_admin(c)
+        with app.app_context():
+            before = Transaction.query.filter_by(student_id=sid).count()
+        r = c.post(f"/api/students/{sid}/fund-transfer", json={
+            "amount": 25, "from_fund": "company", "to_fund": "studio", "note": "paid wrong account"})
+        body = r.get_json() or {}
+        record("fund-transfer -> 201 with a reference", r.status_code == 201 and body.get("reference", "").startswith("xfer-"), str(body))
+        ref = body.get("reference", "")
+        with app.app_context():
+            rows = Transaction.query.filter_by(student_id=sid, category="transfer").all()
+            kinds = sorted((t.type, t.fund) for t in rows)
+            record("exactly two transfer rows: charge in company, payment in studio",
+                   Transaction.query.filter_by(student_id=sid).count() == before + 2
+                   and kinds == [("charge", "company"), ("payment", "studio")], str(kinds))
+            record("both transfer rows carry the shared reference",
+                   all(ref in (t.description or "") for t in rows) and ref, str([t.description for t in rows]))
+            bal = calc_balance(sid)
+            record("after the transfer: studio 0.00, company 0.00",
+                   bal["studio"]["balance"] == 0.0 and bal["company"]["balance"] == 0.0, str(bal))
+            audit = AuditLog.query.filter_by(action="fund.transfer").order_by(AuditLog.id.desc()).first()
+            record("AuditLog has a fund.transfer entry with the reference",
+                   audit is not None and ref in (audit.detail or ""), str(audit and audit.detail))
+        r = c.post(f"/api/students/{sid}/fund-transfer", json={"amount": 5, "from_fund": "studio", "to_fund": "studio"})
+        record("from_fund == to_fund -> 400", r.status_code == 400, str(r.get_json()))
+        r = c.post(f"/api/students/{sid}/fund-transfer", json={"amount": 0, "from_fund": "studio", "to_fund": "company"})
+        record("amount <= 0 -> 400", r.status_code == 400, str(r.get_json()))
+        r = c.post(f"/api/students/{sid}/fund-transfer", json={"amount": 5, "from_fund": "studio", "to_fund": "nope"})
+        record("unknown to_fund -> 400", r.status_code == 400, str(r.get_json()))
+    with app.app_context():
+        parent = User(username="fundparent", email="fp@x.com", first_name="P", last_name="Q",
+                      role="parent", is_admin=False, is_active=True)
+        parent.set_password("pw")
+        db.session.add(parent)
+        db.session.flush()
+        db.session.add(ParentStudent(parent_id=parent.id, student_id=sid))
+        db.session.commit()
+    with app.test_client() as c:
+        c.post("/auth/login", data={"username": "fundparent", "password": "pw"})
+        r = c.post(f"/api/students/{sid}/fund-transfer", json={"amount": 5, "from_fund": "studio", "to_fund": "company"})
+        record("a parent calling fund-transfer -> 403", r.status_code == 403, str(r.status_code))
+
+
 def main():
     ids = seed()
     test_tagging(ids)
@@ -325,6 +409,8 @@ def main():
     test_per_fund_allocation()
     test_late_fee_per_fund()
     test_company_visibility()
+    test_ledger_shape()
+    test_transfer()
     fails = [r for r in results if not r[1]]
     print("\n" + "=" * 56)
     print(f"SUMMARY: {len(results) - len(fails)}/{len(results)} passed, {len(fails)} failed.")
