@@ -3718,14 +3718,17 @@ def run_statement_math():
         sid = s.id
         prior, rows, tc, tp = _statement_rows([sid], 2026)
 
-    ending = prior + tc - tp
+    # All rows here are tuition, so the studio fund carries the math; the
+    # Company fund must stay at zero throughout (hard wall).
+    ending = prior["studio"] + tc["studio"] - tp["studio"]
     checks = {
-        "opening balance = prior-year net ($200)": prior == 200.0,
+        "opening balance = prior-year net ($200)": prior["studio"] == 200.0,
         "in-year rows only (3, excludes 2025 + 2027)": len(rows) == 3,
-        "total charges = 100 + 50 (Dec 31 included)": tc == 150.0,
-        "total payments = 150": tp == 150.0,
+        "total charges = 100 + 50 (Dec 31 included)": tc["studio"] == 150.0,
+        "total payments = 150": tp["studio"] == 150.0,
         "ending balance = 200 + 150 - 150 = 200": ending == 200.0,
         "running balance ends at 200": rows and rows[-1]["running"] == 200.0,
+        "company fund untouched": prior["company"] == 0.0 and tc["company"] == 0.0 and tp["company"] == 0.0,
     }
     bad = [k for k, ok in checks.items() if not ok]
     record("Year-end statement math is exact (prior-balance carryover, boundaries, running total)",

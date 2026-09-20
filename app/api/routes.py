@@ -1660,7 +1660,11 @@ def export_students_csv():
 @bp.route('/reports/transactions.csv', methods=['GET'])
 @login_required
 def export_transactions_csv():
-    """Transaction ledger export for bookkeeping/taxes. Optional ?start=&end= (YYYY-MM-DD)."""
+    """Transaction ledger export for bookkeeping/taxes. Optional ?start=&end=
+    (YYYY-MM-DD) and ?fund=studio|company. Every row carries its fund and the
+    file ends with charge/payment subtotal rows per fund, so the accountant
+    can reconcile the studio's books and the Foundation's separately without
+    re-summing by hand."""
     err = _admin_only()
     if err:
         return err
@@ -1674,15 +1678,35 @@ def export_transactions_csv():
                              else Transaction.transaction_date <= d)
             except ValueError:
                 pass
+    fund_filter = request.args.get('fund')
+    if fund_filter:
+        if not is_fund(fund_filter):
+            return jsonify({'error': 'fund must be studio or company'}), 400
+        q = q.filter(Transaction.fund == fund_filter)
     txns = q.order_by(Transaction.transaction_date, Transaction.created_at).all()
-    header = ['Date', 'Student', 'Type', 'Category', 'Amount', 'Method', 'Description']
-    rows = ([
-        t.transaction_date.isoformat(), t.student.full_name if t.student else '',
-        t.type, t.category, f"{float(t.amount):.2f}",
-        t.payment_method if t.payment_method and t.payment_method != 'n/a' else '',
-        t.description or '',
-    ] for t in txns)
-    return _csv_response(f'transactions-{date.today().isoformat()}.csv', header, rows)
+    header = ['Date', 'Student', 'Type', 'Category', 'Fund', 'Amount', 'Method', 'Description']
+
+    def rows():
+        # Sum per (fund, type) while streaming, then yield the subtotal rows
+        # last so the export stays a single pass over the query result.
+        sums = {fund: {'charge': 0.0, 'payment': 0.0} for fund in FUNDS}
+        for t in txns:
+            amt = float(t.amount)
+            sums.setdefault(t.fund, {'charge': 0.0, 'payment': 0.0})[t.type] += amt
+            yield [
+                t.transaction_date.isoformat(), t.student.full_name if t.student else '',
+                t.type, t.category, FUND_LABELS.get(t.fund, t.fund), f"{amt:.2f}",
+                t.payment_method if t.payment_method and t.payment_method != 'n/a' else '',
+                t.description or '',
+            ]
+        for fund in FUNDS:
+            if fund_filter and fund != fund_filter:
+                continue
+            label = FUND_LABELS[fund]
+            yield ['', '', 'charge', f'Subtotal charges - {label}', label, f"{sums[fund]['charge']:.2f}", '', '']
+            yield ['', '', 'payment', f'Subtotal payments - {label}', label, f"{sums[fund]['payment']:.2f}", '', '']
+
+    return _csv_response(f'transactions-{date.today().isoformat()}.csv', header, rows())
 
 
 @bp.route('/reports/aging.csv', methods=['GET'])

@@ -543,29 +543,54 @@ def _year_arg():
 
 
 def _statement_rows(student_ids, year):
-    """Return (prior_balance, rows, total_charges, total_payments) for the year."""
+    """Return (prior, rows, total_charges, total_payments) for the year, per fund.
+
+    `prior`, `total_charges` and `total_payments` are {fund: float}. Each row
+    is {'t': Transaction, 'running': float} where `running` is the balance of
+    THAT row's fund after the row, seeded from that fund's prior. The funds
+    never add together: Company money is owed to the LSODance Foundation, so
+    a statement must not show one combined ending balance (CONTEXT: hard wall).
+    """
     from datetime import date as _date
     start = _date(year, 1, 1)
     end = _date(year, 12, 31)
-    prior = Transaction.query.filter(Transaction.student_id.in_(student_ids),
-                                     Transaction.transaction_date < start).all()
-    prior_balance = sum(float(t.amount) if t.type == 'charge' else -float(t.amount) for t in prior)
+    prior_txns = Transaction.query.filter(Transaction.student_id.in_(student_ids),
+                                          Transaction.transaction_date < start).all()
+    prior = {fund: 0.0 for fund in FUNDS}
+    for t in prior_txns:
+        prior[t.fund] += float(t.amount) if t.type == 'charge' else -float(t.amount)
     txns = (Transaction.query
             .filter(Transaction.student_id.in_(student_ids),
                     Transaction.transaction_date >= start, Transaction.transaction_date <= end)
             .order_by(Transaction.transaction_date, Transaction.created_at).all())
-    running = prior_balance
-    rows, tc, tp = [], 0.0, 0.0
+    running = dict(prior)
+    tc = {fund: 0.0 for fund in FUNDS}
+    tp = {fund: 0.0 for fund in FUNDS}
+    rows = []
     for t in txns:
         amt = float(t.amount)
         if t.type == 'charge':
-            running += amt
-            tc += amt
+            running[t.fund] += amt
+            tc[t.fund] += amt
         else:
-            running -= amt
-            tp += amt
-        rows.append({'t': t, 'running': running})
-    return prior_balance, rows, tc, tp
+            running[t.fund] -= amt
+            tp[t.fund] += amt
+        rows.append({'t': t, 'running': running[t.fund]})
+    return prior, rows, tc, tp
+
+
+def _statement_context(student_ids, year):
+    """Template kwargs shared by the student and family statements: the
+    per-fund figures plus `has_company` (any Company row this year or a
+    non-zero Company carry-forward), which decides whether the Company /
+    Foundation block prints at all."""
+    prior, rows, tc, tp = _statement_rows(student_ids, year)
+    has_company = prior['company'] != 0 or any(r['t'].fund == 'company' for r in rows)
+    return {
+        'prior_balance': prior, 'rows': rows, 'total_charges': tc, 'total_payments': tp,
+        'ending_balance': {fund: prior[fund] + tc[fund] - tp[fund] for fund in FUNDS},
+        'has_company': has_company,
+    }
 
 
 @bp.route('/students/<int:student_id>/statement')
@@ -575,10 +600,8 @@ def student_statement(student_id):
     if not _parent_owns(student):
         return redirect(url_for('main.parent_dashboard'))
     year = _year_arg()
-    prior, rows, tc, tp = _statement_rows([student.id], year)
     return render_template('statements/student.html', student=student, year=year,
-                           prior_balance=prior, rows=rows, total_charges=tc, total_payments=tp,
-                           ending_balance=prior + tc - tp)
+                           **_statement_context([student.id], year))
 
 
 @bp.route('/families/<int:family_id>/statement')
@@ -588,10 +611,8 @@ def family_statement(family_id):
     students = family.students.all()
     year = _year_arg()
     ids = [s.id for s in students] or [-1]
-    prior, rows, tc, tp = _statement_rows(ids, year)
     return render_template('statements/family.html', family=family, students=students, year=year,
-                           prior_balance=prior, rows=rows, total_charges=tc, total_payments=tp,
-                           ending_balance=prior + tc - tp)
+                           **_statement_context(ids, year))
 
 
 @bp.route('/giving-statement')

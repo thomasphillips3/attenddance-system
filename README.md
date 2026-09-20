@@ -12,6 +12,23 @@ A complete RFID-based attendance system for dance studios running on Raspberry P
 - 🔐 **Authentication**: Secure teacher login system
 - 🎨 **Modern UI**: Clean, intuitive interface built with Tailwind CSS
 
+### Billing funds
+
+Every charge and payment belongs to one of two funds: **Studio** (tuition,
+costumes, shoes, registration, other) or **Company / Foundation** (competition,
+convention, transportation, lodging, observer, costume rental, company dues,
+company tickets). Company money is owed to the LSODance Foundation, so the two
+are never netted: a Company payment only ever settles Company charges and every
+balance surface (billing table, ledgers, parent portal, reminders, late fees,
+statements, CSV exports) shows the two funds separately. The category-to-fund
+map lives in `app/funds.py` and is the only place it is defined.
+
+Foundation payment destinations (Zelle, Cash App, Square link) are set in the
+"Company / Foundation payments" block on `/settings`; parents see them when they
+pay a Company balance. If a parent pays the wrong account, an admin can use
+"Move money between funds" on the student's ledger, which posts two offsetting
+`transfer` rows sharing a reference and writes an audit entry.
+
 ## Hardware Requirements
 
 - **Raspberry Pi 4 or 5** (recommended) running Raspberry Pi OS Bookworm
@@ -313,6 +330,13 @@ export ATTENDANCE_PER_PAGE=100
 - `GET /api/attendance` - Get attendance records
 - `POST /api/attendance/checkin` - Manual check-in
 - `GET /api/attendance/today` - Today's attendance
+
+### Billing
+- `GET /api/balances` - Per-student balances, one block per fund
+- `GET /api/students/<id>/ledger` - Per-fund ledger with a running balance per fund
+- `POST /api/students/<id>/fund-transfer` - Admin: move money between funds (two offsetting rows + audit)
+- `GET /api/payment-options` - Parent-facing payment destinations per fund
+- `GET /api/reports/transactions.csv?fund=` - Ledger export with a Fund column and per-fund subtotals
 
 ### Classes
 - `GET /api/classes` - List classes

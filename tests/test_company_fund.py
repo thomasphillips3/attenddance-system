@@ -6,7 +6,7 @@ layer: tagging on write, the idempotent backfill, the single category map,
 the dropdowns that render from it, per-fund balances and allocation, per-fund
 late fees, the Company-visibility helper, per-fund ledgers, the audited
 transfer between funds, per-fund payment destinations, the parent claim's
-fund, and the receipt that names it.
+fund, the receipt that names it, and per-fund statements and CSV exports.
 
 Run:  RFID_ENABLED=false python3 tests/test_company_fund.py
 Exit 0 = all green, 1 = failures.
@@ -500,6 +500,54 @@ def test_pending_fund_and_receipt():
            len(receipts) == 1 and "Company / Foundation" in receipts[0], str(captured)[:300])
 
 
+def test_statement_and_csv_per_fund():
+    """Tests 14 + 15: the year-end statement prints a Fund column and a
+    subtotal block per fund with no unlabelled grand ending balance; the
+    transactions CSV carries a Fund column and per-fund subtotal rows."""
+    from datetime import date as _date
+    sid = new_student("Stmt")
+    post_txn(sid, "charge", 120, "tuition")
+    post_txn(sid, "charge", 80, "competition")
+    post_txn(sid, "payment", 20, "tuition", fund="company")
+    year = _date.today().year
+    with app.test_client() as c:
+        login_admin(c)
+        html = c.get(f"/students/{sid}/statement?year={year}").get_data(as_text=True)
+        record("statement shows the Company / Foundation block and the Foundation note",
+               "Company / Foundation" in html and "payable to the LSODance Foundation" in html)
+        record("statement has a Studio and a Company ending balance line",
+               "Studio ending balance" in html and "Company / Foundation ending balance" in html)
+        record("statement has no unlabelled grand 'Ending balance' row",
+               ">Ending balance<" not in html)
+        record("statement carries a Fund column header and per-fund brought-forward rows",
+               ">Fund<" in html and "Studio balance brought forward" in html
+               and "Company / Foundation balance brought forward" in html)
+        record("statement totals are per fund (studio $120.00 charged, company $80.00 charged)",
+               "$120.00" in html and "$80.00" in html and "$60.00" in html)
+
+        plain = new_student("StmtPlain")
+        post_txn(plain, "charge", 10, "tuition")
+        html = c.get(f"/students/{plain}/statement?year={year}").get_data(as_text=True)
+        record("studio-only statement hides the Company block",
+               "Company / Foundation" not in html)
+
+        r = c.get("/api/reports/transactions.csv")
+        text = r.get_data(as_text=True)
+        lines = text.splitlines()
+        record("transactions CSV header has a Fund column after Category",
+               r.status_code == 200 and lines[0] == "Date,Student,Type,Category,Fund,Amount,Method,Description", lines[0] if lines else "")
+        record("transactions CSV ends with per-fund subtotal rows",
+               "Subtotal charges - Company / Foundation" in text and "Subtotal payments - Studio" in text,
+               text[-300:])
+        r = c.get("/api/reports/transactions.csv?fund=company")
+        text = r.get_data(as_text=True)
+        record("?fund=company filters rows and subtotals to the Company fund",
+               r.status_code == 200 and "Subtotal charges - Studio" not in text and ",Studio," not in text
+               and "Subtotal charges - Company / Foundation" in text, text[-300:])
+        r = c.get("/api/reports/transactions.csv?fund=nope")
+        record("?fund=nope -> 400", r.status_code == 400, str(r.get_json()))
+
+
 def main():
     ids = seed()
     test_tagging(ids)
@@ -514,6 +562,7 @@ def main():
     test_transfer()
     test_payment_options_per_fund()
     test_pending_fund_and_receipt()
+    test_statement_and_csv_per_fund()
     fails = [r for r in results if not r[1]]
     print("\n" + "=" * 56)
     print(f"SUMMARY: {len(results) - len(fails)}/{len(results)} passed, {len(fails)} failed.")

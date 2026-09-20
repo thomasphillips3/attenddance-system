@@ -28,17 +28,23 @@
         <table class="min-w-full text-sm mb-4">
             <thead><tr class="text-xs text-ink-3 uppercase border-b border-line">
                 <th class="text-left py-2">Date</th><th class="text-left py-2">Description</th>
-                <th class="text-right py-2">Charge</th><th class="text-right py-2">Payment</th><th class="text-right py-2">Balance</th>
+                <th class="text-left py-2">Fund</th>
+                <th class="text-right py-2">Charge</th><th class="text-right py-2">Payment</th><th class="text-right py-2" title="Runs within that row's fund only">Fund balance</th>
             </tr></thead>
             <tbody>
+                {# One carry-forward row per fund; the Company row only when the
+                   statement has Company money at all. #}
+                {% for fund in FUNDS if fund == 'studio' or has_company %}
                 <tr class="border-b border-line last:border-0">
-                    <td class="py-2 text-ink-3" colspan="4">Balance brought forward into {{ year }}</td>
-                    <td class="py-2 text-right font-medium tabular-nums">${{ '%.2f' % prior_balance }}</td>
+                    <td class="py-2 text-ink-3" colspan="5">{{ FUND_LABELS[fund] }} balance brought forward into {{ year }}</td>
+                    <td class="py-2 text-right font-medium tabular-nums">${{ '%.2f' % prior_balance[fund] }}</td>
                 </tr>
+                {% endfor %}
                 {% for r in rows %}
                 <tr class="border-b border-line last:border-0">
                     <td class="py-2 tabular-nums">{{ r.t.transaction_date.strftime('%b %d') }}</td>
                     <td class="py-2">{{ r.t.description or r.t.category }}{% if r.t.type == 'payment' and r.t.payment_method and r.t.payment_method != 'n/a' %} <span class="text-ink-3">({{ r.t.payment_method }})</span>{% endif %}</td>
+                    <td class="py-2">{{ FUND_LABELS[r.t.fund] }}</td>
                     <td class="py-2 text-right tabular-nums">{% if r.t.type == 'charge' %}${{ '%.2f' % r.t.amount }}{% endif %}</td>
                     <td class="py-2 text-right tabular-nums">{% if r.t.type == 'payment' %}${{ '%.2f' % r.t.amount }}{% endif %}</td>
                     <td class="py-2 text-right tabular-nums">${{ '%.2f' % r.running }}</td>
@@ -47,11 +53,19 @@
             </tbody>
         </table>
 
+        {# Totals per fund. Never a grand combined ending balance: Company
+           amounts are owed to the Foundation, not the studio. #}
         <div class="flex justify-end">
             <table class="text-sm">
-                <tr><td class="pr-8 py-1 text-ink-2">Total charged {{ year }}</td><td class="text-right py-1 tabular-nums">${{ '%.2f' % total_charges }}</td></tr>
-                <tr><td class="pr-8 py-1 text-ink-2">Total paid {{ year }}</td><td class="text-right py-1 tabular-nums">${{ '%.2f' % total_payments }}</td></tr>
-                <tr class="border-t border-line font-bold"><td class="pr-8 py-1 text-ink">Ending balance</td><td class="text-right py-1 tabular-nums">${{ '%.2f' % ending_balance }}</td></tr>
+                {% for fund in FUNDS if fund == 'studio' or has_company %}
+                <tr><td class="pt-3 pb-1 text-xs font-bold uppercase tracking-wider {% if fund == 'company' %}text-gold-ink{% else %}text-ink-3{% endif %}" colspan="2">{{ FUND_LABELS[fund] }}</td></tr>
+                <tr><td class="pr-8 py-1 text-ink-2">Total charged {{ year }}</td><td class="text-right py-1 tabular-nums">${{ '%.2f' % total_charges[fund] }}</td></tr>
+                <tr><td class="pr-8 py-1 text-ink-2">Total paid {{ year }}</td><td class="text-right py-1 tabular-nums">${{ '%.2f' % total_payments[fund] }}</td></tr>
+                <tr class="border-t border-line font-bold"><td class="pr-8 py-1 text-ink">{{ FUND_LABELS[fund] }} ending balance</td><td class="text-right py-1 tabular-nums">${{ '%.2f' % ending_balance[fund] }}</td></tr>
+                {% if fund == 'company' %}
+                <tr><td class="py-1 text-xs text-ink-3" colspan="2">Company amounts are payable to the LSODance Foundation.</td></tr>
+                {% endif %}
+                {% endfor %}
             </table>
         </div>
         <p class="text-xs text-ink-3 mt-6">Generated from LSO Dance. Keep for your records.</p>
