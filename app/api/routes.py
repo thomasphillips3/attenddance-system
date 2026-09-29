@@ -1118,11 +1118,11 @@ def toggle_attendance():
         ).all()
 
     # Optional explicit state from the attendance card: 'present' (P),
-    # 'absent' (A) or 'none' (blank). Without it the endpoint keeps its
+    # 'absent' (A), 'tardy' (T, late but present) or 'none' (blank). Without it the endpoint keeps its
     # original two-way toggle (row exists -> remove, else -> present).
     state = data.get('state')
-    if state is not None and state not in ('present', 'absent', 'none'):
-        return jsonify({'error': "state must be 'present', 'absent' or 'none'"}), 400
+    if state is not None and state not in ('present', 'absent', 'tardy', 'none'):
+        return jsonify({'error': "state must be 'present', 'absent', 'tardy' or 'none'"}), 400
 
     backfill = target_date != today
     if state is not None:
@@ -1140,7 +1140,8 @@ def toggle_attendance():
                 method = 'manual'
             db.session.add(Attendance(
                 student_id=student_id, class_id=class_id, check_in_time=stamp,
-                check_in_method=method, is_present=(state == 'present')))
+                check_in_method=method, is_present=(state in ('present', 'tardy')),
+                is_tardy=(state == 'tardy')))
         if backfill:
             AuditLog.record(current_user.id, 'attendance.backfill',
                             f'{student.full_name} / {dance_class.name} / '
@@ -1150,7 +1151,7 @@ def toggle_attendance():
         except IntegrityError:
             db.session.rollback()
             return jsonify({'error': 'Attendance changed at the same time. Try again.'}), 409
-        return jsonify({'present': state == 'present', 'state': state,
+        return jsonify({'present': state in ('present', 'tardy'), 'state': state,
                         'date': target_date.isoformat()})
 
     if existing:

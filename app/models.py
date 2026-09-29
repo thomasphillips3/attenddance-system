@@ -393,6 +393,9 @@ class Attendance(db.Model):
     
     # Status
     is_present = db.Column(db.Boolean, default=True, nullable=False)
+    # Late but here (T on the card). Only meaningful when is_present is True,
+    # so every "who showed up" count keeps working off is_present alone.
+    is_tardy = db.Column(db.Boolean, default=False, nullable=False)
     
     # Lookup index for the per-(student, class, day) dedup query. NOTE: this is a
     # plain index, NOT a uniqueness guarantee — duplicate check-ins are prevented

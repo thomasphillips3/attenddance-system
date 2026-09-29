@@ -59,6 +59,11 @@ FAMILY_COLUMNS = [
     ('zip_code', 'VARCHAR(20)'),
 ]
 
+# Tardy is a flavor of present: is_present stays True, is_tardy marks the T.
+ATTENDANCE_COLUMNS = [
+    ('is_tardy', 'BOOLEAN DEFAULT 0 NOT NULL'),
+]
+
 REGISTRATION_COLUMNS = [
     ('parent2_name', 'VARCHAR(120)'),
     ('parent2_email', 'VARCHAR(120)'),
@@ -170,6 +175,7 @@ def run_migrations(db):
         if 'registrations' in inspector.get_table_names():
             _add_missing_columns(conn, inspector, 'registrations', REGISTRATION_COLUMNS)
         if 'attendance' in inspector.get_table_names():
+            _add_missing_columns(conn, inspector, 'attendance', ATTENDANCE_COLUMNS)
             _enforce_attendance_uniqueness(conn)
         _seed_default_season(conn, inspector)
         conn.commit()
