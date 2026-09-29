@@ -112,7 +112,7 @@
                 <div class="flex items-center gap-3 py-2">
                     <span class="text-sm text-ink-3 w-20 shrink-0 tabular-nums">{{ att.check_in_time.strftime('%b %d') }}</span>
                     <span class="flex-1 text-sm text-ink">{{ att.dance_class.name }}</span>
-                    <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-ok/10 text-ok"><span class="w-1.5 h-1.5 rounded-full bg-current opacity-70"></span>Present</span>
+                    {% if att.is_present %}<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-ok/10 text-ok"><span class="w-1.5 h-1.5 rounded-full bg-current opacity-70"></span>Present</span>{% else %}<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-danger/10 text-danger"><span class="w-1.5 h-1.5 rounded-full bg-current opacity-70"></span>Absent</span>{% endif %}
                 </div>
                 {% endfor %}
             </div>
