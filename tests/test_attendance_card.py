@@ -370,6 +370,14 @@ html = staff.get(f"/take-attendance/{cid}").get_data(as_text=True)
 record("A box renders the letter A", re.search(rf'id="box-{sid}-{CM.isoformat()}"[^>]*>\s*A\s*</div>', html) is not None)
 record("absent is not counted as a check-in today",
        staff.get("/api/attendance/today").get_json()["count"] == 0)
+r = _post("tardy")
+record("state=tardy writes a present row flagged tardy", r.get_json().get("state") == "tardy"
+       and [(a.is_present, a.is_tardy) for a in _rows()] == [(True, True)])
+record("card shows T", "tardy" in _card_box()[0])
+html = staff.get(f"/take-attendance/{cid}").get_data(as_text=True)
+record("T box renders the letter T", re.search(rf'id="box-{sid}-{CM.isoformat()}"[^>]*>\s*T\s*</div>', html) is not None)
+record("tardy still counts as a check-in today",
+       staff.get("/api/attendance/today").get_json()["count"] == 1)
 r = _post("none")
 record("state=none clears back to blank", r.get_json().get("state") == "none" and _rows() == [])
 record("a bad state is refused", _post("maybe").status_code == 400)

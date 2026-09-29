@@ -81,7 +81,7 @@
                         <thead><tr><th class="text-left text-xs text-ink-3 pb-2">Date</th><th class="text-left text-xs text-ink-3 pb-2">Class</th><th class="text-left text-xs text-ink-3 pb-2">P/A</th></tr></thead>
                         <tbody>
                         {% for att in recent_attendance %}
-                        <tr><td class="py-1 text-ink tabular-nums">{{ att.check_in_time.strftime('%b %d, %Y') }}</td><td class="py-1 text-ink">{{ att.dance_class.name }}</td><td class="py-1 font-bold {{ 'text-ok' if att.is_present else 'text-danger' }}">{{ 'P' if att.is_present else 'A' }}</td></tr>
+                        <tr><td class="py-1 text-ink tabular-nums">{{ att.check_in_time.strftime('%b %d, %Y') }}</td><td class="py-1 text-ink">{{ att.dance_class.name }}</td><td class="py-1 font-bold {{ 'text-danger' if not att.is_present else ('text-warn' if att.is_tardy else 'text-ok') }}">{{ 'A' if not att.is_present else ('T' if att.is_tardy else 'P') }}</td></tr>
                         {% endfor %}
                         </tbody>
                     </table>
