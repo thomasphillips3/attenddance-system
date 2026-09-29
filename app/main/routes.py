@@ -70,7 +70,8 @@ def dashboard():
     total_students = Student.query.filter_by(is_active=True).count()
     total_classes = live_class_query().count()
     todays_attendance = Attendance.query.filter(
-        func.date(Attendance.check_in_time) == today
+        func.date(Attendance.check_in_time) == today,
+        Attendance.is_present.is_(True),
     ).count()
     students_without_rfid = Student.query.filter_by(
         is_active=True, rfid_uid=None
@@ -351,8 +352,10 @@ def take_attendance_class(class_id):
         att_date = att.check_in_time.date()
         att_monday = att_date - timedelta(days=att_date.weekday())
         key = (att.student_id, att_monday.isoformat())
-        att_lookup[key] = True
-        if att_date == today:
+        # A week holding both kinds (legacy dupes) reads as present.
+        if att.is_present or att_lookup.get(key) is None:
+            att_lookup[key] = 'present' if att.is_present else 'absent'
+        if att_date == today and att.is_present:
             today_checked[att.student_id] = True
 
     students = []
@@ -362,7 +365,7 @@ def take_attendance_class(class_id):
             continue
         week_marks = {}
         for week_start in weeks:
-            week_marks[week_start.isoformat()] = (sid, week_start.isoformat()) in att_lookup
+            week_marks[week_start.isoformat()] = att_lookup.get((sid, week_start.isoformat()))
         students.append({
             'id': s.id,
             'full_name': s.full_name,

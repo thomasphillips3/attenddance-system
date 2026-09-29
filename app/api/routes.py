@@ -1117,7 +1117,42 @@ def toggle_attendance():
             func.date(Attendance.check_in_time) == target_date,
         ).all()
 
+    # Optional explicit state from the attendance card: 'present' (P),
+    # 'absent' (A) or 'none' (blank). Without it the endpoint keeps its
+    # original two-way toggle (row exists -> remove, else -> present).
+    state = data.get('state')
+    if state is not None and state not in ('present', 'absent', 'none'):
+        return jsonify({'error': "state must be 'present', 'absent' or 'none'"}), 400
+
     backfill = target_date != today
+    if state is not None:
+        for row in existing:
+            db.session.delete(row)
+        if state != 'none':
+            # Flush the deletes first so a same-day row swap cannot trip the
+            # unique (student, class, day) index.
+            db.session.flush()
+            if backfill:
+                stamp = datetime.combine(target_date, dance_class.start_time)
+                method = 'backfill'
+            else:
+                stamp = datetime.combine(target_date, datetime.now().time())
+                method = 'manual'
+            db.session.add(Attendance(
+                student_id=student_id, class_id=class_id, check_in_time=stamp,
+                check_in_method=method, is_present=(state == 'present')))
+        if backfill:
+            AuditLog.record(current_user.id, 'attendance.backfill',
+                            f'{student.full_name} / {dance_class.name} / '
+                            f'{target_date.isoformat()}: {state}')
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            return jsonify({'error': 'Attendance changed at the same time. Try again.'}), 409
+        return jsonify({'present': state == 'present', 'state': state,
+                        'date': target_date.isoformat()})
+
     if existing:
         for row in existing:
             db.session.delete(row)
@@ -1126,7 +1161,7 @@ def toggle_attendance():
                             f'{student.full_name} / {dance_class.name} / '
                             f'{target_date.isoformat()}: removed')
         db.session.commit()
-        return jsonify({'present': False, 'message': 'Attendance removed',
+        return jsonify({'present': False, 'state': 'none', 'message': 'Attendance removed',
                         'date': target_date.isoformat()})
 
     # A same-day tap records when it was taken. A backfill records the class's
@@ -1157,9 +1192,9 @@ def toggle_attendance():
         # index. The other request already marked them present — treat this as a
         # no-op success rather than a 500 or a duplicate row.
         db.session.rollback()
-        return jsonify({'present': True, 'message': 'Already marked present',
+        return jsonify({'present': True, 'state': 'present', 'message': 'Already marked present',
                         'date': target_date.isoformat()})
-    return jsonify({'present': True, 'message': 'Marked present',
+    return jsonify({'present': True, 'state': 'present', 'message': 'Marked present',
                     'date': target_date.isoformat()}), 201
 
 
@@ -1211,7 +1246,8 @@ def get_todays_attendance():
         return err
     today = date.today()
     class_id = request.args.get('class_id', type=int)
-    query = Attendance.query.filter(func.date(Attendance.check_in_time) == today)
+    query = Attendance.query.filter(func.date(Attendance.check_in_time) == today,
+                                    Attendance.is_present.is_(True))
     if class_id:
         query = query.filter_by(class_id=class_id)
     records = query.order_by(desc(Attendance.check_in_time)).all()
@@ -1243,8 +1279,18 @@ def manual_checkin():
         Attendance.class_id == class_id,
         func.date(Attendance.check_in_time) == today,
     ).first()
-    if existing:
+    if existing and existing.is_present:
         return jsonify({'error': 'Student already checked in today'}), 400
+    if existing:
+        # Marked absent earlier today, now they showed up: flip the row.
+        existing.is_present = True
+        existing.check_in_time = datetime.now()
+        existing.check_in_method = 'manual'
+        db.session.commit()
+        return jsonify({
+            'message': f'{student.full_name} checked in successfully',
+            'attendance': attendance_to_dict(existing),
+        }), 200
 
     try:
         att = Attendance(
@@ -1365,11 +1411,13 @@ def dashboard_stats():
     total_students = Student.query.filter_by(is_active=True).count()
     total_classes = live_class_query().count()
     todays_attendance = Attendance.query.filter(
-        func.date(Attendance.check_in_time) == today
+        func.date(Attendance.check_in_time) == today,
+        Attendance.is_present.is_(True),
     ).count()
     week_start = today - timedelta(days=today.weekday())
     week_attendance = Attendance.query.filter(
-        func.date(Attendance.check_in_time) >= week_start
+        func.date(Attendance.check_in_time) >= week_start,
+        Attendance.is_present.is_(True),
     ).count()
     recent_rfid_logs = RFIDLog.query.filter(
         # Local: scan_time is stored studio-local, so the cutoff must be too.

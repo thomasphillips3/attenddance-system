@@ -39,6 +39,12 @@
         border-color: #7c249f;
         color: #5c1976;
     }
+    /* Absent (A): red-tinted, distinct from a blank box and from present (P). */
+    .week-box.absent {
+        background: #fde8e8;
+        border-color: #b91c1c;
+        color: #991b1b;
+    }
     /* A past week you can fill in. Dashed and tan so it can't be mistaken for
        the solid purple current week - a teacher glancing at the card should
        know at once which box is "today" and which is "catching up". */
@@ -149,11 +155,11 @@
         <div class="text-center mb-4">
             {% if backfill_enabled %}
             <p class="text-ink-3 text-sm"><i class="fas fa-hand-pointer mr-1"></i>
-                Tap the <span class="font-bold text-primary-700">purple</span> box to mark present today.
+                Tap the <span class="font-bold text-primary-700">purple</span> box to mark today: once for P (present), twice for A (absent), three times to clear.
                 Tap a <span class="font-bold" style="color:#8a7a3a">dashed</span> box to fill in a past week.
                 Grey boxes are weeks still to come.</p>
             {% else %}
-            <p class="text-ink-3 text-sm"><i class="fas fa-hand-pointer mr-1"></i> Tap the highlighted box to mark present</p>
+            <p class="text-ink-3 text-sm"><i class="fas fa-hand-pointer mr-1"></i> Tap the highlighted box: once for P (present), twice for A (absent), three times to clear</p>
             {% endif %}
         </div>
 
@@ -180,15 +186,16 @@
                     <div class="flex flex-col items-center" title="Week of {{ col.monday.strftime('%m/%d') }} &middot; class on {{ col.meeting.strftime('%a %m/%d') }}">
                         <div class="week-label mb-1">{{ col.meeting.strftime('%m/%d') }}</div>
                         <div id="box-{{ student.id }}-{{ col.iso }}"
-                             class="week-box {{ col.kind }}-week {% if col.tappable %}tappable{% endif %} {% if col.kind == 'future' or (col.kind == 'past' and backfill_enabled and not col.in_season) %}inert{% endif %} {% if marked %}marked{% endif %}"
+                             class="week-box {{ col.kind }}-week {% if col.tappable %}tappable{% endif %} {% if col.kind == 'future' or (col.kind == 'past' and backfill_enabled and not col.in_season) %}inert{% endif %} {% if marked == 'present' %}marked{% elif marked == 'absent' %}absent{% endif %}"
                              {% if col.tappable %}
                              data-student-id="{{ student.id }}"
                              data-class-id="{{ dance_class.id }}"
                              data-date="{{ today.isoformat() if col.kind == 'current' else col.meeting.isoformat() }}"
                              data-week-start="{{ col.iso }}"
+                             data-state="{{ marked or 'none' }}"
                              onclick="toggleMark(this)"
                              {% endif %}>
-                            {% if marked %}&#x2717;{% endif %}
+                            {% if marked == 'present' %}P{% elif marked == 'absent' %}A{% endif %}
                         </div>
                     </div>
                     {% endfor %}
@@ -216,7 +223,11 @@ function updateCount() {
     document.getElementById('present-count').textContent = n;
 }
 
-async function toggleMark(el) {
+// Tap order: blank -> P -> A -> blank.
+const NEXT_STATE = {none: 'present', present: 'absent', absent: 'none'};
+const STATE_LETTER = {none: '', present: 'P', absent: 'A'};
+
+async function toggleMark(el, forcedState) {
     // One request per box at a time: a double-tap on a slow connection fires
     // two POSTs from the same DOM state, and out-of-order replies leave the
     // box disagreeing with the database.
@@ -232,7 +243,8 @@ async function toggleMark(el) {
             // week_start makes the toggle week-scoped on the server: any row in
             // the week means "present", and un-marking clears the whole week.
             body: JSON.stringify({ student_id: parseInt(sid), class_id: parseInt(cid),
-                                   date: el.dataset.date, week_start: el.dataset.weekStart })
+                                   date: el.dataset.date, week_start: el.dataset.weekStart,
+                                   state: forcedState || NEXT_STATE[el.dataset.state || 'none'] })
         });
         const data = await res.json();
         if (!res.ok) {
@@ -242,27 +254,28 @@ async function toggleMark(el) {
             toast(data.error || 'Could not save', false);
             return;
         }
-        if (data.present) {
-            el.classList.add('marked');
-            el.innerHTML = '\u2717';
-        } else {
-            el.classList.remove('marked');
-            el.innerHTML = '';
-        }
+        const state = data.state || (data.present ? 'present' : 'none');
+        el.dataset.state = state;
+        el.classList.toggle('marked', state === 'present');
+        el.classList.toggle('absent', state === 'absent');
+        el.textContent = STATE_LETTER[state];
         // The "Here" label and the present-today count are about TODAY. A
         // past-week tap must not flip them.
         if (isCurrent) {
             const status = document.getElementById('status-' + sid);
-            if (data.present) {
+            if (state === 'present') {
                 status.className = 'text-sm font-medium text-ok';
                 status.innerHTML = '<i class="fas fa-check-circle"></i> Here';
+            } else if (state === 'absent') {
+                status.className = 'text-sm font-medium text-danger';
+                status.innerHTML = '<i class="fas fa-circle-xmark"></i> Absent';
             } else {
                 status.className = 'text-sm font-medium text-ink-3';
                 status.innerHTML = '&mdash;';
             }
             updateCount();
         } else {
-            toast((data.present ? 'Marked present for ' : 'Removed ') + fmtDate(data.date), true);
+            toast(({present: 'Marked present for ', absent: 'Marked absent for ', none: 'Cleared '}[state]) + fmtDate(data.date), true);
         }
     } catch (err) {
         toast('Could not save. Check your connection.', false);
@@ -280,9 +293,10 @@ function fmtDate(iso) {
 
 async function markAllPresent() {
     // Today only, by construction: the selector picks the current week's boxes.
+    // Blank and absent boxes both become present.
     const boxes = document.querySelectorAll('.week-box.current-week:not(.marked)');
     for (const box of boxes) {
-        await toggleMark(box);
+        await toggleMark(box, 'present');
     }
 }
 

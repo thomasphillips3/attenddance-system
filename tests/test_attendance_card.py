@@ -342,6 +342,38 @@ record("today outside the season: today is still markable", r.status_code == 201
 staff.post("/api/attendance/toggle", json={"student_id": sid, "class_id": cid,
                                            "date": T.isoformat(), "week_start": CM.isoformat()})
 
+# ── P / A states: blank -> P -> A -> blank ─────────────────────────
+def _post(state):
+    return staff.post("/api/attendance/toggle", json={
+        "student_id": sid, "class_id": cid, "date": T.isoformat(),
+        "week_start": CM.isoformat(), "state": state})
+
+
+def _card_box():
+    return boxes(staff.get(f"/take-attendance/{cid}").get_data(as_text=True), sid)[CM.isoformat()]
+
+
+def _rows():
+    with app.app_context():
+        return Attendance.query.filter_by(student_id=sid, class_id=cid).all()
+
+
+r = _post("present")
+record("state=present writes a P row", r.get_json().get("state") == "present"
+       and [a.is_present for a in _rows()] == [True])
+record("card shows P", "marked" in _card_box()[0])
+r = _post("absent")
+record("state=absent swaps the row to an A row", r.get_json().get("state") == "absent"
+       and [a.is_present for a in _rows()] == [False])
+record("card shows A, not marked", "absent" in _card_box()[0] and "marked" not in _card_box()[0])
+html = staff.get(f"/take-attendance/{cid}").get_data(as_text=True)
+record("A box renders the letter A", re.search(rf'id="box-{sid}-{CM.isoformat()}"[^>]*>\s*A\s*</div>', html) is not None)
+record("absent is not counted as a check-in today",
+       staff.get("/api/attendance/today").get_json()["count"] == 0)
+r = _post("none")
+record("state=none clears back to blank", r.get_json().get("state") == "none" and _rows() == [])
+record("a bad state is refused", _post("maybe").status_code == 400)
+
 # ── B1. The defensive cap ───────────────────────────────────────────
 with app.app_context():
     s = Season.query.get(season_id)

@@ -53,7 +53,7 @@
         <ul class="space-y-3">
             {% for a in recent_attendance %}
             <li class="flex items-start gap-3">
-                <span class="w-8 h-8 rounded-full bg-ok/10 text-ok flex items-center justify-center shrink-0 mt-0.5"><i class="fas fa-check text-sm"></i></span>
+                <span class="w-8 h-8 rounded-full {{ 'bg-ok/10 text-ok' if a.is_present else 'bg-danger/10 text-danger' }} flex items-center justify-center shrink-0 mt-0.5"><i class="fas fa-{{ 'check' if a.is_present else 'xmark' }} text-sm"></i></span>
                 <div class="flex-1 min-w-0">
                     <p class="text-sm text-ink-2"><span class="font-bold text-ink">{{ a.student.full_name }}</span> → <span class="font-bold text-ink">{{ a.dance_class.name }}</span></p>
                     <p class="text-xs text-ink-3"><i class="fas fa-{{ 'id-card' if a.check_in_method == 'rfid' else 'hand' }} mr-1"></i>{{ a.check_in_method.title() }}</p>
