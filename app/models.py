@@ -396,6 +396,9 @@ class Attendance(db.Model):
     # Late but here (T on the card). Only meaningful when is_present is True,
     # so every "who showed up" count keeps working off is_present alone.
     is_tardy = db.Column(db.Boolean, default=False, nullable=False)
+    # Excused absence (E on the card). A flavor of absent: is_present stays False,
+    # is_excused marks the E, so every "who showed up" count skips it.
+    is_excused = db.Column(db.Boolean, default=False, nullable=False)
     
     # Lookup index for the per-(student, class, day) dedup query. NOTE: this is a
     # plain index, NOT a uniqueness guarantee — duplicate check-ins are prevented

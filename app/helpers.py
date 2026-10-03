@@ -522,6 +522,7 @@ def attendance_to_dict(attendance) -> dict:
         'notes': attendance.notes,
         'is_present': attendance.is_present,
         'is_tardy': bool(attendance.is_tardy),
+        'is_excused': bool(attendance.is_excused),
         'attendance_date': attendance.attendance_date.isoformat(),
         'duration': str(attendance.duration) if attendance.duration else None,
     }

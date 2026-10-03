@@ -378,6 +378,17 @@ html = staff.get(f"/take-attendance/{cid}").get_data(as_text=True)
 record("T box renders the letter T", re.search(rf'id="box-{sid}-{CM.isoformat()}"[^>]*>\s*T\s*</div>', html) is not None)
 record("tardy still counts as a check-in today",
        staff.get("/api/attendance/today").get_json()["count"] == 1)
+r = _post("excused")
+record("state=excused writes an absent row flagged excused", r.get_json().get("state") == "excused"
+       and [(a.is_present, a.is_tardy, a.is_excused) for a in _rows()] == [(False, False, True)])
+record("card shows E, not marked", "excused" in _card_box()[0] and "marked" not in _card_box()[0])
+html = staff.get(f"/take-attendance/{cid}").get_data(as_text=True)
+record("E box renders the letter E", re.search(rf'id="box-{sid}-{CM.isoformat()}"[^>]*>\s*E\s*</div>', html) is not None)
+record("excused is not counted as a check-in today",
+       staff.get("/api/attendance/today").get_json()["count"] == 0)
+r = _post("absent")
+record("excused -> absent drops the excused flag", [(a.is_present, a.is_excused) for a in _rows()] == [(False, False)])
+_post("excused")
 r = _post("none")
 record("state=none clears back to blank", r.get_json().get("state") == "none" and _rows() == [])
 record("a bad state is refused", _post("maybe").status_code == 400)

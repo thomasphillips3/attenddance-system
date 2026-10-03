@@ -62,6 +62,7 @@ FAMILY_COLUMNS = [
 # Tardy is a flavor of present: is_present stays True, is_tardy marks the T.
 ATTENDANCE_COLUMNS = [
     ('is_tardy', 'BOOLEAN DEFAULT 0 NOT NULL'),
+    ('is_excused', 'BOOLEAN DEFAULT 0 NOT NULL'),
 ]
 
 REGISTRATION_COLUMNS = [
