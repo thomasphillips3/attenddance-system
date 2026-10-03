@@ -391,6 +391,25 @@ TRAILING_WEEKS = 8      # the pre-season behaviour: 7 prior weeks + the current 
 MAX_CARD_WEEKS = 60     # a Sep-Jun dance year is ~41; past this the dates are a typo
 
 
+ATTENDANCE_STATE_RANK = {'absent': 0, 'excused': 1, 'tardy': 2, 'present': 3}
+
+
+def attendance_state(rows) -> str:
+    """The card state ('none', 'absent', 'excused', 'tardy' or 'present') for the
+    attendance rows in one box. A box holding several rows (legacy dupes) shows
+    the strongest, the same order the card renders: present beats tardy beats
+    excused beats absent."""
+    best = None
+    for row in rows:
+        if row.is_present:
+            st = 'tardy' if row.is_tardy else 'present'
+        else:
+            st = 'excused' if row.is_excused else 'absent'
+        if best is None or ATTENDANCE_STATE_RANK[st] > ATTENDANCE_STATE_RANK[best]:
+            best = st
+    return best or 'none'
+
+
 def attendance_card_weeks(season, today=None):
     """Which weeks the attendance card shows, as Monday dates in order.
 
