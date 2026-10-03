@@ -51,6 +51,12 @@
         border-color: #b91c1c;
         color: #991b1b;
     }
+    /* Excused absence (E): blue, so it reads as neither present nor a plain A. */
+    .week-box.excused {
+        background: #e0f2fe;
+        border-color: #0369a1;
+        color: #075985;
+    }
     /* A past week you can fill in. Dashed and tan so it can't be mistaken for
        the solid purple current week - a teacher glancing at the card should
        know at once which box is "today" and which is "catching up". */
@@ -161,11 +167,11 @@
         <div class="text-center mb-4">
             {% if backfill_enabled %}
             <p class="text-ink-3 text-sm"><i class="fas fa-hand-pointer mr-1"></i>
-                Tap the <span class="font-bold text-primary-700">purple</span> box to mark today: once for P (present), twice for A (absent), three times for T (tardy), four times to clear.
+                Tap the <span class="font-bold text-primary-700">purple</span> box to mark today: once for P (present), twice for A (absent), three times for T (tardy), four times for E (excused absence), five times to clear.
                 Tap a <span class="font-bold" style="color:#8a7a3a">dashed</span> box to fill in a past week.
                 Grey boxes are weeks still to come.</p>
             {% else %}
-            <p class="text-ink-3 text-sm"><i class="fas fa-hand-pointer mr-1"></i> Tap the highlighted box: once for P (present), twice for A (absent), three times for T (tardy), four times to clear</p>
+            <p class="text-ink-3 text-sm"><i class="fas fa-hand-pointer mr-1"></i> Tap the highlighted box: once for P (present), twice for A (absent), three times for T (tardy), four times for E (excused absence), five times to clear</p>
             {% endif %}
         </div>
 
@@ -192,7 +198,7 @@
                     <div class="flex flex-col items-center" title="Week of {{ col.monday.strftime('%m/%d') }} &middot; class on {{ col.meeting.strftime('%a %m/%d') }}">
                         <div class="week-label mb-1">{{ col.meeting.strftime('%m/%d') }}</div>
                         <div id="box-{{ student.id }}-{{ col.iso }}"
-                             class="week-box {{ col.kind }}-week {% if col.tappable %}tappable{% endif %} {% if col.kind == 'future' or (col.kind == 'past' and backfill_enabled and not col.in_season) %}inert{% endif %} {% if marked == 'present' %}marked{% elif marked == 'absent' %}absent{% elif marked == 'tardy' %}tardy{% endif %}"
+                             class="week-box {{ col.kind }}-week {% if col.tappable %}tappable{% endif %} {% if col.kind == 'future' or (col.kind == 'past' and backfill_enabled and not col.in_season) %}inert{% endif %} {% if marked == 'present' %}marked{% elif marked == 'absent' %}absent{% elif marked == 'tardy' %}tardy{% elif marked == 'excused' %}excused{% endif %}"
                              {% if col.tappable %}
                              data-student-id="{{ student.id }}"
                              data-class-id="{{ dance_class.id }}"
@@ -201,7 +207,7 @@
                              data-state="{{ marked or 'none' }}"
                              onclick="toggleMark(this)"
                              {% endif %}>
-                            {% if marked == 'present' %}P{% elif marked == 'absent' %}A{% elif marked == 'tardy' %}T{% endif %}
+                            {% if marked == 'present' %}P{% elif marked == 'absent' %}A{% elif marked == 'tardy' %}T{% elif marked == 'excused' %}E{% endif %}
                         </div>
                     </div>
                     {% endfor %}
@@ -229,9 +235,41 @@ function updateCount() {
     document.getElementById('present-count').textContent = n;
 }
 
-// Tap order: blank -> P -> A -> T -> blank.
-const NEXT_STATE = {none: 'present', present: 'absent', absent: 'tardy', tardy: 'none'};
-const STATE_LETTER = {none: '', present: 'P', absent: 'A', tardy: 'T'};
+// Tap order: blank -> P -> A -> T -> E -> blank.
+const NEXT_STATE = {none: 'present', present: 'absent', absent: 'tardy', tardy: 'excused', excused: 'none'};
+const STATE_LETTER = {none: '', present: 'P', absent: 'A', tardy: 'T', excused: 'E'};
+
+// Paint one box (and, for this week's box, the row label and the count) from a
+// state. Shared by a successful tap and by a 409 that hands back the latest state.
+function applyState(el, state, isCurrent, sid) {
+    el.dataset.state = state;
+    el.classList.toggle('marked', state === 'present');
+    el.classList.toggle('absent', state === 'absent');
+    el.classList.toggle('tardy', state === 'tardy');
+    el.classList.toggle('excused', state === 'excused');
+    el.textContent = STATE_LETTER[state];
+    // The "Here" label and the present-today count are about TODAY. A
+    // past-week tap must not flip them.
+    if (!isCurrent) return;
+    const status = document.getElementById('status-' + sid);
+    if (state === 'present') {
+        status.className = 'text-sm font-medium text-ok';
+        status.innerHTML = '<i class="fas fa-check-circle"></i> Here';
+    } else if (state === 'tardy') {
+        status.className = 'text-sm font-medium text-warn';
+        status.innerHTML = '<i class="fas fa-clock"></i> Late';
+    } else if (state === 'absent') {
+        status.className = 'text-sm font-medium text-danger';
+        status.innerHTML = '<i class="fas fa-circle-xmark"></i> Absent';
+    } else if (state === 'excused') {
+        status.className = 'text-sm font-medium text-info';
+        status.innerHTML = '<i class="fas fa-file-circle-check"></i> Excused';
+    } else {
+        status.className = 'text-sm font-medium text-ink-3';
+        status.innerHTML = '&mdash;';
+    }
+    updateCount();
+}
 
 async function toggleMark(el, forcedState) {
     // One request per box at a time: a double-tap on a slow connection fires
@@ -242,17 +280,28 @@ async function toggleMark(el, forcedState) {
     const sid = el.dataset.studentId;
     const cid = el.dataset.classId;
     const isCurrent = el.classList.contains('current-week');
+    const expected = el.dataset.state || 'none';
     try {
         const res = await fetch('/api/attendance/toggle', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             // week_start makes the toggle week-scoped on the server: any row in
             // the week means "present", and un-marking clears the whole week.
+            // expected_state is what this box showed when tapped; the server
+            // refuses (409) if the database has moved on, so a check-in that
+            // landed since the page loaded is never overwritten by a stale tap.
             body: JSON.stringify({ student_id: parseInt(sid), class_id: parseInt(cid),
                                    date: el.dataset.date, week_start: el.dataset.weekStart,
-                                   state: forcedState || NEXT_STATE[el.dataset.state || 'none'] })
+                                   state: forcedState || NEXT_STATE[expected],
+                                   expected_state: expected })
         });
         const data = await res.json();
+        if (res.status === 409 && data.state) {
+            // Changed elsewhere: show the latest and let the teacher tap again.
+            applyState(el, data.state, isCurrent, sid);
+            toast(data.error, false);
+            return;
+        }
         if (!res.ok) {
             // Never touch the box on an error: the old code fell into the
             // "unmark" branch on any error JSON and visually cleared a box
@@ -261,31 +310,9 @@ async function toggleMark(el, forcedState) {
             return;
         }
         const state = data.state || (data.present ? 'present' : 'none');
-        el.dataset.state = state;
-        el.classList.toggle('marked', state === 'present');
-        el.classList.toggle('absent', state === 'absent');
-        el.classList.toggle('tardy', state === 'tardy');
-        el.textContent = STATE_LETTER[state];
-        // The "Here" label and the present-today count are about TODAY. A
-        // past-week tap must not flip them.
-        if (isCurrent) {
-            const status = document.getElementById('status-' + sid);
-            if (state === 'present') {
-                status.className = 'text-sm font-medium text-ok';
-                status.innerHTML = '<i class="fas fa-check-circle"></i> Here';
-            } else if (state === 'tardy') {
-                status.className = 'text-sm font-medium text-warn';
-                status.innerHTML = '<i class="fas fa-clock"></i> Late';
-            } else if (state === 'absent') {
-                status.className = 'text-sm font-medium text-danger';
-                status.innerHTML = '<i class="fas fa-circle-xmark"></i> Absent';
-            } else {
-                status.className = 'text-sm font-medium text-ink-3';
-                status.innerHTML = '&mdash;';
-            }
-            updateCount();
-        } else {
-            toast(({present: 'Marked present for ', absent: 'Marked absent for ', tardy: 'Marked tardy for ', none: 'Cleared '}[state]) + fmtDate(data.date), true);
+        applyState(el, state, isCurrent, sid);
+        if (!isCurrent) {
+            toast(({present: 'Marked present for ', absent: 'Marked absent for ', tardy: 'Marked tardy for ', excused: 'Marked excused for ', none: 'Cleared '}[state]) + fmtDate(data.date), true);
         }
     } catch (err) {
         toast('Could not save. Check your connection.', false);
@@ -303,8 +330,9 @@ function fmtDate(iso) {
 
 async function markAllPresent() {
     // Today only, by construction: the selector picks the current week's boxes.
-    // Blank and absent boxes become present; tardy stays tardy.
-    const boxes = document.querySelectorAll('.week-box.current-week:not(.marked):not(.tardy)');
+    // Blank and absent boxes become present; tardy stays tardy and an excused
+    // absence stays excused (it was a deliberate call, not a missed tap).
+    const boxes = document.querySelectorAll('.week-box.current-week:not(.marked):not(.tardy):not(.excused)');
     for (const box of boxes) {
         await toggleMark(box, 'present');
     }

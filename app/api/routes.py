@@ -21,6 +21,7 @@ from app.helpers import (
     active_season,
     allocate_family_payment,
     apply_student_fields,
+    attendance_state,
     attendance_to_dict,
     build_aging,
     build_ledger,
@@ -1118,11 +1119,24 @@ def toggle_attendance():
         ).all()
 
     # Optional explicit state from the attendance card: 'present' (P),
-    # 'absent' (A), 'tardy' (T, late but present) or 'none' (blank). Without it the endpoint keeps its
+    # 'absent' (A), 'tardy' (T, late but present), 'excused' (E, excused
+    # absence) or 'none' (blank). Without it the endpoint keeps its
     # original two-way toggle (row exists -> remove, else -> present).
     state = data.get('state')
-    if state is not None and state not in ('present', 'absent', 'tardy', 'none'):
-        return jsonify({'error': "state must be 'present', 'absent', 'tardy' or 'none'"}), 400
+    if state is not None and state not in ('present', 'absent', 'tardy', 'excused', 'none'):
+        return jsonify({'error': "state must be 'present', 'absent', 'tardy', 'excused' or 'none'"}), 400
+
+    # The card says what it believed the box held when the teacher tapped. An
+    # RFID or manual check-in can land after the page loaded, and a blind swap
+    # would delete that real check-in for an A or E. On a mismatch write nothing
+    # and hand back the current state so the card can refresh the box.
+    expected = data.get('expected_state')
+    if state is not None and expected is not None:
+        current = attendance_state(existing)
+        if expected != current:
+            return jsonify({'error': 'This box changed since you loaded the page. Showing the latest.',
+                            'state': current, 'present': current in ('present', 'tardy'),
+                            'date': target_date.isoformat()}), 409
 
     backfill = target_date != today
     if state is not None:
@@ -1141,7 +1155,7 @@ def toggle_attendance():
             db.session.add(Attendance(
                 student_id=student_id, class_id=class_id, check_in_time=stamp,
                 check_in_method=method, is_present=(state in ('present', 'tardy')),
-                is_tardy=(state == 'tardy')))
+                is_tardy=(state == 'tardy'), is_excused=(state == 'excused')))
         if backfill:
             AuditLog.record(current_user.id, 'attendance.backfill',
                             f'{student.full_name} / {dance_class.name} / '
@@ -1285,6 +1299,8 @@ def manual_checkin():
     if existing:
         # Marked absent earlier today, now they showed up: flip the row.
         existing.is_present = True
+        existing.is_tardy = False
+        existing.is_excused = False
         existing.check_in_time = datetime.now()
         existing.check_in_method = 'manual'
         db.session.commit()

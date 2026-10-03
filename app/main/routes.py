@@ -353,9 +353,10 @@ def take_attendance_class(class_id):
         att_monday = att_date - timedelta(days=att_date.weekday())
         key = (att.student_id, att_monday.isoformat())
         # A week holding several rows (legacy dupes) shows the strongest:
-        # present beats tardy beats absent.
-        st = ('tardy' if att.is_tardy else 'present') if att.is_present else 'absent'
-        rank = {'absent': 0, 'tardy': 1, 'present': 2}
+        # present beats tardy beats excused beats absent.
+        st = ('tardy' if att.is_tardy else 'present') if att.is_present else (
+            'excused' if att.is_excused else 'absent')
+        rank = {'absent': 0, 'excused': 1, 'tardy': 2, 'present': 3}
         if key not in att_lookup or rank[st] > rank[att_lookup[key]]:
             att_lookup[key] = st
         if att_date == today and att.is_present:

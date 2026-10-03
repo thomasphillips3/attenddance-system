@@ -378,9 +378,51 @@ html = staff.get(f"/take-attendance/{cid}").get_data(as_text=True)
 record("T box renders the letter T", re.search(rf'id="box-{sid}-{CM.isoformat()}"[^>]*>\s*T\s*</div>', html) is not None)
 record("tardy still counts as a check-in today",
        staff.get("/api/attendance/today").get_json()["count"] == 1)
+r = _post("excused")
+record("state=excused writes an absent row flagged excused", r.get_json().get("state") == "excused"
+       and [(a.is_present, a.is_tardy, a.is_excused) for a in _rows()] == [(False, False, True)])
+record("card shows E, not marked", "excused" in _card_box()[0] and "marked" not in _card_box()[0])
+html = staff.get(f"/take-attendance/{cid}").get_data(as_text=True)
+record("E box renders the letter E", re.search(rf'id="box-{sid}-{CM.isoformat()}"[^>]*>\s*E\s*</div>', html) is not None)
+record("excused is not counted as a check-in today",
+       staff.get("/api/attendance/today").get_json()["count"] == 0)
+r = _post("absent")
+record("excused -> absent drops the excused flag", [(a.is_present, a.is_excused) for a in _rows()] == [(False, False)])
+_post("excused")
 r = _post("none")
 record("state=none clears back to blank", r.get_json().get("state") == "none" and _rows() == [])
 record("a bad state is refused", _post("maybe").status_code == 400)
+
+# ── Stale taps and the manual check-in conversion ───────────────────
+def _post_expected(state, expected):
+    return staff.post("/api/attendance/toggle", json={
+        "student_id": sid, "class_id": cid, "date": T.isoformat(),
+        "week_start": CM.isoformat(), "state": state, "expected_state": expected})
+
+
+r = _post_expected("present", "none")
+record("expected_state matching the box saves", r.status_code == 200 and r.get_json()["state"] == "present")
+# A check-in lands elsewhere after the card loaded: the box is P, the card still thinks blank.
+r = _post_expected("absent", "none")
+record("a stale tap is refused with 409", r.status_code == 409)
+record("and reports the latest state", r.get_json().get("state") == "present")
+record("and leaves the real check-in untouched",
+       [(a.is_present, a.is_excused) for a in _rows()] == [(True, False)])
+r = _post_expected("excused", "tardy")
+record("a stale tap to E is refused too", r.status_code == 409
+       and [(a.is_present, a.is_excused) for a in _rows()] == [(True, False)])
+_post("none")
+record("without expected_state the old contract stands", _post("absent").status_code == 200)
+_post("none")
+
+# tardy -> absent -> manual check-in must come back plain present, not still tardy
+_post("tardy")
+_post("absent")
+r = staff.post("/api/attendance/checkin", json={"student_id": sid, "class_id": cid})
+record("manual check-in over an A row succeeds", r.status_code == 200)
+record("and clears the stale tardy and excused flags",
+       [(a.is_present, a.is_tardy, a.is_excused) for a in _rows()] == [(True, False, False)])
+_post("none")
 
 # ── B1. The defensive cap ───────────────────────────────────────────
 with app.app_context():
