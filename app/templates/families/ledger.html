@@ -133,7 +133,15 @@ function fillCreditSelects() {
     document.getElementById('cm-to').innerHTML = opts;
     if (familyStudents.length > 1) document.getElementById('cm-to').selectedIndex = 1;
 }
+// One id per open of the modal, reused on every submit until one succeeds, so a
+// double click or a retry after a dropped response cannot post the transfer twice.
+let creditRequestId = null;
+function newRequestId() {
+    return (window.crypto && crypto.randomUUID) ? crypto.randomUUID()
+        : 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+}
 function openCreditMove(sug) {
+    creditRequestId = newRequestId();
     document.getElementById('credit-form').reset();
     fillCreditSelects();
     if (sug) {
@@ -155,6 +163,7 @@ async function saveCreditMove(e) {
         fund: document.getElementById('cm-fund').value,
         amount: document.getElementById('cm-amount').value,
         note: document.getElementById('cm-note').value,
+        request_id: creditRequestId,
     };
     if (body.from_student_id === body.to_student_id) { toast('Pick two different students', false); return; }
     const nm = id => (familyStudents.find(s => s.id === id) || {}).full_name;

@@ -250,6 +250,56 @@ def test_credit_transfer():
         record("a teacher cannot move credit", r.status_code in (401, 403), str(r.status_code))
 
 
+def test_credit_transfer_atomic():
+    """Retries and overlapping requests must never overdraw the giver's credit."""
+    import threading
+    fam, (a, b) = new_family("Race", ["Ann", "Bo"])
+    post_txn(a, "charge", 49)
+    post_txn(b, "payment", 49)
+    url = f"/api/families/{fam}/credit-transfer"
+    with app.test_client() as c:
+        login_admin(c)
+        first = c.post(url, json={"from_student_id": b, "to_student_id": a, "amount": 49,
+                                  "request_id": "retry-0001-abcd"})
+        record("transfer with a request_id -> 201 and the reference carries it",
+               first.status_code == 201 and first.get_json()["reference"] == "sib-retry-0001-abcd", str(first.get_json()))
+        again = c.post(url, json={"from_student_id": b, "to_student_id": a, "amount": 49,
+                                  "request_id": "retry-0001-abcd"})
+        record("the same request_id again is a no-op 200 marked duplicate",
+               again.status_code == 200 and again.get_json().get("duplicate") is True, str(again.get_json()))
+        with app.app_context():
+            n = Transaction.query.filter(Transaction.description.like("%[sib-retry-0001-abcd]%")).count()
+            record("a retry posted no extra rows", n == 2, str(n))
+        diff = c.post(url, json={"from_student_id": b, "to_student_id": a, "amount": 10,
+                                 "request_id": "retry-0001-abcd"})
+        record("reusing a request_id for a different transfer -> 409", diff.status_code == 409, str(diff.get_json()))
+        bad = c.post(url, json={"from_student_id": b, "to_student_id": a, "amount": 1, "request_id": "x"})
+        record("a malformed request_id -> 400", bad.status_code == 400)
+
+    # Fresh 49 credit on Bo, then 6 overlapping transfers of 49 with distinct ids.
+    post_txn(b, "payment", 49)
+    codes = []
+
+    def fire(i):
+        with app.test_client() as cl:
+            login_admin(cl)
+            r = cl.post(url, json={"from_student_id": b, "to_student_id": a, "amount": 49,
+                                   "request_id": f"race-{i:04d}-wxyz"})
+            codes.append(r.status_code)
+
+    threads = [threading.Thread(target=fire, args=(i,)) for i in range(6)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    with app.app_context():
+        bal_b = calc_balance(b)["studio"]["balance"]
+        bal_a = calc_balance(a)["studio"]["balance"]
+    record("overlapping transfers: exactly one wins", sorted(codes).count(201) == 1, str(codes))
+    record("the giver is never left owing", bal_b >= 0.0, str(bal_b))
+    record("the receiver gets the credit once, not once per request", bal_a == -49.0, str(bal_a))
+
+
 def main():
     with app.app_context():
         db.create_all()
@@ -259,7 +309,7 @@ def main():
         db.session.add(admin)
         db.session.commit()
     for t in (test_grouping, test_manual_reminders, test_single_reminder_button,
-              test_auto_reminders, test_credit_transfer):
+              test_auto_reminders, test_credit_transfer, test_credit_transfer_atomic):
         try:
             t()
         except Exception as e:  # a crash is a failure, not a skipped test

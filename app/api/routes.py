@@ -2,6 +2,7 @@
 
 import logging
 import os
+import re
 import secrets
 import tempfile
 import threading
@@ -2037,6 +2038,10 @@ def fund_transfer(student_id):
     }), 201
 
 
+# Serializes sibling credit transfers (see family_credit_transfer).
+_CREDIT_TRANSFER_LOCK = threading.Lock()
+
+
 @bp.route('/families/<int:family_id>/credit-transfer', methods=['POST'])
 @login_required
 def family_credit_transfer(family_id):
@@ -2074,34 +2079,69 @@ def family_credit_transfer(family_id):
     amount, err = _valid_amount(data.get('amount'))
     if err:
         return err
-    available = round(-calc_balance(giver.id)[fund]['balance'], 2)
-    if amount > available:
-        return jsonify({'error': f'{giver.full_name} only has ${max(available, 0):.2f} of '
-                                 f'{FUND_LABELS[fund]} credit to move'}), 400
     note = _clean_str(data.get('note'), 300)
     suffix = f' - {note}' if note else ''
-    ref = 'sib-' + secrets.token_hex(4)
-    today = date.today()
-    out_row = Transaction(
-        student_id=giver.id, type='charge', amount=amount, category='transfer',
-        fund=fund, payment_method='n/a',
-        description=f'Credit moved to {taker.full_name} [{ref}]{suffix}',
-        transaction_date=today, created_by=current_user.id,
-    )
-    in_row = Transaction(
-        student_id=taker.id, type='payment', amount=amount, category='transfer',
-        fund=fund, payment_method='transfer',
-        description=f'Credit from {giver.full_name} [{ref}]{suffix}',
-        transaction_date=today, created_by=current_user.id,
-    )
-    db.session.add_all([out_row, in_row])
-    AuditLog.record(current_user.id, 'family.credit_transfer',
-                    f'{ref}: ${amount:.2f} {fund} {giver.full_name} -> {taker.full_name}{suffix}')
-    db.session.commit()
-    return jsonify({
-        'reference': ref,
-        'transactions': [transaction_to_dict(out_row), transaction_to_dict(in_row)],
-    }), 201
+    # A client-supplied request_id makes a retry (double click, dropped response,
+    # resubmitted form) safe: the same id never posts twice.
+    request_id = data.get('request_id')
+    if request_id is not None:
+        if not isinstance(request_id, str) or not re.fullmatch(r'[A-Za-z0-9-]{8,40}', request_id):
+            return jsonify({'error': 'request_id must be 8-40 letters, digits or hyphens'}), 400
+        ref = 'sib-' + request_id
+    else:
+        ref = 'sib-' + secrets.token_hex(4)
+
+    # The check ("does the giver hold this much credit?") and the two inserts
+    # must not interleave with another transfer for the same giver, or two
+    # overlapping requests both pass the check and overdraw the credit. The app
+    # runs one gunicorn worker (see Dockerfile), so a process lock serializes
+    # them; the re-check after the inserts below is the backstop if that ever
+    # changes, because SQLite serializes the writes themselves.
+    with _CREDIT_TRANSFER_LOCK:
+        prior = Transaction.query.filter(
+            Transaction.category == 'transfer',
+            Transaction.description.like(f'%[{ref}]%')).all()
+        if prior:
+            same = (len(prior) == 2
+                    and {t.student_id for t in prior} == {giver.id, taker.id}
+                    and all(float(t.amount) == amount and t.fund == fund for t in prior))
+            if not same:
+                return jsonify({'error': 'That request_id was already used for a different transfer'}), 409
+            return jsonify({'reference': ref, 'duplicate': True,
+                            'transactions': [transaction_to_dict(t) for t in prior]}), 200
+
+        available = round(-calc_balance(giver.id)[fund]['balance'], 2)
+        if amount > available:
+            return jsonify({'error': f'{giver.full_name} only has ${max(available, 0):.2f} of '
+                                     f'{FUND_LABELS[fund]} credit to move'}), 400
+        today = date.today()
+        out_row = Transaction(
+            student_id=giver.id, type='charge', amount=amount, category='transfer',
+            fund=fund, payment_method='n/a',
+            description=f'Credit moved to {taker.full_name} [{ref}]{suffix}',
+            transaction_date=today, created_by=current_user.id,
+        )
+        in_row = Transaction(
+            student_id=taker.id, type='payment', amount=amount, category='transfer',
+            fund=fund, payment_method='transfer',
+            description=f'Credit from {giver.full_name} [{ref}]{suffix}',
+            transaction_date=today, created_by=current_user.id,
+        )
+        db.session.add_all([out_row, in_row])
+        db.session.flush()
+        if calc_balance(giver.id)[fund]['balance'] > 0.005:
+            # Another writer got in first and used the credit: undo, post nothing.
+            db.session.rollback()
+            return jsonify({'error': f'{giver.full_name} no longer has that much '
+                                     f'{FUND_LABELS[fund]} credit. Reload and try again.'}), 409
+        AuditLog.record(current_user.id, 'family.credit_transfer',
+                        f'{ref}: ${amount:.2f} {fund} {giver.full_name} -> {taker.full_name}{suffix}')
+        db.session.commit()
+        result = {
+            'reference': ref,
+            'transactions': [transaction_to_dict(out_row), transaction_to_dict(in_row)],
+        }
+    return jsonify(result), 201
 
 
 @bp.route('/transactions/bulk-charge', methods=['POST'])
