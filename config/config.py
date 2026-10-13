@@ -23,6 +23,12 @@ class Config:
         'pool_recycle': 300,
     }
     
+    # Where parents sign in. Balance reminders put this link in the email and
+    # text, and they are sent from background threads with no request to build
+    # a URL from, so the public address lives in config. Override per
+    # environment with the PORTAL_URL env var (no trailing slash needed).
+    PORTAL_URL = os.environ.get('PORTAL_URL') or 'https://attenddance.fly.dev'
+
     # Session settings
     PERMANENT_SESSION_LIFETIME = timedelta(hours=8)
     SESSION_COOKIE_SECURE = False  # Set to True in production with HTTPS

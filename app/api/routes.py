@@ -4068,16 +4068,30 @@ def _owing_lines(fund_balances, threshold=0.0):
             for fund in FUNDS if fund_balances[fund]['balance'] > threshold]
 
 
+def _portal_link():
+    """Absolute URL of the parent sign-in page, for reminder messages.
+
+    Reminders go out from background threads (the manual bulk send and the
+    monthly auto-run) where there is no request to build an external URL from,
+    so the base comes from config.PORTAL_URL and the path from the route itself,
+    which keeps it right if the login route ever moves."""
+    base = current_app.config['PORTAL_URL'].rstrip('/')
+    with current_app.test_request_context(base_url=base):
+        return url_for('auth.login', _external=True)
+
+
 def _reminder_body(name, fund_balances, threshold=0.0):
-    """Reminder email body listing each fund the family owes in, separately.
-    `fund_balances` is the per-fund dict from calc_balance; funds at or under
-    `threshold` are left out so a paid-up fund is not mentioned."""
+    """Reminder email body listing each fund the family owes in, separately,
+    with the link parents use to pay. `fund_balances` is the per-fund dict from
+    calc_balance; funds at or under `threshold` are left out so a paid-up fund
+    is not mentioned."""
     lines = _owing_lines(fund_balances, threshold)
     return (
         f"Hi,\n\n"
         f"This is a friendly reminder that {name} has an outstanding balance:\n\n"
         + "\n".join(f"  {line}" for line in lines) + "\n\n"
-        f"You can pay any time through the parent portal. Thank you!\n\n"
+        f"You can pay any time through the parent portal:\n{_portal_link()}\n\n"
+        f"Thank you!\n\n"
         f"{STUDIO_NAME}"
     )
 
