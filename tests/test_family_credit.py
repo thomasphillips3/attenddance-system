@@ -182,6 +182,44 @@ def test_auto_reminders():
     record("and email once, on the net, when the household owes", len(got) == 1 and "$15.00" in got[0][2], str(got))
 
 
+def test_portal_link():
+    """Every reminder carries the parent sign-in link, even from a background
+    thread with no request (the monthly auto-run and the bulk send)."""
+    fam, (a, b) = new_family("Link", ["Ann", "Bo"], email="link@x.com")
+    post_txn(a, "charge", 25)
+    want = "https://attenddance.fly.dev/auth/login"
+    from app import _send_balance_reminders
+    with Capture() as cap:
+        api_routes._send_reminders_to(app, True, False)   # no request context here
+    got = [m for m in cap.sent if "link@x.com" in m[0]]
+    record("bulk reminder includes the portal link", len(got) == 1 and want in got[0][2], str(got))
+    record("the link sits on its own line", got and f"\n{want}\n" in got[0][2], got[0][2] if got else "")
+    with Capture() as cap:
+        _send_balance_reminders(app)
+    got = [m for m in cap.sent if "link@x.com" in m[0]]
+    record("monthly auto-reminder includes the portal link", len(got) == 1 and want in got[0][2], str(got))
+    with Capture() as cap, app.test_client() as c:
+        login_admin(c)
+        r = c.post(f"/api/students/{a}/send-reminder")
+        record("single-student reminder includes the portal link",
+               r.status_code == 200 and cap.sent and want in cap.sent[0][2], str(cap.sent))
+    # The link must point at a real page.
+    with app.test_client() as c:
+        record("the link's path is a live page", c.get("/auth/login").status_code == 200)
+    # Per-environment override, with a stray trailing slash.
+    old = app.config["PORTAL_URL"]
+    app.config["PORTAL_URL"] = "https://portal.example.test/"
+    try:
+        with Capture() as cap:
+            api_routes._send_reminders_to(app, True, False)
+        got = [m for m in cap.sent if "link@x.com" in m[0]]
+        record("PORTAL_URL overrides the host and tolerates a trailing slash",
+               got and "https://portal.example.test/auth/login" in got[0][2] and "//auth" not in got[0][2],
+               got[0][2] if got else "")
+    finally:
+        app.config["PORTAL_URL"] = old
+
+
 def test_credit_transfer():
     fam, (a, b) = new_family("Move", ["Ann", "Bo"])
     post_txn(a, "charge", 49)
@@ -309,7 +347,7 @@ def main():
         db.session.add(admin)
         db.session.commit()
     for t in (test_grouping, test_manual_reminders, test_single_reminder_button,
-              test_auto_reminders, test_credit_transfer, test_credit_transfer_atomic):
+              test_auto_reminders, test_portal_link, test_credit_transfer, test_credit_transfer_atomic):
         try:
             t()
         except Exception as e:  # a crash is a failure, not a skipped test
