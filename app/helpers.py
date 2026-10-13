@@ -223,6 +223,44 @@ def build_ledger(txns: list) -> dict:
     }
 
 
+def family_reminder_groups(students: list, balances: dict) -> list[dict]:
+    """Group dancers into the households a balance reminder is about.
+
+    A parent pays for the household, so what matters is what the household owes,
+    not what one child's ledger says. A credit on one sibling and a charge on
+    another (a lump payment recorded against one child) must cancel before
+    anyone is told they owe money. Dancers with a family are grouped by it and
+    their balances summed PER FUND; funds never net against each other, so a
+    studio credit still cannot hide a Company debt. A dancer with no family
+    stands alone.
+
+    `students` are the active dancers to consider and `balances` is the
+    calc_balance_bulk result covering them. Returns one dict per household:
+        {'name': str, 'family': Family|None, 'students': [Student, ...],
+         'funds': {fund: {'balance': float}}}
+    where `funds` has the same shape callers already pass to _owing_lines and
+    _owes_any_fund. Groups come back in the order their first dancer appears.
+    """
+    groups: dict = {}
+    for s in students:
+        key = ('f', s.family_id) if s.family_id else ('s', s.id)
+        g = groups.get(key)
+        if g is None:
+            g = groups[key] = {
+                'name': None, 'family': s.family if s.family_id else None,
+                'students': [], 'funds': {fund: {'balance': 0.0} for fund in FUNDS},
+            }
+        g['students'].append(s)
+        for fund in FUNDS:
+            g['funds'][fund]['balance'] += balances[s.id][fund]['balance']
+    for g in groups.values():
+        for fund in FUNDS:
+            g['funds'][fund]['balance'] = round(g['funds'][fund]['balance'], 2)
+        fam = g['family']
+        g['name'] = (fam.name if fam and fam.name else g['students'][0].full_name)
+    return list(groups.values())
+
+
 def allocate_family_payment(student_ids: list[int], amount: float, fund: str) -> list[tuple[int, float]]:
     """Split a lump family payment across children by outstanding balance,
     within ONE fund.

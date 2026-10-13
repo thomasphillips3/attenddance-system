@@ -542,7 +542,7 @@
     <h3 class="{{ h3 }}">Balance reminders</h3>
     <p class="{{ p }}">Two ways to nudge families who owe:</p>
     <ul class="{{ ul }}">
-      <li><strong>Right now:</strong> <strong>Send Reminders</strong> on the <strong>Pending</strong> page emails every active dancer's family with a balance over $0.</li>
+      <li><strong>Right now:</strong> <strong>Send Reminders</strong> on the <strong>Pending</strong> page emails every family with a balance over $0.</li>
       <li><strong>Monthly:</strong> <strong>Payment Methods → Automatic Reminders</strong>, pick a day of the month and a minimum balance.</li>
     </ul>
     {% call warn("Automatic reminders need the app to be awake") %}
@@ -551,6 +551,13 @@
       don't go out. Two easy habits fix this: pick a day you're normally working anyway, and open the
       site that morning. Text me if you want this fully automated - it's a small job on my end.
     {% endcall %}
+    <p class="{{ p }}">Reminders go out <strong>one per family</strong>, based on what the whole family owes.
+    If one child has a credit and a sibling has a matching balance, they cancel out and nobody gets a reminder.
+    Studio and Company money are still counted separately.</p>
+    <p class="{{ p }}"><strong>One payment covered two kids but landed on one child's ledger?</strong> Open the family's
+    ledger and tap <strong>Move credit between siblings</strong> (a yellow note offers it with the amount filled in).
+    It adds a charge on the child who has the credit and a payment on the child who owes, sharing a reference.
+    Nothing already recorded is changed.</p>
     <p class="{{ p }}">Reminders can also go by text if you set up Twilio under
     <strong>Text Messages (SMS)</strong>, but email alone is fine for most studios.</p>
   </div>
