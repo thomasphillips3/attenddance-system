@@ -2048,7 +2048,7 @@ def family_credit_transfer(family_id):
     """Move credit from one sibling's ledger to another's, within one fund (admin only).
 
     For a lump payment recorded against one child that was really meant for
-    another: Ariel paid both kids' tuition in one transaction, the credit sat on
+    another: a parent paid two kids' tuition in one transaction, the credit sat on
     one ledger, and the other still showed a balance due. Like fund_transfer this
     never edits a row: it posts a charge on the giving child and a payment on the
     receiving child, sharing a reference, so both ledgers stay append-only and
@@ -4088,7 +4088,7 @@ def _student_phone(s):
 
 def _group_label(group):
     """How the reminder names the household: the dancer for a one-child group,
-    "the Pompey family" for siblings (so it never reads as one child's debt)."""
+    "the Smith family" for siblings (so it never reads as one child's debt)."""
     if len(group['students']) == 1:
         return group['students'][0].full_name
     name = group['name']
