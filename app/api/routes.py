@@ -28,7 +28,9 @@ from app.helpers import (
     calc_balance,
     calc_balance_bulk,
     class_to_dict,
+    _dedupe_emails,
     family_emails,
+    family_reminder_groups,
     has_company_activity_bulk,
     live_class_query,
     recurring_to_dict,
@@ -1910,8 +1912,10 @@ def revenue_report():
         return err
 
     def _sum(type_, start=None, end=None, fund=None):
+        # Transfer rows (fund and sibling-credit moves) post a charge and a
+        # payment that cancel out; counting them would inflate both columns.
         q = db.session.query(func.coalesce(func.sum(Transaction.amount), 0)).filter(
-            Transaction.type == type_)
+            Transaction.type == type_, Transaction.category != 'transfer')
         if start is not None:
             q = q.filter(Transaction.transaction_date >= start)
         if end is not None:
@@ -1928,7 +1932,8 @@ def revenue_report():
 
     year_start = date.today().replace(month=1, day=1)
     cat_rows = (db.session.query(Transaction.category, func.sum(Transaction.amount))
-                .filter(Transaction.type == 'payment', Transaction.transaction_date >= year_start)
+                .filter(Transaction.type == 'payment', Transaction.category != 'transfer',
+                        Transaction.transaction_date >= year_start)
                 .group_by(Transaction.category).all())
     by_category = sorted(
         [{'category': c or 'uncategorized', 'amount': round(float(a or 0), 2)} for c, a in cat_rows],
@@ -2025,6 +2030,73 @@ def fund_transfer(student_id):
     db.session.add_all([out_row, in_row])
     AuditLog.record(current_user.id, 'fund.transfer',
                     f'{ref}: ${amount:.2f} {from_fund} -> {to_fund} for {student.full_name}{suffix}')
+    db.session.commit()
+    return jsonify({
+        'reference': ref,
+        'transactions': [transaction_to_dict(out_row), transaction_to_dict(in_row)],
+    }), 201
+
+
+@bp.route('/families/<int:family_id>/credit-transfer', methods=['POST'])
+@login_required
+def family_credit_transfer(family_id):
+    """Move credit from one sibling's ledger to another's, within one fund (admin only).
+
+    For a lump payment recorded against one child that was really meant for
+    another: Ariel paid both kids' tuition in one transaction, the credit sat on
+    one ledger, and the other still showed a balance due. Like fund_transfer this
+    never edits a row: it posts a charge on the giving child and a payment on the
+    receiving child, sharing a reference, so both ledgers stay append-only and
+    the original payment is still visible exactly as recorded. The fund is the
+    same on both rows (no cross-fund netting, ever), and the giver must actually
+    hold that much credit in it, so this cannot be used to invent money.
+    """
+    err = _admin_only()
+    if err:
+        return err
+    family = Family.query.get_or_404(family_id)
+    data = request.get_json() or {}
+    from_id, e1 = _valid_id(data.get('from_student_id'))
+    if e1:
+        return e1
+    to_id, e2 = _valid_id(data.get('to_student_id'))
+    if e2:
+        return e2
+    if from_id == to_id:
+        return jsonify({'error': 'from_student_id and to_student_id must differ'}), 400
+    giver = Student.query.get_or_404(from_id)
+    taker = Student.query.get_or_404(to_id)
+    if giver.family_id != family.id or taker.family_id != family.id:
+        return jsonify({'error': 'Both students must belong to this family'}), 400
+    fund = data.get('fund', 'studio')
+    if not is_fund(fund):
+        return jsonify({'error': 'fund must be studio or company'}), 400
+    amount, err = _valid_amount(data.get('amount'))
+    if err:
+        return err
+    available = round(-calc_balance(giver.id)[fund]['balance'], 2)
+    if amount > available:
+        return jsonify({'error': f'{giver.full_name} only has ${max(available, 0):.2f} of '
+                                 f'{FUND_LABELS[fund]} credit to move'}), 400
+    note = _clean_str(data.get('note'), 300)
+    suffix = f' - {note}' if note else ''
+    ref = 'sib-' + secrets.token_hex(4)
+    today = date.today()
+    out_row = Transaction(
+        student_id=giver.id, type='charge', amount=amount, category='transfer',
+        fund=fund, payment_method='n/a',
+        description=f'Credit moved to {taker.full_name} [{ref}]{suffix}',
+        transaction_date=today, created_by=current_user.id,
+    )
+    in_row = Transaction(
+        student_id=taker.id, type='payment', amount=amount, category='transfer',
+        fund=fund, payment_method='transfer',
+        description=f'Credit from {giver.full_name} [{ref}]{suffix}',
+        transaction_date=today, created_by=current_user.id,
+    )
+    db.session.add_all([out_row, in_row])
+    AuditLog.record(current_user.id, 'family.credit_transfer',
+                    f'{ref}: ${amount:.2f} {fund} {giver.full_name} -> {taker.full_name}{suffix}')
     db.session.commit()
     return jsonify({
         'reference': ref,
@@ -3037,9 +3109,14 @@ def get_family_ledger(family_id):
     ) if student_ids else []
 
     result = build_ledger(all_txns)
+    balances = calc_balance_bulk(student_ids)
     return jsonify({
         'family_id': family.id, 'family_name': family.name,
-        'students': [{'id': s.id, 'full_name': s.full_name} for s in students],
+        'students': [{'id': s.id, 'full_name': s.full_name,
+                      # Per-fund balance as 2dp strings: negative is a credit.
+                      # The credit-move modal uses these to suggest a transfer.
+                      'balances': {fund: f"{balances[s.id][fund]['balance']:.2f}" for fund in FUNDS}}
+                     for s in students],
         'has_company': bool(has_company_activity_bulk(student_ids)),
         **result,
     })
@@ -3969,42 +4046,80 @@ def _student_phone(s):
     return s.parent_phone or (s.family.primary_phone if s.family else None) or s.phone
 
 
-def _notify_student_balance(s, fund_balances, email_ok, sms_ok, threshold=0.0):
-    """Send a balance reminder to one student's parent via the available channels.
-    `fund_balances` is the per-fund dict from calc_balance; only funds over
-    `threshold` are listed. Returns a set of channels actually used."""
+def _group_label(group):
+    """How the reminder names the household: the dancer for a one-child group,
+    "the Pompey family" for siblings (so it never reads as one child's debt)."""
+    if len(group['students']) == 1:
+        return group['students'][0].full_name
+    name = group['name']
+    return name if 'family' in name.lower() else f'the {name} family'
+
+
+def _group_emails(group):
+    """Every address for a household: the family's own plus each dancer's."""
+    candidates = []
+    fam = group['family']
+    if fam:
+        candidates += family_emails(fam)
+    for s in group['students']:
+        candidates += student_emails(s)
+    return _dedupe_emails(candidates)
+
+
+def _reminder_groups(students=None):
+    """Households that owe, as (groups, balances) over the active dancers.
+
+    Balances are summed per household first (see family_reminder_groups), so a
+    credit on one sibling covers a charge on another and a family that nets to
+    zero is never reminded. Pass `students` to restrict the dancers considered;
+    the default is every active dancer."""
+    if students is None:
+        students = Student.query.filter_by(is_active=True).all()
+    balances = calc_balance_bulk([s.id for s in students])
+    return family_reminder_groups(students, balances)
+
+
+def _notify_group_balance(group, email_ok, sms_ok, threshold=0.0):
+    """Send one balance reminder to a household via the available channels.
+    Only funds whose FAMILY balance is over `threshold` are listed. Returns the
+    set of channels actually used."""
     from app import email as email_service
     from app import sms as sms_service
     used = set()
-    body = _reminder_body(s.full_name, fund_balances, threshold)
+    label = _group_label(group)
+    body = _reminder_body(label, group['funds'], threshold)
     if email_ok:
-        to = student_emails(s)
+        to = _group_emails(group)
         if to:
             try:
-                email_service.send_email(to, f'Balance reminder — {STUDIO_NAME}', body)
+                email_service.send_email(to, f'Balance reminder - {STUDIO_NAME}', body)
                 used.add('email')
             except Exception:
-                logger.exception("Reminder email failed for student #%s", s.id)
+                logger.exception("Reminder email failed for %s (students %s)", label,
+                                 [s.id for s in group['students']])
     if sms_ok:
-        phone = _student_phone(s)
-        if phone and sms_service.send_sms(phone, body):
-            used.add('sms')
+        phone = next((ph for ph in (_student_phone(s) for s in group['students']) if ph), None)
+        if phone:
+            try:  # one SMS failure must not abort a whole run of reminders
+                if sms_service.send_sms(phone, body):
+                    used.add('sms')
+            except Exception:
+                logger.exception("Reminder SMS failed for %s", label)
     return used
 
 
-def _send_reminders_to(app, student_ids, email_ok, sms_ok):
+def _send_reminders_to(app, email_ok, sms_ok):
     """Background worker for the manual 'remind everyone who owes' action. Runs
     off the request thread because a large studio × (email + up to a 15s SMS)
-    would exceed the 120s gunicorn worker timeout if sent inline."""
+    would exceed the 120s gunicorn worker timeout if sent inline. Re-reads the
+    balances itself so it reminds on what is owed now, one message per household."""
     with app.app_context():
         try:
-            students = Student.query.filter(Student.id.in_(student_ids)).all()
-            balances = calc_balance_bulk([s.id for s in students])
             notified = 0
-            for s in students:
-                if not _owes_any_fund(balances[s.id]):
+            for group in _reminder_groups():
+                if not _owes_any_fund(group['funds']):
                     continue
-                if _notify_student_balance(s, balances[s.id], email_ok, sms_ok):
+                if _notify_group_balance(group, email_ok, sms_ok):
                     notified += 1
             logger.info("Manual balance reminders sent: %d", notified)
         except Exception:
@@ -4014,10 +4129,12 @@ def _send_reminders_to(app, student_ids, email_ok, sms_ok):
 @bp.route('/balances/send-reminders', methods=['POST'])
 @login_required
 def send_balance_reminders():
-    """Queue a balance reminder to every student who owes, via email and/or SMS.
-    The actual sending runs in a background thread — for a large studio, sending
-    inline (an email plus a 15s-timeout SMS per family) would blow the 120s
-    gunicorn worker timeout and 502 the request."""
+    """Queue a balance reminder to every household that owes, via email and/or SMS.
+    One message per household: siblings' balances are netted first, so a credit
+    on one child covers a charge on another. The actual sending runs in a
+    background thread — for a large studio, sending inline (an email plus a
+    15s-timeout SMS per family) would blow the 120s gunicorn worker timeout and
+    502 the request."""
     err = _admin_only()
     if err:
         return err
@@ -4028,15 +4145,13 @@ def send_balance_reminders():
     if not email_ok and not sms_ok:
         return jsonify({'error': 'Configure email (SMTP) or SMS (Twilio) first'}), 400
 
-    students = Student.query.filter_by(is_active=True).all()
-    balances = calc_balance_bulk([s.id for s in students])
-    owing = [s.id for s in students if _owes_any_fund(balances[s.id])]
+    owing = [g for g in _reminder_groups() if _owes_any_fund(g['funds'])]
 
     AuditLog.record(current_user.id, 'reminders.send', f'Queued {len(owing)} balance reminders')
     db.session.commit()
 
     app = current_app._get_current_object()
-    threading.Thread(target=_send_reminders_to, args=(app, owing, email_ok, sms_ok),
+    threading.Thread(target=_send_reminders_to, args=(app, email_ok, sms_ok),
                      daemon=True).start()
     return jsonify({'message': f'Sending reminders to {len(owing)} family(ies)…', 'queued': len(owing)})
 
@@ -4054,13 +4169,19 @@ def send_student_reminder(student_id):
     if not email_ok and not sms_ok:
         return jsonify({'error': 'Configure email (SMTP) or SMS (Twilio) first'}), 400
     student = Student.query.get_or_404(student_id)
-    funds = calc_balance(student_id)
-    if not _owes_any_fund(funds):
+    # The reminder is about the household: a sibling's credit counts toward this
+    # dancer's balance, so the check and the amounts use the whole family.
+    household = (student.family.students.filter_by(is_active=True).all()
+                 if student.family_id else [student])
+    if student not in household:
+        household = household + [student]
+    group = _reminder_groups(household)[0]
+    if not _owes_any_fund(group['funds']):
         return jsonify({'error': 'No outstanding balance'}), 400
-    used = _notify_student_balance(student, funds, email_ok, sms_ok)
+    used = _notify_group_balance(group, email_ok, sms_ok)
     if not used:
         return jsonify({'error': 'No email or phone on file for this student'}), 400
-    AuditLog.record(current_user.id, 'reminders.send', f'Sent reminder to {student.full_name} via {", ".join(used)}')
+    AuditLog.record(current_user.id, 'reminders.send', f'Sent reminder to {_group_label(group)} via {", ".join(used)}')
     db.session.commit()
     return jsonify({'message': f'Reminder sent via {", ".join(used)}'})
 

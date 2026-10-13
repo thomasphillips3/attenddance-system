@@ -7,6 +7,17 @@
     <p class="mt-1 text-sm text-ink-2">Combined family ledger - all students' charges and payments, kept per fund</p>
 </div>
 
+{% set lpl = "block text-sm font-medium text-ink-2" %}
+{% set lpi = "mt-1 block w-full bg-surface border border-line-2 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-200 focus:border-primary-400" %}
+
+{# A lump payment recorded against one child leaves a credit there and a balance
+   on the sibling. The family balance below is right, the per-child ones are not;
+   this offers the one-click fix. Hidden unless a sibling pair like that exists. #}
+<div id="credit-hint" class="hidden mb-6 rounded-xl bg-gold-300/40 border border-gold-400/50 p-4 text-sm text-gold-ink flex flex-wrap items-center justify-between gap-3">
+    <span id="credit-hint-text"></span>
+    <button type="button" id="credit-hint-btn" class="px-4 py-2 rounded-xl bg-primary-500 text-white text-sm font-bold hover:bg-primary-600 shadow-sm">Move credit</button>
+</div>
+
 {# One summary row per fund, never summed: Company money is owed to the
    Foundation. The Company row is hidden for studio-only families. #}
 {% for fund in FUNDS %}
@@ -29,7 +40,10 @@
 </div>
 {% endfor %}
 
-<div id="students-list" class="mb-4 text-sm text-ink-2"></div>
+<div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+    <div id="students-list" class="text-sm text-ink-2"></div>
+    <button type="button" id="credit-move-btn" onclick="openCreditMove()" class="hidden inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-surface border border-line text-ink-2 text-sm font-bold hover:bg-surface-2"><i class="fas fa-right-left"></i>Move credit between siblings</button>
+</div>
 
 <div class="bg-surface border border-line rounded-2xl shadow-soft overflow-hidden">
     <div class="overflow-x-auto">
@@ -51,6 +65,46 @@
         </table>
     </div>
 </div>
+
+<div id="credit-modal" class="fixed inset-0 z-50 hidden overflow-y-auto">
+    <div class="flex items-center justify-center min-h-screen px-4">
+        <div class="fixed inset-0 bg-ink/40" onclick="closeCreditMove()"></div>
+        <div class="relative bg-surface rounded-2xl shadow-pop max-w-md w-full p-6">
+            <h3 class="font-display text-2xl text-ink mb-1">Move credit between siblings</h3>
+            <p class="text-sm text-ink-3 mb-4">Use this when one payment covered more than one child but was recorded against just one. It adds a charge on the child giving the credit and a payment on the child receiving it, sharing a reference. Nothing already recorded is changed, and the family balance stays the same.</p>
+            <form id="credit-form" onsubmit="saveCreditMove(event)">
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="{{ lpl }}">From (has credit) *</label>
+                        <select id="cm-from" required class="{{ lpi }}"></select>
+                    </div>
+                    <div>
+                        <label class="{{ lpl }}">To *</label>
+                        <select id="cm-to" required class="{{ lpi }}"></select>
+                    </div>
+                    <div>
+                        <label class="{{ lpl }}">Fund *</label>
+                        <select id="cm-fund" required class="{{ lpi }}">
+                            {% for fund in FUNDS %}<option value="{{ fund }}">{{ FUND_LABELS[fund] }}</option>{% endfor %}
+                        </select>
+                    </div>
+                    <div>
+                        <label class="{{ lpl }}">Amount *</label>
+                        <input id="cm-amount" type="number" step="0.01" min="0.01" required class="{{ lpi }}">
+                    </div>
+                    <div class="col-span-2">
+                        <label class="{{ lpl }}">Note</label>
+                        <input id="cm-note" type="text" maxlength="300" placeholder="e.g. Oct tuition for both girls paid in one payment" class="{{ lpi }}">
+                    </div>
+                </div>
+                <div class="mt-5 flex justify-end gap-2">
+                    <button type="button" onclick="closeCreditMove()" class="px-4 py-2 rounded-xl border border-line-2 text-sm font-bold text-ink-2 hover:bg-surface-2">Cancel</button>
+                    <button type="submit" class="px-4 py-2 rounded-xl bg-primary-500 text-white text-sm font-bold hover:bg-primary-600 shadow-sm">Move credit</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block extra_js %}
@@ -60,10 +114,77 @@ const FUNDS = {{ FUNDS | list | tojson }};
 const FUND_LABELS = {{ FUND_LABELS | tojson }};
 const methodLabels = { cash: 'Cash', zelle: 'Zelle', venmo: 'Venmo', cashapp: 'Cash App', card: 'Card', tap: 'Tap', transfer: 'Fund transfer' };
 
+let familyStudents = [];
+
+// For one fund: a child holding credit and a sibling who still owes. Returns the
+// biggest pair and the amount that settles the smaller side, or null.
+function creditSuggestion(fund) {
+    const bal = s => parseFloat(s.balances[fund]);
+    const givers = familyStudents.filter(s => bal(s) < 0).sort((a, b) => bal(a) - bal(b));
+    const takers = familyStudents.filter(s => bal(s) > 0).sort((a, b) => bal(b) - bal(a));
+    if (!givers.length || !takers.length) return null;
+    return { fund, from: givers[0], to: takers[0],
+             amount: Math.min(-bal(givers[0]), bal(takers[0])) };
+}
+
+function fillCreditSelects() {
+    const opts = familyStudents.map(s => `<option value="${s.id}">${esc(s.full_name)}</option>`).join('');
+    document.getElementById('cm-from').innerHTML = opts;
+    document.getElementById('cm-to').innerHTML = opts;
+    if (familyStudents.length > 1) document.getElementById('cm-to').selectedIndex = 1;
+}
+function openCreditMove(sug) {
+    document.getElementById('credit-form').reset();
+    fillCreditSelects();
+    if (sug) {
+        document.getElementById('cm-from').value = sug.from.id;
+        document.getElementById('cm-to').value = sug.to.id;
+        document.getElementById('cm-fund').value = sug.fund;
+        document.getElementById('cm-amount').value = sug.amount.toFixed(2);
+    }
+    document.getElementById('credit-modal').classList.remove('hidden');
+}
+function closeCreditMove() { document.getElementById('credit-modal').classList.add('hidden'); }
+async function saveCreditMove(e) {
+    e.preventDefault();
+    const btn = e.target.querySelector('button[type="submit"]');
+    if (btn.disabled) return;
+    const body = {
+        from_student_id: parseInt(document.getElementById('cm-from').value),
+        to_student_id: parseInt(document.getElementById('cm-to').value),
+        fund: document.getElementById('cm-fund').value,
+        amount: document.getElementById('cm-amount').value,
+        note: document.getElementById('cm-note').value,
+    };
+    if (body.from_student_id === body.to_student_id) { toast('Pick two different students', false); return; }
+    const nm = id => (familyStudents.find(s => s.id === id) || {}).full_name;
+    if (!confirm(`Move $${parseFloat(body.amount).toFixed(2)} of ${FUND_LABELS[body.fund]} credit from ${nm(body.from_student_id)} to ${nm(body.to_student_id)}? This adds two entries and is logged.`)) return;
+    btn.disabled = true;
+    try {
+        const res = await fetch('/api/families/{{ family.id }}/credit-transfer', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
+        const d = await res.json().catch(() => ({}));
+        if (res.ok) { closeCreditMove(); loadLedger(); toast('Moved (' + d.reference + ')', true); }
+        else { toast(d.error || 'Could not move credit', false); }
+    } catch (err) { toast('Network error', false); }
+    finally { btn.disabled = false; }
+}
+
 async function loadLedger() {
     try {
         const res = await fetch('/api/families/{{ family.id }}/ledger');
         const data = await res.json();
+        familyStudents = data.students;
+        document.getElementById('credit-move-btn').classList.toggle('hidden', familyStudents.length < 2);
+        const sug = FUNDS.map(creditSuggestion).find(Boolean);
+        const hint = document.getElementById('credit-hint');
+        hint.classList.toggle('hidden', !sug);
+        if (sug) {
+            document.getElementById('credit-hint-text').textContent =
+                `${sug.from.full_name} has a ${FUND_LABELS[sug.fund]} credit while ${sug.to.full_name} still shows a balance. ` +
+                `The family total is right, but each child's own balance (and reminders sent before this fix) are not.`;
+            document.getElementById('credit-hint-btn').textContent = 'Move $' + sug.amount.toFixed(2);
+            document.getElementById('credit-hint-btn').onclick = () => openCreditMove(sug);
+        }
 
         FUNDS.forEach(fund => {
             const f = data.funds[fund];

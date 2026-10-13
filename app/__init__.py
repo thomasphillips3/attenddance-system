@@ -170,8 +170,9 @@ def _process_auto_reminders():
 
 
 def _send_balance_reminders(app):
-    """Background worker: email/SMS every active student over the balance
-    threshold in either fund. The threshold is applied to each fund on its own
+    """Background worker: email/SMS every household over the balance
+    threshold in either fund, on the family's NET balance (siblings' credits
+    and charges cancel first). The threshold is applied to each fund on its own
     (a $5 studio balance and a $5 Company balance are two separate $5s, not
     $10), and the body lists each owing fund on its own line via the same
     builder the manual reminders use. Best-effort and at-most-once (the month
@@ -179,9 +180,8 @@ def _send_balance_reminders(app):
     SMTP/Twilio can't block the app."""
     from app import email as email_service
     from app import sms as sms_service
-    from app.api.routes import _owing_lines, _reminder_body
-    from app.helpers import calc_balance_bulk, student_emails
-    from app.models import Setting, Student
+    from app.api.routes import _notify_group_balance, _owing_lines, _reminder_groups
+    from app.models import Setting
 
     with app.app_context():
         try:
@@ -190,32 +190,17 @@ def _send_balance_reminders(app):
             except ValueError:
                 min_bal = 0.0
             send_sms_too = Setting.get_bool('reminders_send_sms')
-            students = Student.query.filter_by(is_active=True).all()
-            balances = calc_balance_bulk([s.id for s in students])
             email_ok = email_service.is_configured()
             sms_ok = send_sms_too and sms_service.is_configured()
             sent = 0
             threshold = max(0.0, min_bal)
-            for s in students:
-                if not _owing_lines(balances[s.id], threshold):
+            # One reminder per household, on the family's NET balance per fund.
+            for group in _reminder_groups():
+                if not _owing_lines(group['funds'], threshold):
                     continue
-                body = _reminder_body(s.full_name, balances[s.id], threshold)
-                if email_ok:
-                    to = student_emails(s)   # both parents, plus the household
-                    if to:
-                        try:
-                            email_service.send_email(to, "Balance reminder - LaShelle's School of Dance", body)
-                            sent += 1
-                        except Exception:
-                            logger.exception("Auto-reminder email failed for student #%s", s.id)
-                if sms_ok:
-                    phone = s.parent_phone or (s.family.primary_phone if s.family else None) or s.phone
-                    if phone:
-                        try:  # a single SMS failure must not abort the whole run
-                            sms_service.send_sms(phone, body)
-                        except Exception:
-                            logger.exception("Auto-reminder SMS failed for student #%s", s.id)
-            logger.info("Auto-reminders processed: %d students notified", sent)
+                if _notify_group_balance(group, email_ok, sms_ok, threshold):
+                    sent += 1
+            logger.info("Auto-reminders processed: %d families notified", sent)
         except Exception:
             logger.exception("Auto-reminder background send failed")
 
