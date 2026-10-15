@@ -83,8 +83,12 @@
     }
 
     // ── Sound and buzz ───────────────────────────────────────────────
+    function canBuzz() {
+        // Chrome blocks vibrate() until the user has touched the page.
+        return navigator.vibrate && (!navigator.userActivation || navigator.userActivation.hasBeenActive);
+    }
     function tone(kind) {
-        if (navigator.vibrate) {
+        if (canBuzz()) {
             try { navigator.vibrate(kind === 'err' ? [70, 90, 70] : 80); } catch (e) { }
         }
         if (!audio) return;
@@ -363,6 +367,7 @@
     setInterval(() => { if (started) ping(); }, 60000);
 
     setNet(navigator.onLine ? 'online' : 'offline');
+    updateModeChip();
     updateQueueChip();
     startScreen();
     ping();

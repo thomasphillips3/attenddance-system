@@ -24,7 +24,7 @@
 {# The station shell holds no student data: names arrive per tap from /api
    and are never stored. The service worker caches this page so a station can
    reload with no Wi-Fi and keep queuing. #}
-<div class="bar"><span id="net" class="chip">…</span><span id="queue" class="chip q" hidden></span><span id="mode" class="chip"></span><a href="/tap-in">Exit</a></div>
+<div class="bar"><span id="net" class="chip">…</span><span id="queue" class="chip q" hidden></span><span id="mode" class="chip" hidden></span><a href="/tap-in">Exit</a></div>
 <div id="screen" class="tap-screen tone-idle"></div>
 
 <script src="{{ url_for('static', filename='js/tap-nfc.js') }}"></script>

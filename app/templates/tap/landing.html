@@ -28,7 +28,13 @@
     const eventKey = TapNFC.newEventKey('url');
     let current = null;
 
-    function buzz(ms) { if (navigator.vibrate) { try { navigator.vibrate(ms); } catch (e) { } } }
+    // Chrome blocks vibrate() until the user has touched the page, and a tag
+    // opening this page doesn't count; skip it rather than log an error.
+    function buzz(ms) {
+        if (!navigator.vibrate) return;
+        if (navigator.userActivation && !navigator.userActivation.hasBeenActive) return;
+        try { navigator.vibrate(ms); } catch (e) { }
+    }
 
     async function call(url, body, timeoutMs) {
         const ctrl = new AbortController();
