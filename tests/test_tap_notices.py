@@ -370,6 +370,21 @@ for _ in range(3):
 r = pc.post("/api/my-notices/code", json={"phone": "5865550123"})
 record("codes are rate-limited per account", r.status_code == 429)
 
+# One account can text any one number at most 3 times a day.
+with app.app_context():
+    from app.models import SmsVerification  # noqa: E402
+    SmsVerification.query.delete()
+    db.session.commit()
+spam = app.test_client()
+spam.post("/auth/login", data={"username": "mom", "password": "pw12345"})
+import app.api.tap_routes as _tr  # noqa: E402
+_saved = _tr.CODES_PER_USER_PER_HOUR
+_tr.CODES_PER_USER_PER_HOUR = 100   # isolate the per-number cap
+statuses = [spam.post("/api/my-notices/code", json={"phone": "7345550111"}).status_code for _ in range(4)]
+_tr.CODES_PER_USER_PER_HOUR = _saved
+record("one account can text the same number only 3 times a day",
+       statuses == [200, 200, 200, 429], f"got {statuses}")
+
 # One account spamming a number can't lock its owner out.
 with app.app_context():
     for i in range(2):

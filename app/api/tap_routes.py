@@ -753,10 +753,13 @@ CODE_TTL_MINUTES = 10
 CODE_MAX_ATTEMPTS = 5
 CODES_PER_USER_PER_HOUR = 3
 CODES_PER_USER_PER_DAY = 10
-# A number is only shut off when several DIFFERENT accounts aim codes at it in
-# a day. One account can't lock a parent out of their own number by spamming
-# it (its own per-account limits stop that), but a number can't be bombed
-# from many accounts either.
+# One account can text any single number at most this often, so a parent
+# account can't be used to bomb a stranger's phone.
+CODES_PER_USER_PER_PHONE_PER_DAY = 3
+# A number is only shut off for everyone when several DIFFERENT accounts aim
+# codes at it in a day. One account can't lock a parent out of their own
+# number by spamming it (its own per-number limit stops that account), and a
+# number can't be bombed from many accounts either.
 OTHER_ACCOUNTS_PER_PHONE_PER_DAY = 3
 CODE_RETENTION_DAYS = 30
 _code_sender = None   # tests swap this; default is sms.send_sms_result
@@ -798,11 +801,14 @@ def send_my_notice_code():
     mine = SmsVerification.query.filter(SmsVerification.user_id == current_user.id)
     last_hour = mine.filter(SmsVerification.created_at > now - timedelta(hours=1)).count()
     last_day = mine.filter(SmsVerification.created_at > now - timedelta(days=1)).count()
+    this_phone = mine.filter(SmsVerification.phone == phone,
+                             SmsVerification.created_at > now - timedelta(days=1)).count()
     other_accounts = (db.session.query(SmsVerification.user_id).filter(
         SmsVerification.phone == phone,
         SmsVerification.user_id != current_user.id,
         SmsVerification.created_at > now - timedelta(days=1)).distinct().count())
     if (last_hour >= CODES_PER_USER_PER_HOUR or last_day >= CODES_PER_USER_PER_DAY
+            or this_phone >= CODES_PER_USER_PER_PHONE_PER_DAY
             or other_accounts >= OTHER_ACCOUNTS_PER_PHONE_PER_DAY):
         db.session.commit()
         return jsonify({'error': 'Too many codes. Try again later.'}), 429
