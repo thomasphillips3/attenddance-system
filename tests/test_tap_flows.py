@@ -362,6 +362,35 @@ record("ping answers a signed-in station", r.status_code == 200 and r.get_json()
 r = anon.get("/api/tap/ping")
 record("ping tells a signed-out station with 401", r.status_code == 401)
 
+# ── D2. Staff-only photo ────────────────────────────────────────────
+import base64  # noqa: E402
+JPEG = "data:image/jpeg;base64," + base64.b64encode(b"\xff\xd8\xff\xe0" + b"0" * 200).decode()
+r = teach.post(f"/api/students/{kids['Ava']}/photo", json={"photo": JPEG})
+record("staff save a dancer's check-in photo", r.status_code == 200)
+r = teach.post(f"/api/students/{kids['Ava']}/photo",
+               json={"photo": "data:image/jpeg;base64," + base64.b64encode(b"<svg>").decode()})
+record("a file that isn't really a JPEG is refused", r.status_code == 400)
+r = teach.post(f"/api/students/{kids['Ava']}/photo",
+               json={"photo": "data:image/svg+xml;base64,PHN2Zz4="})
+record("SVG (scriptable) is refused", r.status_code == 400)
+big = "data:image/jpeg;base64," + base64.b64encode(b"\xff\xd8\xff" + b"0" * 400_000).decode()
+r = teach.post(f"/api/students/{kids['Ava']}/photo", json={"photo": big})
+record("a photo over 300 KB is refused", r.status_code == 400)
+r = teach.get(f"/api/students/{kids['Ava']}/photo")
+record("staff can load it, never cached", r.status_code == 200 and r.mimetype == "image/jpeg"
+       and "no-store" in r.headers.get("Cache-Control", ""))
+r = mom.get(f"/api/students/{kids['Ava']}/photo")
+record("a parent can't load the staff photo endpoint", r.status_code == 403)
+r = teach.post("/api/tap", json={"event_key": key(), "token": tok_ava})
+record("the tap result carries the photo URL", r.get_json().get("photo_url", "").startswith(
+       f"/api/students/{kids['Ava']}/photo"))
+r = mom.get("/api/my-data")
+ava_block = next(k for k in r.get_json()["children"] if k["first_name"] == "Ava")
+record("the parent's data export includes the photo", ava_block.get("checkin_photo") == JPEG)
+r = teach.delete(f"/api/students/{kids['Ava']}/photo")
+record("staff can remove it", r.status_code == 200
+       and teach.get(f"/api/students/{kids['Ava']}/photo").status_code == 404)
+
 # ── E. Pages ────────────────────────────────────────────────────────
 for url in ("/tap-in", "/tap-in/station", "/tap-in/today",
             f"/tap-in/today?date={date.today().isoformat()}", "/tap-in/today?date=garbage",

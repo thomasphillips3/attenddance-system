@@ -160,9 +160,12 @@
     <script>
     window.parentNotices = function () {
         return {
-            d: null, consent: false, busy: false,
+            d: null, consent: false, busy: false, phone: '',
             async load() {
-                try { const r = await fetch('/api/my-notices'); if (r.ok) this.d = await r.json(); } catch (e) { }
+                try {
+                    const r = await fetch('/api/my-notices');
+                    if (r.ok) { this.d = await r.json(); this.phone = this.d.suggested_phone || ''; }
+                } catch (e) { }
             },
             kids() { return this.d ? this.d.children.filter(c => !c.adult) : []; },
             emailOn() { return this.kids().some(c => c.email_on); },
@@ -198,11 +201,16 @@
                     </template>
                     <template x-if="!smsOn()">
                         <div class="p-3 rounded-xl bg-surface-2 space-y-2">
+                            <label class="block">
+                                <span class="block text-xs font-bold text-ink-2 mb-1">Your mobile number</span>
+                                <input type="tel" x-model="phone" autocomplete="tel" placeholder="248-555-0100" class="w-full max-w-xs border border-line-2 rounded-lg px-3 py-1.5">
+                            </label>
                             <label class="flex items-start gap-3">
                                 <input type="checkbox" x-model="consent" class="mt-0.5 rounded">
                                 <span class="text-ink-2" x-text="d.sms_consent_text"></span>
                             </label>
-                            <button :disabled="!consent || busy" @click="save({ sms: true, consent: true })" class="px-3 py-1.5 rounded-lg bg-primary-500 text-white text-xs font-bold disabled:opacity-40">Turn on texts</button>
+                            <p class="text-xs text-ink-3">Texts go only to this number. Another parent can turn on texts from their own login.</p>
+                            <button :disabled="!consent || !phone || busy" @click="save({ sms: true, consent: true, phone })" class="px-3 py-1.5 rounded-lg bg-primary-500 text-white text-xs font-bold disabled:opacity-40">Turn on texts</button>
                         </div>
                     </template>
                 </div>

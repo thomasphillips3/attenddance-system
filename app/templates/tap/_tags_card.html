@@ -56,6 +56,22 @@
         </template>
     </div>
 
+    <div class="mt-4 pt-3 border-t border-line text-sm">
+        <p class="text-xs font-semibold text-ink-2 uppercase tracking-wider mb-2">Check-in photo</p>
+        <div class="flex items-center gap-3">
+            <template x-if="photoUrl"><img :src="photoUrl" alt="" class="w-14 h-14 rounded-full object-cover border border-line"></template>
+            <template x-if="!photoUrl"><span class="w-14 h-14 rounded-full bg-surface-2 border border-dashed border-line-2 flex items-center justify-center text-ink-3"><i class="fas fa-user"></i></span></template>
+            <div class="space-x-2">
+                <label class="text-xs font-bold text-primary-600 hover:underline cursor-pointer">
+                    <span x-text="photoUrl ? 'Change' : 'Add photo'"></span>
+                    <input type="file" accept="image/*" capture="user" class="hidden" @change="uploadPhoto($event)">
+                </label>
+                <button x-show="photoUrl" @click="removePhoto()" class="text-xs font-bold text-ink-3 hover:text-danger">Remove</button>
+            </div>
+        </div>
+        <p class="text-xs text-ink-3 mt-1">Staff only. Shown on the tap screen so staff can see it's the right dancer. Never published.</p>
+    </div>
+
     <div class="mt-4 pt-3 border-t border-line text-sm" x-show="notice">
         <p class="text-xs font-semibold text-ink-2 uppercase tracking-wider mb-1">Parent notices</p>
         <template x-if="notice && notice.adult"><p class="text-ink-3">Adult dancer: no check-in notices.</p></template>
@@ -179,6 +195,33 @@ window.tagCard = function (studentId, name, active) {
             return body;
         },
         notice: null,
+        photoUrl: {{ ("'/api/students/%d/photo?v=%d'" % (student.id, student.photo_updated_at.timestamp()|int)) if student.photo_updated_at else 'null' }},
+        // Shrink in the browser: a 320px JPEG is ~20 KB, small enough to keep
+        // in the database for every dancer.
+        async uploadPhoto(ev) {
+            const file = ev.target.files && ev.target.files[0];
+            ev.target.value = '';
+            if (!file) return;
+            try {
+                const img = await new Promise((res, rej) => {
+                    const i = new Image(); i.onload = () => res(i); i.onerror = rej;
+                    i.src = URL.createObjectURL(file);
+                });
+                const side = 320, c = document.createElement('canvas');
+                const s = Math.min(img.width, img.height);
+                c.width = side; c.height = side;
+                c.getContext('2d').drawImage(img, (img.width - s) / 2, (img.height - s) / 2, s, s, 0, 0, side, side);
+                const data = c.toDataURL('image/jpeg', 0.82);
+                const d = await this.api(`/api/students/${this.studentId}/photo`, { method: 'POST', body: JSON.stringify({ photo: data }) });
+                this.photoUrl = d.photo_url + '?v=' + Date.now();
+                toast('Photo saved', true);
+            } catch (e) { toast(e.message || "Couldn't read that image", false); }
+        },
+        async removePhoto() {
+            if (!confirm('Remove the check-in photo?')) return;
+            try { await this.api(`/api/students/${this.studentId}/photo`, { method: 'DELETE' }); this.photoUrl = null; }
+            catch (e) { toast(e.message, false); }
+        },
         async load() {
             try {
                 const d = await this.api(`/api/students/${this.studentId}/tags`);

@@ -8,8 +8,9 @@ What has to hold:
   3. Household opt-out, an undone tap, a stale replay (20+ min late), the
      pause switch and the daily cap all stop a send.
   4. Adults get no notices; a rolled-over check-in sends no "arrival".
-  5. SMS needs the studio switch AND the parent's opt-in, goes to guardian
-     numbers only, and a Twilio STOP (21610) turns the opt-in off for good.
+  5. SMS needs the studio switch AND the parent's opt-in, goes only to the
+     one number that agreed (not the dancer's phone, not another guardian on
+     file), and a Twilio STOP (21610) turns the opt-in off for good.
   6. A failing send retries with backoff, then gives up.
   7. Parents control their household from the portal; staff can switch
      notices off but never opt a parent in to texts.
@@ -108,7 +109,8 @@ with app.app_context():
                       end_time=time(19, 0), instructor_id=admin.id, season_id=season.id)
     db.session.add_all([ballet, jazz])
     db.session.flush()
-    fam = Family(name="Notice Family", primary_email="home@example.test", primary_phone="(248) 555-0100")
+    fam = Family(name="Notice Family", primary_email="home@example.test", primary_phone="(248) 555-0100",
+                 secondary_phone="313-555-0177")
     db.session.add(fam)
     db.session.flush()
 
@@ -281,6 +283,7 @@ with app.app_context():
     Setting.set("tap_notify_sms_enabled", "1")
     for st in (ids["ava"], ids["zoe"]):
         db.session.get(Student, st).tap_sms_opt_in = True
+        db.session.get(Student, st).tap_sms_phone = "+12485550100"
     db.session.commit()
     D8 = DAY + timedelta(days=70)
     r = tap(t_ava, at(17, 0, D8))
@@ -289,9 +292,11 @@ with app.app_context():
     db.session.commit()
     texts.clear()
     outbox.drain_once(now=datetime.now() + timedelta(minutes=1))
-    record("an opted-in household gets a text at the guardian number in E.164",
+    record("an opted-in household gets a text at the number that agreed, in E.164",
            texts and texts[0][0] == "+12485550100" and "Ava checked in to Ballet" in texts[0][1]
            and "STOP" in texts[0][1], f"got {texts}")
+    record("the second guardian on file is never texted on the first one's consent",
+           all(t[0] != "+13135550177" for t in texts) and len(texts) == 1)
 
     r = tap(t_sol, at(17, 0, D8))
     db.session.get(Student, ids["sol"]).tap_sms_opt_in = True
@@ -304,8 +309,8 @@ with app.app_context():
     db.session.commit()
     outbox.drain_once(now=datetime.now() + timedelta(minutes=1))
     db.session.refresh(n)
-    record("never texts the dancer's own phone: no guardian number means skip",
-           texts == [] and n.status == "skipped" and n.reason == "no guardian phone")
+    record("never texts the dancer's own phone: no agreed number means skip",
+           texts == [] and n.status == "skipped" and n.reason == "no opted-in number")
 
     D10 = DAY + timedelta(days=84)
     r = tap(t_zoe, at(17, 0, D10))
@@ -327,21 +332,26 @@ pc = app.test_client()
 pc.post("/auth/login", data={"username": "mom", "password": "pw12345"})
 r = pc.get("/api/my-notices")
 d = r.get_json()
-record("a parent sees their own dancers' notice settings, numbers masked",
+record("a parent sees their own dancers' settings and no other guardian's number",
        r.status_code == 200 and {c["first_name"] for c in d["children"]} == {"Ava", "Zoe"}
-       and all(n.startswith("...") for c in d["children"] for n in c["sms_numbers"]))
+       and "0177" not in r.get_data(as_text=True))
 r = pc.post("/api/my-notices", json={"email": False})
 record("a parent turns email off for the household",
        r.status_code == 200 and all(not c["email_on"] for c in r.get_json()["children"]))
 r = pc.post("/api/my-notices", json={"sms": True})
 record("turning on texts without the consent box is refused", r.status_code == 400)
 r = pc.post("/api/my-notices", json={"sms": True, "consent": True})
-record("with consent, texts turn on for the household", r.status_code == 200
-       and all(c["sms_on"] for c in r.get_json()["children"]))
+record("turning on texts without a number is refused", r.status_code == 400)
+r = pc.post("/api/my-notices", json={"sms": True, "consent": True, "phone": "12345"})
+record("a number that isn't a real phone is refused", r.status_code == 400)
+r = pc.post("/api/my-notices", json={"sms": True, "consent": True, "phone": "(586) 555-0123"})
+record("with consent and a number, texts turn on for the household", r.status_code == 200
+       and all(c["sms_on"] and c["sms_numbers"] == ["...0123"] for c in r.get_json()["children"]))
 with app.app_context():
     a = db.session.get(Student, ids["ava"])
-    record("and who agreed and when is recorded",
-           a.tap_sms_opt_in_by is not None and a.tap_sms_opt_in_at is not None)
+    record("and who agreed, when, and which number is recorded",
+           a.tap_sms_opt_in_by is not None and a.tap_sms_opt_in_at is not None
+           and a.tap_sms_phone == "+15865550123")
     Setting.set("tap_notify_sms_enabled", "0")
 pc.post("/api/my-notices", json={"sms": False})
 r = pc.post("/api/my-notices", json={"sms": True, "consent": True})

@@ -11,8 +11,9 @@ Rules applied at send time (so a change made after the tap still wins):
   - the tap was undone -> skip
   - the dancer is 18 or older -> skip (adults don't need their own notice)
   - email: on unless the dancer's household opted out
-  - SMS: only with an explicit opt-in, only to guardian numbers, and a
-    Twilio STOP (21610) turns the opt-in off for good
+  - SMS: only with an explicit opt-in, only to the one number that agreed
+    (never the dancer's phone or another guardian's), and a Twilio STOP
+    (21610) turns the opt-in off for good
   - siblings who tap within COALESCE seconds get one message
 Wording is first name, class and time. It says "checked out", never
 "picked up": this is attendance, not custody verification.
@@ -59,18 +60,13 @@ def is_adult(student) -> bool:
     return age is not None and age >= 18
 
 
-def guardian_phones(student):
-    """Guardian numbers only. Never the dancer's own phone."""
-    from app.sms import normalize_us_phone
-    fam = student.family
-    out = []
-    for raw in (student.parent_phone,
-                fam.primary_phone if fam else None,
-                fam.secondary_phone if fam else None):
-        p = normalize_us_phone(raw)
-        if p and p not in out:
-            out.append(p)
-    return out
+def sms_numbers(student):
+    """Where a text notice may go: only the number that opted in. Consent is
+    per number, so another guardian on file is never texted on someone
+    else's say-so."""
+    if not student.tap_sms_opt_in or not student.tap_sms_phone:
+        return []
+    return [student.tap_sms_phone]
 
 
 # ── Enqueue (inside the tap transaction) ────────────────────────────
@@ -247,11 +243,11 @@ def drain_once(now=None) -> int:
         else:
             phones = []
             for n in live:
-                for p in guardian_phones(n.student):
+                for p in sms_numbers(n.student):
                     if p not in phones:
                         phones.append(p)
             if not phones:
-                _skip(live, 'no guardian phone')
+                _skip(live, 'no opted-in number')
             elif not sms_service.is_configured():
                 _skip(live, 'SMS not configured')
             else:
@@ -281,11 +277,11 @@ def drain_once(now=None) -> int:
 def _record_stop(phone):
     """Twilio says this number replied STOP. Turn SMS off for every dancer it
     belongs to, so we never retry it."""
-    for s in Student.query.filter(Student.tap_sms_opt_in.is_(True)).all():
-        if phone in guardian_phones(s):
-            s.tap_sms_opt_in = False
-            from app.models import AuditLog
-            AuditLog.record(None, 'tap.sms_stop', f'{s.full_name}: parent replied STOP')
+    from app.models import AuditLog
+    for s in Student.query.filter(Student.tap_sms_opt_in.is_(True),
+                                  Student.tap_sms_phone == phone).all():
+        s.tap_sms_opt_in = False
+        AuditLog.record(None, 'tap.sms_stop', f'{s.full_name}: parent replied STOP')
 
 
 # ── Worker thread ───────────────────────────────────────────────────

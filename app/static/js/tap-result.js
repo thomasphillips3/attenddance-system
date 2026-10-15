@@ -55,6 +55,13 @@
         root.className = 'tap-screen tone-' + (TONE[o] || 'red');
         root.replaceChildren();
         root.appendChild(el('div', 'tap-word', WORD[o] || '!'));
+        if (r.photo_url) {
+            const img = el('img', 'tap-photo');
+            img.alt = '';
+            img.src = r.photo_url;
+            img.addEventListener('error', () => img.remove());
+            root.appendChild(img);
+        }
         if (r.student) {
             const last = r.student.last_name ? ' ' + r.student.last_name.charAt(0) + '.' : '';
             root.appendChild(el('div', 'tap-name', r.student.first_name + last));

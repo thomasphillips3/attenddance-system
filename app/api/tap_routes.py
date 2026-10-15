@@ -38,6 +38,9 @@ def tap_response(result, status=200):
     outbox.kick()
     body = result.to_dict()
     body['flags'] = flags_for(result.student, include_money=current_user.is_admin)
+    st = result.student
+    body['photo_url'] = (f'/api/students/{st.id}/photo?v={int(st.photo_updated_at.timestamp())}'
+                         if st is not None and st.photo_updated_at else None)
     return jsonify(body), status
 
 
@@ -715,8 +718,7 @@ SMS_CONSENT_TEXT = ("Text me when my dancer checks in and out of class. Message 
 
 
 def _notice_dict(student):
-    from app.tap.outbox import guardian_phones, is_adult
-    phones = guardian_phones(student)
+    from app.tap.outbox import is_adult, sms_numbers
     return {
         'student_id': student.id,
         'first_name': student.first_name,
@@ -724,7 +726,7 @@ def _notice_dict(student):
         'sms_on': bool(student.tap_sms_opt_in),
         'adult': is_adult(student),
         # Last 4 only: enough for a parent to recognize their number.
-        'sms_numbers': ['...' + p[-4:] for p in phones],
+        'sms_numbers': ['...' + p[-4:] for p in sms_numbers(student)],
     }
 
 
@@ -736,10 +738,14 @@ def get_my_notices():
         return jsonify({'error': 'Parents only'}), 403
     from app.tap.outbox import setting_flags
     flags = setting_flags()
+    from app.sms import normalize_us_phone
+    suggested = normalize_us_phone(current_user.phone)
     return jsonify({
         'children': [_notice_dict(c) for c in current_user.get_children()],
         'sms_available': flags['sms'],
         'sms_consent_text': SMS_CONSENT_TEXT,
+        # Prefill with the parent's own account phone only (theirs to agree for).
+        'suggested_phone': suggested,
     })
 
 
@@ -754,7 +760,8 @@ def update_my_notices():
     from datetime import datetime
     from app import db
     from app.models import AuditLog
-    from app.tap.outbox import guardian_phones, setting_flags
+    from app.sms import normalize_us_phone
+    from app.tap.outbox import setting_flags
     data = request.get_json(silent=True) or {}
     children = current_user.get_children()
     if 'email' in data:
@@ -762,17 +769,22 @@ def update_my_notices():
             c.tap_email_opt_out = not bool(data['email'])
     if 'sms' in data:
         want = bool(data['sms'])
+        phone = None
         if want:
             if not setting_flags()['sms']:
                 return jsonify({'error': "The studio hasn't turned on text notices yet"}), 400
             if not data.get('consent'):
                 return jsonify({'error': 'Check the box to agree to receive texts'}), 400
-            if not any(guardian_phones(c) for c in children):
-                return jsonify({'error': 'Add a parent phone number with the studio first'}), 400
+            # The parent types the number that agrees. Texts go there and
+            # nowhere else: another guardian's number needs their own consent.
+            phone = normalize_us_phone(data.get('phone'))
+            if phone is None:
+                return jsonify({'error': 'Enter the mobile number to text, like 248-555-0100'}), 400
         for c in children:
-            if want and not c.tap_sms_opt_in:
+            if want:
                 c.tap_sms_opt_in_at = datetime.utcnow()
                 c.tap_sms_opt_in_by = current_user.id
+                c.tap_sms_phone = phone
             c.tap_sms_opt_in = want
     AuditLog.record(current_user.id, 'tap.notices',
                     f"email={data.get('email', '-')} sms={data.get('sms', '-')}")
@@ -820,3 +832,91 @@ def staff_get_notices(student_id):
     if student is None:
         return jsonify({'error': 'Student not found'}), 404
     return jsonify(_notice_dict(student))
+
+
+# ── Staff-only dancer photo ─────────────────────────────────────────
+
+PHOTO_MAX_BYTES = 300 * 1024
+_PHOTO_PREFIXES = {'data:image/jpeg;base64,': 'image/jpeg', 'data:image/png;base64,': 'image/png',
+                   'data:image/webp;base64,': 'image/webp'}
+_PHOTO_MAGIC = {'image/jpeg': (b'\xff\xd8\xff',), 'image/png': (b'\x89PNG\r\n\x1a\n',),
+                'image/webp': (b'RIFF',)}
+
+
+def _photo_bytes(data_uri):
+    """(mimetype, bytes) for a stored data URI, or (None, None)."""
+    import base64
+    if not data_uri:
+        return None, None
+    for prefix, mime in _PHOTO_PREFIXES.items():
+        if data_uri.startswith(prefix):
+            try:
+                return mime, base64.b64decode(data_uri[len(prefix):], validate=True)
+            except Exception:  # noqa: BLE001 - corrupt stored value
+                return None, None
+    return None, None
+
+
+@bp.route('/students/<int:student_id>/photo', methods=['POST'])
+def upload_student_photo(student_id):
+    """Save the dancer's staff-only photo. The browser sends a small JPEG data
+    URI; the bytes are checked against the image type's signature so a
+    renamed file can't be stored as a "photo"."""
+    err = _auth_error()
+    if err:
+        return err
+    from datetime import datetime
+    from app import db
+    from app.models import AuditLog, Student
+    student = db.session.get(Student, student_id)
+    if student is None:
+        return jsonify({'error': 'Student not found'}), 404
+    data = request.get_json(silent=True) or {}
+    uri = data.get('photo') if isinstance(data.get('photo'), str) else ''
+    mime, raw = _photo_bytes(uri)
+    if mime is None:
+        return jsonify({'error': 'Send a JPEG, PNG or WebP photo'}), 400
+    if len(raw) > PHOTO_MAX_BYTES:
+        return jsonify({'error': 'That photo is too large (300 KB max)'}), 400
+    if not any(raw.startswith(m) for m in _PHOTO_MAGIC[mime]):
+        return jsonify({'error': "That file isn't a real image"}), 400
+    student.photo_data = uri
+    student.photo_updated_at = datetime.utcnow()
+    AuditLog.record(current_user.id, 'student.photo', f'{student.full_name}: photo saved')
+    db.session.commit()
+    return jsonify({'message': 'Saved', 'photo_url': f'/api/students/{student_id}/photo'})
+
+
+@bp.route('/students/<int:student_id>/photo', methods=['DELETE'])
+def delete_student_photo(student_id):
+    err = _auth_error()
+    if err:
+        return err
+    from app import db
+    from app.models import AuditLog, Student
+    student = db.session.get(Student, student_id)
+    if student is None:
+        return jsonify({'error': 'Student not found'}), 404
+    student.photo_data = None
+    student.photo_updated_at = None
+    AuditLog.record(current_user.id, 'student.photo', f'{student.full_name}: photo removed')
+    db.session.commit()
+    return jsonify({'message': 'Removed'})
+
+
+@bp.route('/students/<int:student_id>/photo', methods=['GET'])
+def get_student_photo(student_id):
+    """Staff only, never cached: a tap station must not keep dancers' faces."""
+    err = _auth_error()
+    if err:
+        return err
+    from flask import Response
+    from app import db
+    from app.models import Student
+    student = db.session.get(Student, student_id)
+    mime, raw = _photo_bytes(student.photo_data if student else None)
+    if mime is None:
+        return jsonify({'error': 'No photo'}), 404
+    resp = Response(raw, mimetype=mime)
+    resp.headers['Cache-Control'] = 'private, no-store'
+    return resp

@@ -203,12 +203,21 @@ class Student(db.Model):
     parent_email_2 = db.Column(db.String(120))
     parent_phone = db.Column(db.String(20))
     
+    # Staff-only ID photo shown on the tap result screen so staff can confirm
+    # the right dancer. A small JPEG data URI (resized in the browser), kept in
+    # the DB because Fly's disk is ephemeral. Deferred: never loaded with lists.
+    photo_data = deferred(db.Column(db.Text))
+    photo_updated_at = db.Column(db.DateTime)
+
     # Tap-In check-in notices. Email is on unless the household opts out; SMS
     # needs an explicit opt-in (who and when is kept as the consent record).
     tap_email_opt_out = db.Column(db.Boolean, default=False, nullable=False)
     tap_sms_opt_in = db.Column(db.Boolean, default=False, nullable=False)
     tap_sms_opt_in_at = db.Column(db.DateTime)
     tap_sms_opt_in_by = db.Column(db.Integer, db.ForeignKey('users.id'))
+    # The one number that agreed to texts (E.164). Consent is per number, so a
+    # second guardian on file is never texted on the first one's say-so.
+    tap_sms_phone = db.Column(db.String(20))
 
     # RFID information
     rfid_uid = db.Column(db.String(50), unique=True, index=True)

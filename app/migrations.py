@@ -25,6 +25,9 @@ STUDENT_COLUMNS = [
     ('tap_sms_opt_in', 'BOOLEAN DEFAULT 0 NOT NULL'),
     ('tap_sms_opt_in_at', 'DATETIME'),
     ('tap_sms_opt_in_by', 'INTEGER'),
+    ('tap_sms_phone', 'VARCHAR(20)'),
+    ('photo_data', 'TEXT'),
+    ('photo_updated_at', 'DATETIME'),
 ]
 
 USER_COLUMNS = [

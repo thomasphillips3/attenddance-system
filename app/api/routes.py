@@ -7907,10 +7907,12 @@ def my_data_export():
                     'chip_serial': t.uid,
                     'assigned_at': _utc_iso(t.activated_at or t.created_at),
                 } for t in NfcTag.query.filter_by(student_id=child.id).all()],
+                'checkin_photo': child.photo_data,
                 'checkin_notice_settings': {
                     'email_notices': not child.tap_email_opt_out,
                     'text_notices': bool(child.tap_sms_opt_in),
                     'text_consent_at': _utc_iso(child.tap_sms_opt_in_at),
+                    'text_number': child.tap_sms_phone,
                 },
                 'checkin_notices_sent': [{
                     'kind': n.kind,
