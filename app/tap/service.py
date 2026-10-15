@@ -97,6 +97,7 @@ class TapRequest:
     source: str = 'api'
     actor_id: int | None = None
     class_id: int | None = None   # staff's pick after a needs_class result
+    tag_id: int | None = None     # resolve by tag row (a pick made from a past result)
 
 
 @dataclass
@@ -136,7 +137,9 @@ class TapResult:
             'tag_label': (self.event.tag.label
                           if self.event and self.event.tag else None),
             'message': message_for(self),
-            'can_undo': bool(self.event and not self.replayed
+            # A reloaded result page keeps its Undo; undo_tap() itself refuses
+            # anything but the dancer's most recent tap.
+            'can_undo': bool(self.event
                              and self.event.outcome in ('checked_in', 'checked_out', 'reopened')
                              and not self.event.undone),
             'can_reopen': self.outcome in ('checked_out', 'already_out')
@@ -359,7 +362,11 @@ def process_tap(req: TapRequest, _retried: bool = False) -> TapResult:
     if req.source not in SOURCES:
         req.source = 'api'
 
-    tag = find_tag(token=req.token, uid=req.uid)
+    if req.tag_id is not None:
+        from app.models import NfcTag
+        tag = db.session.get(NfcTag, req.tag_id)
+    else:
+        tag = find_tag(token=req.token, uid=req.uid)
     if tag is None:
         return _refuse(req, now, 'unknown_tag')
     student = tag.student

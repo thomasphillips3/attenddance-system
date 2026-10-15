@@ -93,6 +93,37 @@ def reopen_tap_session(event_id):
     return tap_response(result)
 
 
+@bp.route('/tap/<int:event_id>/pick', methods=['POST'])
+def pick_class_for_tap(event_id):
+    """Staff chose a class on a 'pick a class' (or 'already out') result. The
+    tag comes from the original event, so the result page never needs the
+    token again."""
+    err = _auth_error()
+    if err:
+        return err
+    from app import db
+    from app.models import TapEvent
+    ev = db.session.get(TapEvent, event_id)
+    if ev is None or ev.tag is None:
+        return jsonify({'error': 'Not found'}), 404
+    data = request.get_json(silent=True) or {}
+    event_key = data.get('event_key')
+    if not isinstance(event_key, str) or not _EVENT_KEY_RE.match(event_key):
+        return jsonify({'error': 'event_key is required'}), 400
+    try:
+        class_id = int(data.get('class_id'))
+    except (TypeError, ValueError):
+        return jsonify({'error': 'class_id is required'}), 400
+    req = TapRequest(event_key=event_key, uid=None, source=ev.source,
+                     actor_id=current_user.id, class_id=class_id)
+    req.tag_id = ev.tag_id
+    try:
+        result = process_tap(req)
+    except TapError as e:
+        return jsonify({'error': str(e)}), 400
+    return tap_response(result, 200 if result.replayed else 201)
+
+
 @bp.route('/tap/<int:event_id>', methods=['GET'])
 def get_tap_event(event_id):
     err = _auth_error()
@@ -104,3 +135,554 @@ def get_tap_event(event_id):
     if ev is None:
         return jsonify({'error': 'Not found'}), 404
     return tap_response(result_from_event(ev, replayed=True))
+
+
+# ── Tag management (enroll, verify, lose, replace, lock) ────────────
+#
+# Enrollment on an Android phone: read the blank tag (serial + any URL already
+# on it) -> /tags/check -> mint a pending tag -> write its URL -> read it back
+# -> /tags/<id>/activate with the serial and the URL read back. On an iPhone
+# the URL is written with a tag-writer app and the tag is activated by tapping
+# it: the /t/<token> page offers "finish setup" for a pending tag.
+
+def _tag_dict(tag):
+    return {
+        'id': tag.id,
+        'label': tag.label,
+        'kind': tag.kind,
+        'status': tag.status,
+        'locked': tag.locked,
+        'source': tag.source,
+        'has_token': tag.token_hash is not None,
+        'uid': tag.uid,
+        'student_id': tag.student_id,
+        'student_name': tag.student.full_name if tag.student else None,
+        'created_at': tag.created_at.isoformat() + 'Z' if tag.created_at else None,
+        'activated_at': tag.activated_at.isoformat() + 'Z' if tag.activated_at else None,
+        'deactivated_at': tag.deactivated_at.isoformat() + 'Z' if tag.deactivated_at else None,
+    }
+
+
+def _student_or_404(student_id):
+    from app import db
+    from app.models import Student
+    return db.session.get(Student, student_id)
+
+
+def _uid_conflict(uid, student_id, ignore_tag_id=None):
+    """Error message if this chip is already somebody else's active tag."""
+    from app.models import NfcTag
+    other = NfcTag.query.filter_by(uid=uid).first()
+    if other is None or other.id == ignore_tag_id:
+        return None
+    if other.status == 'active' and other.student_id != student_id:
+        who = other.student.first_name if other.student else 'another dancer'
+        return f'This tag is already set up for {who} ({other.label}). Mark it lost or retired there first.'
+    if other.status == 'active' and other.student_id == student_id:
+        return f'This tag is already set up for this dancer ({other.label}).'
+    return None
+
+
+def _release_uid(uid, keep_tag_id):
+    """A lost/retired/pending row still holding this chip serial gives it up,
+    so a found or recycled tag can be enrolled again. The old row also loses
+    its token and is retired: the chip may still carry the old URL, and that
+    row must never be reactivated to check its old dancer in by phone."""
+    from app.models import NfcTag
+    for other in NfcTag.query.filter(NfcTag.uid == uid, NfcTag.id != keep_tag_id).all():
+        if other.status != 'active':
+            other.uid = None
+            other.token_hash = None
+            if other.status != 'lost':
+                other.status = 'retired'
+            other.deactivated_at = other.deactivated_at or _utcnow()
+
+
+def _audit(action, detail):
+    from app.models import AuditLog
+    AuditLog.record(current_user.id, action, detail)
+
+
+@bp.route('/students/<int:student_id>/tags', methods=['GET'])
+def list_student_tags(student_id):
+    err = _auth_error()
+    if err:
+        return err
+    from app.models import NfcTag
+    student = _student_or_404(student_id)
+    if student is None:
+        return jsonify({'error': 'Student not found'}), 404
+    from app.models import Setting
+    tags = (NfcTag.query.filter_by(student_id=student_id)
+            .order_by(NfcTag.status != 'active', NfcTag.id.desc()).all())
+    return jsonify({'tags': [_tag_dict(t) for t in tags],
+                    'lock_ready': bool(Setting.get('tap_base_url', ''))})
+
+
+@bp.route('/tags/check', methods=['POST'])
+def check_tag():
+    """Before writing: is this physical tag free to enroll for this dancer?"""
+    err = _auth_error()
+    if err:
+        return err
+    from app.tap.credentials import find_tag, normalize_uid
+    data = request.get_json(silent=True) or {}
+    try:
+        student_id = int(data.get('student_id'))
+    except (TypeError, ValueError):
+        return jsonify({'error': 'student_id is required'}), 400
+    uid = normalize_uid(data.get('uid')) if data.get('uid') else None
+    if data.get('uid') and uid is None:
+        return jsonify({'ok': False, 'error': "This tag's serial number can't be read. "
+                                              'Use an NTAG213 tag.'}), 200
+    if uid:
+        msg = _uid_conflict(uid, student_id)
+        if msg:
+            return jsonify({'ok': False, 'error': msg}), 200
+    url = data.get('url') if isinstance(data.get('url'), str) else ''
+    token = url.rstrip('/').rsplit('/t/', 1)[-1] if '/t/' in url else None
+    if token:
+        existing = find_tag(token=token)
+        if existing and existing.status == 'active' and existing.student_id != student_id:
+            who = existing.student.first_name if existing.student else 'another dancer'
+            return jsonify({'ok': False,
+                            'error': f'This tag is already set up for {who} ({existing.label}).'}), 200
+    return jsonify({'ok': True, 'uid': uid})
+
+
+@bp.route('/students/<int:student_id>/tags', methods=['POST'])
+def mint_student_tag(student_id):
+    """Create a pending tag and return its URL to write. The token is shown
+    this once; only its hash is kept."""
+    err = _auth_error()
+    if err:
+        return err
+    from app import db
+    from app.models import NfcTag
+    from app.tap.credentials import (
+        TAG_KINDS, hash_token, label_for, mint_token, normalize_uid, tag_url,
+    )
+    student = _student_or_404(student_id)
+    if student is None:
+        return jsonify({'error': 'Student not found'}), 404
+    if not student.is_active:
+        return jsonify({'error': 'This dancer is inactive'}), 400
+    data = request.get_json(silent=True) or {}
+    kind = data.get('kind') if data.get('kind') in TAG_KINDS else 'fob'
+    uid = None
+    if data.get('uid'):
+        uid = normalize_uid(data.get('uid'))
+        if uid is None:
+            return jsonify({'error': "That serial number isn't valid"}), 400
+        msg = _uid_conflict(uid, student_id)
+        if msg:
+            return jsonify({'error': msg}), 409
+    token = mint_token()
+    tag = NfcTag(student_id=student_id, token_hash=hash_token(token), kind=kind,
+                 status='pending', created_by=current_user.id)
+    db.session.add(tag)
+    db.session.flush()
+    tag.label = label_for(tag.id)
+    if uid:
+        _release_uid(uid, tag.id)
+        db.session.flush()
+        tag.uid = uid
+    _audit('tag.mint', f'{tag.label} ({kind}) for {student.full_name}')
+    db.session.commit()
+    return jsonify({**_tag_dict(tag), 'url': tag_url(token)}), 201
+
+
+@bp.route('/students/<int:student_id>/tags/uid', methods=['POST'])
+def enroll_uid_tag(student_id):
+    """Enroll a tag by chip serial only (USB reader enrollment). It works on
+    the USB station; it has no URL, so phones can't tap it."""
+    err = _auth_error()
+    if err:
+        return err
+    from app import db
+    from app.models import NfcTag
+    from app.tap.credentials import TAG_KINDS, label_for, normalize_uid
+    student = _student_or_404(student_id)
+    if student is None:
+        return jsonify({'error': 'Student not found'}), 404
+    data = request.get_json(silent=True) or {}
+    uid = normalize_uid(data.get('uid'))
+    if uid is None:
+        return jsonify({'error': 'Scan the tag on the USB reader. The serial must be 8 or 14 '
+                                 'hex characters.'}), 400
+    msg = _uid_conflict(uid, student_id)
+    if msg:
+        return jsonify({'error': msg}), 409
+    kind = data.get('kind') if data.get('kind') in TAG_KINDS else 'card'
+    tag = NfcTag(student_id=student_id, kind=kind, status='active',
+                 created_by=current_user.id, activated_at=_utcnow())
+    db.session.add(tag)
+    db.session.flush()
+    tag.label = label_for(tag.id)
+    _release_uid(uid, tag.id)
+    db.session.flush()
+    tag.uid = uid
+    _audit('tag.enroll_uid', f'{tag.label} for {student.full_name}')
+    db.session.commit()
+    return jsonify(_tag_dict(tag)), 201
+
+
+def _utcnow():
+    from datetime import datetime
+    return datetime.utcnow()
+
+
+def _get_tag(tag_id):
+    from app import db
+    from app.models import NfcTag
+    return db.session.get(NfcTag, tag_id)
+
+
+@bp.route('/tags/<int:tag_id>/activate', methods=['POST'])
+def activate_tag(tag_id):
+    """Finish enrollment. With `url` (read back from the chip after writing)
+    the token must match this tag, which proves the write landed. Without it
+    the caller is the /t/<token> page, which already proved the token."""
+    err = _auth_error()
+    if err:
+        return err
+    from app import db
+    from app.tap.credentials import hash_token, normalize_uid
+    tag = _get_tag(tag_id)
+    if tag is None:
+        return jsonify({'error': 'Tag not found'}), 404
+    if tag.status not in ('pending', 'active'):
+        return jsonify({'error': f'This tag is {tag.status}. Set up a new tag instead.'}), 400
+    if tag.student is None or not tag.student.is_active:
+        return jsonify({'error': 'This tag has no active dancer'}), 400
+    data = request.get_json(silent=True) or {}
+    url = data.get('url') if isinstance(data.get('url'), str) else ''
+    token = data.get('token') if isinstance(data.get('token'), str) else None
+    if url:
+        token = url.rstrip('/').rsplit('/t/', 1)[-1] if '/t/' in url else ''
+    if not token or tag.token_hash != hash_token(token):
+        return jsonify({'error': "The tag didn't read back correctly. Hold it still and try again."}), 400
+    if data.get('uid'):
+        uid = normalize_uid(data.get('uid'))
+        if uid is None:
+            return jsonify({'error': "This tag's serial number can't be read"}), 400
+        msg = _uid_conflict(uid, tag.student_id, ignore_tag_id=tag.id)
+        if msg:
+            return jsonify({'error': msg}), 409
+        _release_uid(uid, tag.id)
+        db.session.flush()
+        tag.uid = uid
+    was = tag.status
+    tag.status = 'active'
+    tag.activated_at = tag.activated_at or _utcnow()
+    tag.deactivated_at = None
+    if was != 'active':
+        _audit('tag.activate', f'{tag.label} for {tag.student.full_name}')
+    db.session.commit()
+    return jsonify(_tag_dict(tag))
+
+
+@bp.route('/tags/<int:tag_id>/status', methods=['POST'])
+def set_tag_status(tag_id):
+    """Mark a tag lost or retired, or reactivate a found one."""
+    err = _auth_error()
+    if err:
+        return err
+    from app import db
+    tag = _get_tag(tag_id)
+    if tag is None:
+        return jsonify({'error': 'Tag not found'}), 404
+    data = request.get_json(silent=True) or {}
+    status = data.get('status')
+    if status not in ('lost', 'retired', 'active'):
+        return jsonify({'error': "status must be 'lost', 'retired' or 'active'"}), 400
+    if status == 'active':
+        if tag.status not in ('lost', 'retired'):
+            return jsonify({'error': 'Only a lost or retired tag can be reactivated'}), 400
+        if tag.student is None or not tag.student.is_active:
+            return jsonify({'error': 'This tag has no active dancer'}), 400
+        if tag.token_hash is None and tag.uid is None:
+            return jsonify({'error': 'This tag has nothing left to identify it'}), 400
+        if tag.uid:
+            msg = _uid_conflict(tag.uid, tag.student_id, ignore_tag_id=tag.id)
+            if msg:
+                return jsonify({'error': msg}), 409
+        tag.deactivated_at = None
+    else:
+        tag.deactivated_at = _utcnow()
+    _audit(f'tag.{status}', f'{tag.label} ({tag.student.full_name if tag.student else "no dancer"})')
+    tag.status = status
+    db.session.commit()
+    return jsonify(_tag_dict(tag))
+
+
+@bp.route('/tags/<int:tag_id>/replace', methods=['POST'])
+def replace_tag(tag_id):
+    """Lost tag -> mark it lost and mint the replacement in one step."""
+    err = _auth_error()
+    if err:
+        return err
+    from app import db
+    from app.models import NfcTag
+    from app.tap.credentials import hash_token, label_for, mint_token, tag_url
+    old = _get_tag(tag_id)
+    if old is None or old.student is None:
+        return jsonify({'error': 'Tag not found'}), 404
+    if not old.student.is_active:
+        return jsonify({'error': 'This dancer is inactive'}), 400
+    if old.status in ('active', 'pending'):
+        old.status = 'lost'
+        old.deactivated_at = _utcnow()
+    data = request.get_json(silent=True) or {}
+    kind = data.get('kind') if data.get('kind') in ('fob', 'card', 'other') else old.kind
+    token = mint_token()
+    new = NfcTag(student_id=old.student_id, token_hash=hash_token(token), kind=kind,
+                 status='pending', created_by=current_user.id)
+    db.session.add(new)
+    db.session.flush()
+    new.label = label_for(new.id)
+    _audit('tag.replace', f'{old.label} -> {new.label} for {old.student.full_name}')
+    db.session.commit()
+    return jsonify({'old': _tag_dict(old), 'new': {**_tag_dict(new), 'url': tag_url(token)}}), 201
+
+
+@bp.route('/tags/<int:tag_id>', methods=['DELETE'])
+def delete_pending_tag(tag_id):
+    """Throw away an abandoned setup. Only a pending tag that never checked
+    anyone in can be deleted; anything else is marked retired instead."""
+    err = _auth_error()
+    if err:
+        return err
+    from app import db
+    from app.models import TapEvent
+    tag = _get_tag(tag_id)
+    if tag is None:
+        return jsonify({'error': 'Tag not found'}), 404
+    if tag.status != 'pending' or TapEvent.query.filter_by(tag_id=tag.id).first():
+        return jsonify({'error': 'Only an unfinished setup can be deleted. Retire the tag instead.'}), 400
+    db.session.delete(tag)
+    db.session.commit()
+    return jsonify({'message': 'Deleted'})
+
+
+@bp.route('/tags/<int:tag_id>/lock', methods=['POST'])
+def lock_tag(tag_id):
+    """Record that the chip was made read-only (the phone does the locking).
+    Locking is permanent and bakes the hostname into the tag for good, so it
+    is refused until an admin has saved the permanent tag address."""
+    err = _auth_error()
+    if err:
+        return err
+    from app import db
+    from app.models import Setting
+    tag = _get_tag(tag_id)
+    if tag is None:
+        return jsonify({'error': 'Tag not found'}), 404
+    if not Setting.get('tap_base_url', ''):
+        return jsonify({'error': 'Save the permanent tag address in Tap-In settings before '
+                                 'locking any tag. Locked tags can never be rewritten.'}), 400
+    if tag.status != 'active' or tag.token_hash is None:
+        return jsonify({'error': 'Only an active tag with a link can be locked'}), 400
+    tag.locked = True
+    _audit('tag.lock', f'{tag.label}')
+    db.session.commit()
+    return jsonify(_tag_dict(tag))
+
+
+@bp.route('/tags/missing', methods=['GET'])
+def students_without_tags():
+    """Active dancers with no active tag: who still needs one."""
+    err = _auth_error()
+    if err:
+        return err
+    from app import db
+    from app.models import NfcTag, Student
+    has = {sid for (sid,) in db.session.query(NfcTag.student_id).filter(
+        NfcTag.status == 'active', NfcTag.student_id.isnot(None))}
+    pending = {sid for (sid,) in db.session.query(NfcTag.student_id).filter(
+        NfcTag.status == 'pending', NfcTag.student_id.isnot(None))}
+    students = (Student.query.filter_by(is_active=True)
+                .order_by(Student.last_name, Student.first_name).all())
+    missing = [{'id': s.id, 'name': s.full_name, 'has_pending': s.id in pending}
+               for s in students if s.id not in has]
+    return jsonify({'students': missing, 'count': len(missing),
+                    'total_active': len(students)})
+
+
+# ── Tap-In settings ─────────────────────────────────────────────────
+
+_INT_SETTINGS = ('tap_early_minutes', 'tap_late_minutes', 'tap_dedup_seconds',
+                 'tap_dwell_minutes', 'tap_tardy_grace_minutes')
+
+
+def _tap_settings():
+    from app.models import NfcTag, Setting
+    from app.tap.credentials import tag_base_url
+    from app.tap.service import rollover_enabled, setting_int
+    return {
+        **{k: setting_int(k) for k in _INT_SETTINGS},
+        'tap_rollover_enabled': rollover_enabled(),
+        'tap_base_url': Setting.get('tap_base_url', ''),
+        'effective_base_url': tag_base_url(),
+        'locked_tags': NfcTag.query.filter_by(locked=True).count(),
+    }
+
+
+def _valid_base_url(raw, allow_http):
+    from urllib.parse import urlparse
+    raw = (raw or '').strip().rstrip('/')
+    if not raw:
+        return '', None
+    u = urlparse(raw)
+    if u.scheme not in (('https', 'http') if allow_http else ('https',)) or not u.netloc:
+        return None, 'The tag address must start with https:// and name a host'
+    if u.path or u.query or u.fragment or u.params:
+        return None, 'Use just the address, like https://attenddance.fly.dev (no path)'
+    return f'{u.scheme}://{u.netloc.lower()}', None
+
+
+@bp.route('/tap/settings', methods=['GET'])
+def get_tap_settings():
+    err = _auth_error()
+    if err:
+        return err
+    return jsonify(_tap_settings())
+
+
+@bp.route('/tap/settings', methods=['PUT'])
+def update_tap_settings():
+    err = _auth_error()
+    if err:
+        return err
+    if not current_user.is_admin:
+        return jsonify({'error': 'Admin access required'}), 403
+    from flask import current_app
+    from app import db
+    from app.models import AuditLog, NfcTag, Setting
+    from app.tap.service import SETTING_LIMITS
+    data = request.get_json(silent=True) or {}
+    changes = {}
+    for key in _INT_SETTINGS:
+        if key in data:
+            try:
+                val = int(data[key])
+            except (TypeError, ValueError):
+                return jsonify({'error': f'{key} must be a whole number'}), 400
+            if not 0 <= val <= SETTING_LIMITS[key]:
+                return jsonify({'error': f'{key} must be between 0 and {SETTING_LIMITS[key]}'}), 400
+            if key == 'tap_dedup_seconds' and val < 3:
+                return jsonify({'error': 'Keep the double-tap window at 3 seconds or more'}), 400
+            changes[key] = str(val)
+    if 'tap_rollover_enabled' in data:
+        changes['tap_rollover_enabled'] = '1' if data['tap_rollover_enabled'] in (True, 1, '1', 'true', 'on') else '0'
+    if 'tap_base_url' in data:
+        url, verr = _valid_base_url(data.get('tap_base_url'),
+                                    allow_http=current_app.debug or current_app.testing)
+        if verr:
+            return jsonify({'error': verr}), 400
+        current = Setting.get('tap_base_url', '')
+        if url != current and NfcTag.query.filter_by(locked=True).count() \
+                and not data.get('confirm_break_locked'):
+            return jsonify({'error': 'Locked tags still point at the current address. Changing it '
+                                     'breaks every locked tag unless that address keeps redirecting '
+                                     'here.', 'needs_confirm': True}), 409
+        changes['tap_base_url'] = url
+    for key, val in changes.items():
+        row = Setting.query.filter_by(key=key).first()
+        if row:
+            row.value = val
+        else:
+            db.session.add(Setting(key=key, value=val))
+    if changes:
+        AuditLog.record(current_user.id, 'tap.settings',
+                        ', '.join(f'{k}={v}' for k, v in sorted(changes.items())))
+    db.session.commit()
+    return jsonify(_tap_settings())
+
+
+# ── Tap station: liveness and offline replay ────────────────────────
+
+MAX_BATCH = 200
+# How far back a queued tap may still be replayed. Older than a day, the card
+# has almost certainly been fixed by hand; staff mark it there instead.
+REPLAY_MAX_AGE_HOURS = 24
+REPLAY_FUTURE_SLACK_SECONDS = 120
+
+
+@bp.route('/tap/ping', methods=['GET'])
+def tap_ping():
+    """The station's "am I online and still signed in" check."""
+    err = _auth_error()
+    if err:
+        return err
+    from datetime import datetime
+    return jsonify({'ok': True, 'user': current_user.first_name,
+                    'server_time': datetime.now().replace(microsecond=0).isoformat()})
+
+
+def replay_time(raw):
+    """Studio-local naive datetime for a queued tap's epoch-ms timestamp, or
+    (None, reason). The station's clock is trusted only within bounds: a
+    phone with a wrong clock must not stamp attendance on another day."""
+    from datetime import datetime, timedelta
+    try:
+        ms = float(raw)
+    except (TypeError, ValueError):
+        return None, 'missing time'
+    try:
+        when = datetime.fromtimestamp(ms / 1000.0).replace(microsecond=0)
+    except (OverflowError, OSError, ValueError):
+        return None, 'bad time'
+    now = datetime.now().replace(microsecond=0)
+    if when > now + timedelta(seconds=REPLAY_FUTURE_SLACK_SECONDS):
+        return now, None
+    if when < now - timedelta(hours=REPLAY_MAX_AGE_HOURS):
+        return None, 'older than a day; mark it on the attendance card'
+    return min(when, now), None
+
+
+@bp.route('/tap/batch', methods=['POST'])
+def record_tap_batch():
+    """Replay taps a station queued while offline, in the order they happened.
+    Each is idempotent on its event_key, so a retried batch never doubles."""
+    err = _auth_error()
+    if err:
+        return err
+    data = request.get_json(silent=True) or {}
+    taps = data.get('taps')
+    if not isinstance(taps, list):
+        return jsonify({'error': 'taps must be a list'}), 400
+    if len(taps) > MAX_BATCH:
+        return jsonify({'error': f'Send at most {MAX_BATCH} taps at a time'}), 400
+    items = [t for t in taps if isinstance(t, dict)]
+    items.sort(key=lambda t: (t.get('occurred_at') if isinstance(t.get('occurred_at'), (int, float)) else 0))
+    out = []
+    for t in items:
+        key = t.get('event_key')
+        if not isinstance(key, str) or not _EVENT_KEY_RE.match(key):
+            out.append({'event_key': key if isinstance(key, str) else None, 'ok': False,
+                        'error': 'bad event_key'})
+            continue
+        token = t.get('token') if isinstance(t.get('token'), str) else None
+        uid = t.get('uid') if isinstance(t.get('uid'), (str, int)) else None
+        if not token and uid is None:
+            out.append({'event_key': key, 'ok': False, 'error': 'token or uid is required'})
+            continue
+        when, why = replay_time(t.get('occurred_at'))
+        if when is None:
+            out.append({'event_key': key, 'ok': False, 'error': why})
+            continue
+        source = t.get('source') if t.get('source') in SOURCES else 'kiosk'
+        try:
+            result = process_tap(TapRequest(event_key=key, token=token,
+                                            uid=str(uid) if uid is not None else None,
+                                            occurred_at=when, source=source,
+                                            actor_id=current_user.id))
+        except TapError as e:
+            out.append({'event_key': key, 'ok': False, 'error': str(e)})
+            continue
+        body = result.to_dict()
+        out.append({'event_key': key, 'ok': True, 'outcome': body['outcome'],
+                    'message': body['message'],
+                    'first_name': body['student']['first_name'] if body['student'] else None})
+    return jsonify({'results': out})

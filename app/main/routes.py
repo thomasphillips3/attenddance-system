@@ -664,3 +664,116 @@ def manual_page():
     """The studio operations manual. Admin-only: it documents billing, payout
     settings, and destructive admin actions that teachers can't perform anyway."""
     return render_template('manual.html', updated=date.today())
+
+
+# ── Tap-In ──────────────────────────────────────────────────────────
+
+@bp.route('/tap-in')
+@staff_required
+def tap_hub():
+    """Tap-In home: start a station, who still needs a tag, staff phone setup,
+    and (admin) the timing settings and the permanent tag address."""
+    return render_template('tap/hub.html', title='Tap-In')
+
+
+def _no_store(resp, tag_url=False):
+    """Tap pages carry a live tag token in the URL or the page. Never cache
+    them, never index them, and never leak the token in a Referer."""
+    resp.headers['Cache-Control'] = 'no-store, max-age=0'
+    resp.headers['Referrer-Policy'] = 'no-referrer'
+    resp.headers['X-Robots-Tag'] = 'noindex, nofollow'
+    return resp
+
+
+@bp.route('/t/<path:token>')
+def tap_landing(token):
+    """Where a tag sends a phone. GET never changes anything: link previews,
+    prefetch and tab restores all GET. For staff the page itself records the
+    tap with one idempotent POST. Everyone else, including a signed-in parent,
+    gets the same generic page whether the token is real, unknown or revoked,
+    and the token is never even looked up."""
+    from flask import make_response
+    if not current_user.is_authenticated or not current_user.is_staff:
+        return _no_store(make_response(render_template('tap/generic.html')))
+    from app.tap.credentials import find_tag
+    tag = find_tag(token=token)
+    pending = None
+    if tag is not None and tag.status == 'pending' and tag.student is not None:
+        pending = {'id': tag.id, 'label': tag.label, 'first_name': tag.student.first_name}
+    return _no_store(make_response(render_template('tap/landing.html', mode='tap',
+                                                   pending=pending, event_id=None)))
+
+
+@bp.route('/tap-in/result/<int:event_id>')
+@staff_required
+def tap_result(event_id):
+    """The landing page swaps its URL to this after recording, so a reload or
+    a restored tab shows the recorded result instead of tapping again."""
+    from flask import make_response
+    return _no_store(make_response(render_template('tap/landing.html', mode='result',
+                                                   pending=None, event_id=event_id)))
+
+
+@bp.route('/sw.js')
+def service_worker():
+    """The service worker, served from the root so its scope covers every page,
+    including /t/<token>: an offline tag tap then says NOT RECORDED instead of
+    a browser error page."""
+    from flask import current_app, send_from_directory
+    resp = send_from_directory(current_app.static_folder, 'sw.js',
+                               mimetype='application/javascript')
+    resp.headers['Service-Worker-Allowed'] = '/'
+    resp.headers['Cache-Control'] = 'no-cache'
+    return resp
+
+
+@bp.route('/tap-in/station')
+@staff_required
+def tap_station():
+    """Hands-free tap station: Web NFC on Android Chrome, plus a USB
+    keyboard-wedge reader on any device. No student data in the page."""
+    from flask import make_response
+    resp = make_response(render_template('tap/station.html'))
+    resp.headers['Cache-Control'] = 'no-cache'
+    resp.headers['X-Robots-Tag'] = 'noindex, nofollow'
+    return resp
+
+
+@bp.route('/tap-in/today')
+@staff_required
+def tap_today():
+    """Today's tap sessions by class, and who tapped in but never out."""
+    from datetime import datetime as _dt
+    from app.models import TapEvent
+    raw = request.args.get('date')
+    try:
+        day = _dt.strptime(raw, '%Y-%m-%d').date() if raw else date.today()
+    except ValueError:
+        day = date.today()
+    rows = (Attendance.query
+            .filter(func.date(Attendance.check_in_time) == day,
+                    Attendance.check_in_method == 'tap')
+            .order_by(Attendance.check_in_time).all())
+    now = _dt.now()
+    by_class = {}
+    for a in rows:
+        cls = a.dance_class
+        if cls is None:
+            continue
+        g = by_class.setdefault(cls.id, {'cls': cls, 'rows': [], 'missing': 0})
+        ended = _dt.combine(day, cls.end_time) < now
+        missing = a.is_present and a.check_out_time is None and ended
+        g['rows'].append({'att': a, 'missing': missing})
+        if missing:
+            g['missing'] += 1
+    groups = sorted(by_class.values(), key=lambda g: (g['cls'].start_time, g['cls'].name))
+    missed = [r for g in groups for r in g['rows'] if r['missing']]
+    refused = (TapEvent.query
+               .filter(func.date(TapEvent.occurred_at) == day,
+                       TapEvent.outcome.in_(('unknown_tag', 'inactive_tag', 'unassigned_tag',
+                                             'inactive_student', 'needs_class')))
+               .order_by(desc(TapEvent.occurred_at)).limit(50).all())
+    return render_template('tap/today.html', title='Today\'s taps', day=day, groups=groups,
+                           missed=missed, refused=refused,
+                           prev_day=day - timedelta(days=1), next_day=day + timedelta(days=1),
+                           is_today=day == date.today())

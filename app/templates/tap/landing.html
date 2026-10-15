@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#8f2db5">
+<title>Tap-In</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tap.css') }}">
+</head>
+<body class="tap">
+{# Staff-only. Standalone (no Tailwind/Alpine CDN) so it paints fast on a
+   phone that just read a tag over cellular. The tap is recorded by the POST
+   below, never by the GET that loaded this page. #}
+<div id="screen" class="tap-screen tone-idle"><div class="tap-spinner"></div><div class="tap-msg">Recording…</div></div>
+<noscript><p style="text-align:center;padding:1rem">Turn on JavaScript to record taps.</p></noscript>
+
+<script src="{{ url_for('static', filename='js/tap-nfc.js') }}"></script>
+<script src="{{ url_for('static', filename='js/tap-result.js') }}"></script>
+<script>
+(function () {
+    const MODE = {{ mode|tojson }};
+    const EVENT_ID = {{ event_id|tojson }};
+    const PENDING = {{ pending|tojson }};
+    const screen = document.getElementById('screen');
+    const token = location.pathname.indexOf('/t/') === 0
+        ? decodeURIComponent(location.pathname.slice(3)).replace(/\/$/, '') : '';
+    const eventKey = TapNFC.newEventKey('url');
+    let current = null;
+
+    function buzz(ms) { if (navigator.vibrate) { try { navigator.vibrate(ms); } catch (e) { } } }
+
+    async function call(url, body, timeoutMs) {
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), timeoutMs || 12000);
+        try {
+            const res = await fetch(url, {
+                method: body === undefined ? 'GET' : 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: body === undefined ? undefined : JSON.stringify(body),
+                signal: ctrl.signal, cache: 'no-store', credentials: 'same-origin',
+            });
+            let data = {};
+            try { data = await res.json(); } catch (e) { data = {}; }
+            return { res, data };
+        } finally { clearTimeout(t); }
+    }
+
+    function signIn() {
+        const next = token ? '/t/' + encodeURIComponent(token) : location.pathname;
+        TapScreen.message(screen, 'amber', '!', 'Sign in again',
+            'Your sign-in expired, so nothing was recorded. Sign in, and this tap will record.',
+            [TapScreen.link('Sign in', '/auth/login?next=' + encodeURIComponent(next))]);
+    }
+
+    function notRecorded(why, retry) {
+        buzz([60, 80, 60]);
+        TapScreen.message(screen, 'red', 'NOT RECORDED', '', why,
+            retry ? [TapScreen.button('Try again', 'tap-btn-light', retry)] : []);
+    }
+
+    function show(r) {
+        current = r;
+        if (r.event_id && location.pathname !== '/tap-in/result/' + r.event_id) {
+            // Take the token out of the address bar: a reload or restored tab
+            // now shows this result instead of tapping again.
+            history.replaceState(null, '', '/tap-in/result/' + r.event_id);
+        }
+        TapScreen.render(screen, r, { onUndo, onReopen, onPick });
+    }
+
+    async function handle(promise, retry) {
+        let out;
+        try { out = await promise; }
+        catch (e) { return notRecorded('No connection to the studio system. Check the phone has signal.', retry); }
+        const { res, data } = out;
+        if (res.status === 401) return signIn();
+        if (!res.ok) return notRecorded(data.error || ('Error ' + res.status), retry);
+        buzz(TapScreen.tone(data) === 'red' ? [60, 80, 60] : 70);
+        show(data);
+    }
+
+    function record() {
+        TapScreen.message(screen, 'idle', 'spinner', '', 'Recording…');
+        handle(call('/api/tap', { event_key: eventKey, token, source: 'url' }), record);
+    }
+
+    async function onUndo(btn) {
+        btn.disabled = true;
+        const { res, data } = await call('/api/tap/' + current.event_id + '/undo', {}).catch(() => ({ res: { ok: false, status: 0 }, data: {} }));
+        if (res.status === 401) return signIn();
+        if (!res.ok) { btn.disabled = false; alert(data.error || 'Could not undo'); return; }
+        TapScreen.message(screen, 'grey', 'UNDONE', current.student ? current.student.first_name : '',
+            'Nothing is recorded for that tap.');
+    }
+
+    function onReopen(btn) {
+        btn.disabled = true;
+        handle(call('/api/tap/' + current.event_id + '/reopen', {}));
+    }
+
+    function onPick(cls, btn) {
+        btn.disabled = true;
+        const key = TapNFC.newEventKey('pick');
+        const id = current.event_id;
+        const go = () => handle(call('/api/tap/' + id + '/pick', { event_key: key, class_id: cls.id }), go);
+        go();
+    }
+
+    function finishSetup() {
+        TapScreen.message(screen, 'amber', '', 'Finish setup',
+            'Tag ' + PENDING.label + ' is ready to be ' + PENDING.first_name + "'s.",
+            [TapScreen.button('Finish setup', 'tap-btn-light', async (btn) => {
+                btn.disabled = true;
+                let out;
+                try { out = await call('/api/tags/' + PENDING.id + '/activate', { token }); }
+                catch (e) { btn.disabled = false; return notRecorded('No connection. Try again.', null); }
+                if (out.res.status === 401) return signIn();
+                if (!out.res.ok) { btn.disabled = false; alert(out.data.error || 'Could not finish setup'); return; }
+                history.replaceState(null, '', '/tap-in');
+                TapScreen.message(screen, 'green', '✓', out.data.label + ' is ready',
+                    'Tap it again to check ' + PENDING.first_name + ' in. Write ' + out.data.label +
+                    " on the tag's box, never the dancer's name.");
+            })]);
+    }
+
+    if (MODE === 'result') {
+        handle(call('/api/tap/' + EVENT_ID));
+        return;
+    }
+    if (PENDING) { finishSetup(); return; }
+    const nav = (performance.getEntriesByType && performance.getEntriesByType('navigation')[0]) || {};
+    if (nav.type === 'reload' || nav.type === 'back_forward') {
+        TapScreen.message(screen, 'idle', '', 'Nothing recorded',
+            'This page was reloaded, so it did not record a tap. Tap the tag again, or record it now.',
+            [TapScreen.button('Record this tap now', 'tap-btn-primary', record)]);
+        return;
+    }
+    record();
+})();
+</script>
+</body>
+</html>

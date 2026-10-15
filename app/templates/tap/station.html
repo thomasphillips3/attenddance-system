@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#8f2db5">
+<title>Tap station</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tap.css') }}">
+<style>
+  .bar { position: fixed; top: 0; left: 0; right: 0; display: flex; align-items: center; gap: .5rem;
+         padding: .6rem .9rem; font-size: .9rem; z-index: 5; }
+  .chip { padding: .3rem .7rem; border-radius: 999px; font-weight: 700; background: rgba(0,0,0,.12); }
+  .chip.ok { background: #1f8a4c; color: #fff; }
+  .chip.off { background: #c62f2f; color: #fff; }
+  .chip.q { background: #b8761a; color: #fff; }
+  .bar a { margin-left: auto; color: inherit; font-weight: 700; text-decoration: none; opacity: .8; }
+  .ready-word { font-size: clamp(2.4rem, 12vw, 4.5rem); font-weight: 700; }
+  .hint { font-size: 1.1rem; color: #5a534c; margin-top: .6rem; max-width: 26rem; }
+  .tone-idle .hint { color: #5a534c; }
+</style>
+</head>
+<body class="tap">
+{# The station shell holds no student data: names arrive per tap from /api
+   and are never stored. The service worker caches this page so a station can
+   reload with no Wi-Fi and keep queuing. #}
+<div class="bar"><span id="net" class="chip">…</span><span id="queue" class="chip q" hidden></span><span id="mode" class="chip"></span><a href="/tap-in">Exit</a></div>
+<div id="screen" class="tap-screen tone-idle"></div>
+
+<script src="{{ url_for('static', filename='js/tap-nfc.js') }}"></script>
+<script src="{{ url_for('static', filename='js/tap-result.js') }}"></script>
+<script src="{{ url_for('static', filename='js/tap-station.js') }}"></script>
+</body>
+</html>

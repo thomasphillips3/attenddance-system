@@ -65,6 +65,11 @@ jobs:
           RFID_ENABLED: "false"
         run: python tests/test_tap.py
 
+      - name: Tap-In flows harness
+        env:
+          RFID_ENABLED: "false"
+        run: python tests/test_tap_flows.py
+
       - name: Message attachment harness
         env:
           RFID_ENABLED: "false"

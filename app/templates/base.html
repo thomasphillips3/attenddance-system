@@ -168,6 +168,7 @@
                 {{ nl('Calendar', 'main.calendar_page', 'calendar-days', ['calendar']) }}
                 {{ nl('Take Attendance', 'main.take_attendance', 'clipboard-check', ['take']) }}
                 {{ nl('Attendance Log', 'main.attendance', 'list-check', ['main.attendance']) }}
+                {{ nl('Tap-In', 'main.tap_hub', 'id-card', ['main.tap_']) }}
                 {% if current_user.is_admin %}{{ nl('Makeups', 'main.makeups_page', 'rotate', ['makeups']) }}{% endif %}
                 {% if current_user.is_admin %}{{ nl('Skills', 'main.skills_page', 'medal', ['skills']) }}{% endif %}
 
@@ -281,7 +282,7 @@
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {
-                navigator.serviceWorker.register('/static/sw.js').catch(function () {});
+                navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(function () {});
             });
         }
         // The API returns class times as 24-hour "HH:MM" (that's what

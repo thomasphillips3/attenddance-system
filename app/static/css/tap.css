@@ -1,0 +1,35 @@
+/* Tap-In result screens: the tag landing page and the tap station. Readable
+   at arm's length: one huge word, the first name, the class. Colors match the
+   app tokens: ok #1f8a4c, info #2563c9, warn #b8761a, danger #c62f2f. */
+html, body { height: 100%; }
+body.tap { margin: 0; font-family: "Atkinson Hyperlegible", system-ui, -apple-system, sans-serif;
+           background: #f7f3ee; color: #1f1a17; -webkit-font-smoothing: antialiased; }
+.tap-screen { min-height: 100vh; box-sizing: border-box; display: flex; flex-direction: column;
+              align-items: center; justify-content: center; text-align: center; padding: 1.5rem 1.25rem 2rem;
+              transition: background-color .15s ease; }
+.tap-screen.tone-green { background: #1f8a4c; color: #fff; }
+.tap-screen.tone-blue  { background: #2563c9; color: #fff; }
+.tap-screen.tone-amber { background: #b8761a; color: #fff; }
+.tap-screen.tone-red   { background: #c62f2f; color: #fff; }
+.tap-screen.tone-grey  { background: #5a534c; color: #fff; }
+.tap-screen.tone-idle  { background: #f7f3ee; color: #1f1a17; }
+.tap-word { font-size: clamp(3.5rem, 18vw, 7rem); font-weight: 700; letter-spacing: .02em; line-height: 1; }
+.tap-name { font-size: clamp(2rem, 10vw, 3.6rem); font-weight: 700; margin-top: .6rem; line-height: 1.1; word-break: break-word; }
+.tap-msg  { font-size: clamp(1.15rem, 5vw, 1.6rem); margin-top: .5rem; }
+.tap-meta { font-size: 1rem; opacity: .85; margin-top: .35rem; }
+.tap-note { font-size: .95rem; opacity: .9; margin-top: .75rem; max-width: 26rem; }
+.tap-flags { display: flex; flex-wrap: wrap; gap: .5rem; justify-content: center; margin-top: 1rem; }
+.tap-flag { background: #fbeed7; color: #8a5510; font-weight: 700; font-size: 1rem; padding: .35rem .8rem; border-radius: 999px; }
+.tap-picker { display: grid; gap: .5rem; width: 100%; max-width: 24rem; margin-top: 1.25rem; }
+.tap-picker-title { font-weight: 700; margin-top: 1rem; }
+.tap-btn { appearance: none; border: 0; border-radius: 14px; font: inherit; font-weight: 700; font-size: 1.05rem;
+           padding: .85rem 1rem; cursor: pointer; }
+.tap-btn-light { background: rgba(255,255,255,.95); color: #1f1a17; }
+.tap-btn-ghost { background: rgba(255,255,255,.18); color: #fff; border: 1.5px solid rgba(255,255,255,.6); }
+.tap-btn-primary { background: #8f2db5; color: #fff; }
+.tap-btn small { display: block; font-weight: 400; font-size: .85rem; opacity: .75; }
+.tap-actions { display: flex; flex-wrap: wrap; gap: .6rem; justify-content: center; margin-top: 1.5rem; }
+.tap-link { color: inherit; font-weight: 700; }
+.tap-spinner { width: 3rem; height: 3rem; border-radius: 50%; border: 5px solid rgba(143,45,181,.25);
+               border-top-color: #8f2db5; animation: tapspin .8s linear infinite; }
+@keyframes tapspin { to { transform: rotate(360deg); } }
