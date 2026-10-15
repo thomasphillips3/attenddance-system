@@ -447,7 +447,7 @@ def process_tap(req: TapRequest, _retried: bool = False) -> TapResult:
         open_att.check_out_time = now
         ev = _new_event(req, now, 'checked_out', direction='out', tag_id=tag.id,
                         student_id=student.id, class_id=in_event.class_id,
-                        attendance_id=open_att.id, undo_data=json.dumps(snap))
+                        attendance_id=open_att.id, undo_data=_undo_blob(snap, open_att))
         _notify(ev, 'departure')
         return _commit_event(req, TapResult(outcome='checked_out', event=ev, student=student,
                                             dance_class=open_cls, attendance=open_att))
@@ -534,7 +534,7 @@ def _check_in(req, now, tag, student, cls, rolled_from=None, rolled_ids=None, re
         snap['rolled_event_ids'] = rolled_ids
     ev = _new_event(req, now, 'checked_in', direction='in', tag_id=tag.id,
                     student_id=student.id, class_id=cls.id, attendance_id=att.id,
-                    undo_data=json.dumps(snap))
+                    undo_data=_undo_blob(snap, att))
     if rolled_from is None:
         # A rolled-over check-in is the same dancer staying for the next
         # class: they never left, so nobody is told they arrived.
@@ -562,7 +562,7 @@ def _roll(req, now, tag, student, in_event, open_att, later, close_at, retried=F
                          source=req.source, actor_id=req.actor_id, outcome='rolled_over',
                          direction='out', tag_id=tag.id, student_id=student.id,
                          class_id=in_event.class_id, attendance_id=open_att.id,
-                         undo_data=json.dumps(snap))
+                         undo_data=_undo_blob(snap, open_att))
         db.session.add(first)
         db.session.flush()
         rolled_ids.append(first.id)
@@ -573,7 +573,7 @@ def _roll(req, now, tag, student, in_event, open_att, later, close_at, retried=F
             mid = TapEvent(event_key=f'{req.event_key}:roll{i}', occurred_at=now,
                            source=req.source, actor_id=req.actor_id, outcome='rolled_over',
                            direction='out', tag_id=tag.id, student_id=student.id,
-                           class_id=cls.id, attendance_id=att.id, undo_data=json.dumps(csnap))
+                           class_id=cls.id, attendance_id=att.id, undo_data=_undo_blob(csnap, att))
             db.session.add(mid)
             db.session.flush()
             rolled_ids.append(mid.id)
@@ -589,7 +589,7 @@ def _roll(req, now, tag, student, in_event, open_att, later, close_at, retried=F
     fsnap['rolled_event_ids'] = rolled_ids
     ev = _new_event(req, now, 'checked_out', direction='out', tag_id=tag.id,
                     student_id=student.id, class_id=final.id, attendance_id=att.id,
-                    undo_data=json.dumps(fsnap))
+                    undo_data=_undo_blob(fsnap, att))
     _notify(ev, 'departure')
     return _commit_event(req, TapResult(outcome='checked_out', event=ev, student=student,
                                         dance_class=final, attendance=att,
@@ -597,6 +597,42 @@ def _roll(req, now, tag, student, in_event, open_att, later, close_at, retried=F
 
 
 # ── Staff corrections ───────────────────────────────────────────────
+
+def _row_state(att):
+    """The fields a tap or an undo touches, comparable as JSON."""
+    return {
+        'is_present': att.is_present,
+        'is_tardy': bool(att.is_tardy),
+        'is_excused': bool(att.is_excused),
+        'check_in_time': _iso(att.check_in_time),
+        'check_in_method': att.check_in_method,
+        'check_out_time': _iso(att.check_out_time),
+    }
+
+
+def _undo_blob(before, att, **extra):
+    """Undo data for one event: the row before the tap, plus what the tap left
+    it as. Undo checks the row still looks like `after`, so it never rolls back
+    a fix a teacher made on the card after the tap."""
+    data = dict(before)
+    data['after'] = _row_state(att) if att is not None else None
+    data.update(extra)
+    return json.dumps(data)
+
+
+def _unchanged_since(att, snap):
+    """True when the row is still exactly what this event left it as. Events
+    from before 'after' was recorded can't be checked and are allowed."""
+    if 'after' not in snap:
+        return True
+    if snap['after'] is None:
+        return att is None
+    return att is not None and _row_state(att) == snap['after']
+
+
+STALE_MSG = ("This dancer's attendance was changed after the tap, so undo would erase "
+             "that change. Fix it on the attendance card instead.")
+
 
 def _restore(att, snap):
     att.is_present = snap['is_present']
@@ -621,6 +657,13 @@ def undo_tap(event_id: int, actor_id=None) -> TapEvent:
         raise TapError('Only the most recent tap can be undone')
     snap = json.loads(ev.undo_data or '{}')
     att = ev.attendance
+    if not _unchanged_since(att, snap):
+        raise TapError(STALE_MSG)
+    for rolled_id in snap.get('rolled_event_ids') or []:
+        rolled = db.session.get(TapEvent, rolled_id)
+        if rolled is not None and not rolled.undone and not _unchanged_since(
+                rolled.attendance, json.loads(rolled.undo_data or '{}')):
+            raise TapError(STALE_MSG)
     if att is not None:
         if snap.get('created'):
             db.session.delete(att)
@@ -671,6 +714,9 @@ def reopen_session(event_id: int, actor_id=None, event_key=None) -> TapResult:
     att = target.attendance
     if att is None:
         raise TapError('The attendance row is gone')
+    if not _unchanged_since(att, json.loads(target.undo_data or '{}')):
+        raise TapError("This dancer's attendance was changed after they checked out. "
+                       'Fix it on the attendance card instead.')
     snap = _snapshot(att)
     att.check_out_time = None
     now = datetime.now().replace(microsecond=0)
@@ -679,7 +725,7 @@ def reopen_session(event_id: int, actor_id=None, event_key=None) -> TapResult:
                    actor_id=actor_id, outcome='reopened', direction='in',
                    tag_id=target.tag_id, student_id=target.student_id,
                    class_id=target.class_id, attendance_id=att.id,
-                   undo_data=json.dumps(snap))
+                   undo_data=_undo_blob(snap, att))
     db.session.add(new)
     try:
         db.session.commit()

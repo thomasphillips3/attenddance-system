@@ -344,6 +344,58 @@ with app.app_context():
     record("undoing a fresh check-in deletes the row it created",
            [x for x in rows(ids["ava"]) if x.check_in_time.date() == D5] == [])
 
+# ── F2. Undo never erases a later fix on the card ───────────────────
+with app.app_context():
+    D7 = DAY + timedelta(days=63)
+    r = tap(t_ava, when=at(17, 0, day=D7))
+    row = [x for x in rows(ids["ava"]) if x.check_in_time.date() == D7][0]
+    row.is_tardy = True                 # a teacher marks T after the tap
+    db.session.commit()
+    try:
+        undo_tap(r.event.id)
+        record("undo refuses once a teacher changed the row after the tap", False)
+    except TapError:
+        row = [x for x in rows(ids["ava"]) if x.check_in_time.date() == D7]
+        record("undo refuses once a teacher changed the row after the tap",
+               len(row) == 1 and row[0].is_tardy and row[0].is_present)
+    co = tap(t_ava, when=at(17, 40, day=D7))
+    row = [x for x in rows(ids["ava"]) if x.check_in_time.date() == D7][0]
+    row.check_out_time = at(17, 45, day=D7)   # a teacher corrects the time
+    db.session.commit()
+    try:
+        undo_tap(co.event.id)
+        record("undoing a check-out refuses after a manual correction", False)
+    except TapError:
+        record("undoing a check-out refuses after a manual correction", True)
+    try:
+        reopen_session(co.event.id)
+        record("put back in class refuses after a manual correction", False)
+    except TapError:
+        row = [x for x in rows(ids["ava"]) if x.check_in_time.date() == D7][0]
+        record("put back in class refuses after a manual correction",
+               row.check_out_time == at(17, 45, day=D7))
+    D8 = DAY + timedelta(days=70)
+    r = tap(t_ava, when=at(17, 0, day=D8))
+    db.session.delete([x for x in rows(ids["ava"]) if x.check_in_time.date() == D8][0])
+    db.session.commit()                       # teacher cleared the box
+    try:
+        undo_tap(r.event.id)
+        record("undo refuses when the teacher already cleared the box", False)
+    except TapError:
+        record("undo refuses when the teacher already cleared the box", True)
+    D9 = DAY + timedelta(days=77)
+    tap(t_ava, when=at(16, 55, day=D9))
+    r = tap(t_ava, when=at(20, 40, day=D9))   # rolls ballet -> jazz -> tap
+    jz = [x for x in rows(ids["ava"], ids["jazz"]) if x.check_in_time.date() == D9][0]
+    jz.is_tardy = True                        # a teacher touches a rolled class
+    db.session.commit()
+    try:
+        undo_tap(r.event.id)
+        record("undo of a rollover refuses if any rolled row was changed", False)
+    except TapError:
+        record("undo of a rollover refuses if any rolled row was changed",
+               [x for x in rows(ids["ava"], ids["tap"]) if x.check_in_time.date() == D9] != [])
+
 # ── G. Tardy rule, makeups, deterministic pick ──────────────────────
 with app.app_context():
     Setting.set("tap_tardy_grace_minutes", "5")
