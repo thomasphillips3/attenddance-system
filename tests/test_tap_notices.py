@@ -369,6 +369,42 @@ for _ in range(3):
     pc.post("/api/my-notices/code", json={"phone": "5865550123"})
 r = pc.post("/api/my-notices/code", json={"phone": "5865550123"})
 record("codes are rate-limited per account", r.status_code == 429)
+
+# One account spamming a number can't lock its owner out.
+with app.app_context():
+    for i in range(2):
+        u = User(username=f"other{i}", email=f"other{i}@example.test", role="parent",
+                 first_name="O", last_name=str(i))
+        u.set_password("pw12345")
+        db.session.add(u)
+    db.session.commit()
+codes.clear()
+o0 = app.test_client()
+o0.post("/auth/login", data={"username": "other0", "password": "pw12345"})
+r = o0.post("/api/my-notices/code", json={"phone": "3135550123"})
+record("another account can request a code for a fresh number", r.status_code == 200)
+mom2 = app.test_client()
+mom2.post("/auth/login", data={"username": "mom", "password": "pw12345"})
+with app.app_context():
+    from app.models import SmsVerification  # noqa: E402
+    SmsVerification.query.filter_by(user_id=db.session.query(User.id).filter_by(username="mom").scalar()).delete()
+    db.session.commit()
+r = mom2.post("/api/my-notices/code", json={"phone": "3135550123"})
+record("one other account's requests don't lock the owner out of their number", r.status_code == 200,
+       f"got {r.status_code} {r.get_json()}")
+
+# Parallel-guess race: attempts are claimed atomically, so a code allows at
+# most CODE_MAX_ATTEMPTS guesses no matter how requests interleave.
+with app.app_context():
+    v = SmsVerification.query.filter_by(phone="+13135550123").order_by(SmsVerification.id.desc()).first()
+    v.attempts = tap_routes.CODE_MAX_ATTEMPTS
+    db.session.commit()
+right = _re.search(r"\b(\d{6})\b", codes[-1][1]).group(1)
+r = mom2.post("/api/my-notices", json={"sms": True, "consent": True, "phone": "3135550123", "code": right})
+record("a code that used up its guesses is dead even with the right digits", r.status_code == 400)
+r = mom2.get("/api/my-data")
+record("the parent export lists the numbers they asked us to verify",
+       any(x["phone"] == "+13135550123" for x in r.get_json().get("phone_verifications", [])))
 with app.app_context():
     a = db.session.get(Student, ids["ava"])
     record("and who agreed, when, and which number is recorded",

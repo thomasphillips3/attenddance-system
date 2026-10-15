@@ -752,7 +752,13 @@ def get_my_notices():
 CODE_TTL_MINUTES = 10
 CODE_MAX_ATTEMPTS = 5
 CODES_PER_USER_PER_HOUR = 3
-CODES_PER_PHONE_PER_DAY = 5
+CODES_PER_USER_PER_DAY = 10
+# A number is only shut off when several DIFFERENT accounts aim codes at it in
+# a day. One account can't lock a parent out of their own number by spamming
+# it (its own per-account limits stop that), but a number can't be bombed
+# from many accounts either.
+OTHER_ACCOUNTS_PER_PHONE_PER_DAY = 3
+CODE_RETENTION_DAYS = 30
 _code_sender = None   # tests swap this; default is sms.send_sms_result
 
 
@@ -785,13 +791,20 @@ def send_my_notice_code():
     if phone is None:
         return jsonify({'error': 'Enter the mobile number to text, like 248-555-0100'}), 400
     now = datetime.utcnow()
-    recent_user = SmsVerification.query.filter(
-        SmsVerification.user_id == current_user.id,
-        SmsVerification.created_at > now - timedelta(hours=1)).count()
-    recent_phone = SmsVerification.query.filter(
+    # Old codes are only an abuse-control record. Drop them after a month.
+    SmsVerification.query.filter(
+        SmsVerification.created_at < now - timedelta(days=CODE_RETENTION_DAYS)).delete(
+        synchronize_session=False)
+    mine = SmsVerification.query.filter(SmsVerification.user_id == current_user.id)
+    last_hour = mine.filter(SmsVerification.created_at > now - timedelta(hours=1)).count()
+    last_day = mine.filter(SmsVerification.created_at > now - timedelta(days=1)).count()
+    other_accounts = (db.session.query(SmsVerification.user_id).filter(
         SmsVerification.phone == phone,
-        SmsVerification.created_at > now - timedelta(days=1)).count()
-    if recent_user >= CODES_PER_USER_PER_HOUR or recent_phone >= CODES_PER_PHONE_PER_DAY:
+        SmsVerification.user_id != current_user.id,
+        SmsVerification.created_at > now - timedelta(days=1)).distinct().count())
+    if (last_hour >= CODES_PER_USER_PER_HOUR or last_day >= CODES_PER_USER_PER_DAY
+            or other_accounts >= OTHER_ACCOUNTS_PER_PHONE_PER_DAY):
+        db.session.commit()
         return jsonify({'error': 'Too many codes. Try again later.'}), 429
     code = f'{secrets.randbelow(10 ** 6):06d}'
     db.session.add(SmsVerification(user_id=current_user.id, phone=phone,
@@ -807,21 +820,36 @@ def send_my_notice_code():
 
 
 def _check_code(phone, code):
-    """True when `code` is the live code texted to `phone` for this parent."""
+    """True when `code` is the live code texted to `phone` for this parent.
+
+    The guess is counted with one conditional UPDATE and committed BEFORE the
+    comparison, so parallel requests can't each read attempts=0 and get more
+    than CODE_MAX_ATTEMPTS guesses. Marking the code used is conditional too,
+    so it can only be spent once."""
     import hmac
     from datetime import datetime
+    from app import db
     from app.models import SmsVerification
     if not isinstance(code, str) or not code.strip().isdigit():
         return False
     v = (SmsVerification.query.filter_by(user_id=current_user.id, phone=phone, used=False)
          .order_by(SmsVerification.id.desc()).first())
-    if v is None or v.expires_at < datetime.utcnow() or v.attempts >= CODE_MAX_ATTEMPTS:
+    if v is None or v.expires_at < datetime.utcnow():
         return False
-    v.attempts += 1
-    if hmac.compare_digest(v.code_hash, _code_hash(current_user.id, phone, code.strip())):
-        v.used = True
-        return True
-    return False
+    claimed = (SmsVerification.query
+               .filter(SmsVerification.id == v.id, SmsVerification.used.is_(False),
+                       SmsVerification.attempts < CODE_MAX_ATTEMPTS)
+               .update({SmsVerification.attempts: SmsVerification.attempts + 1},
+                       synchronize_session=False))
+    db.session.commit()
+    if not claimed:
+        return False
+    if not hmac.compare_digest(v.code_hash, _code_hash(current_user.id, phone, code.strip())):
+        return False
+    spent = (SmsVerification.query
+             .filter(SmsVerification.id == v.id, SmsVerification.used.is_(False))
+             .update({SmsVerification.used: True}, synchronize_session=False))
+    return bool(spent)
 
 
 @bp.route('/my-notices', methods=['POST'])

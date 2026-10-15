@@ -76,6 +76,7 @@ from app.models import (
     Season,
     Setting,
     Skill,
+    SmsVerification,
     SquareInvoice,
     Student,
     StudentSkill,
@@ -7815,6 +7816,14 @@ def my_data_export():
                             .order_by(TapEvent.occurred_at).all()],
             })
         export['children'] = child_blocks
+        # Numbers this parent asked us to text a check-in code to (kept 30
+        # days as an abuse-control record; the code itself is never stored).
+        export['phone_verifications'] = [{
+            'phone': v.phone,
+            'requested_at': _utc_iso(v.created_at),
+            'confirmed': v.used,
+        } for v in SmsVerification.query.filter_by(user_id=current_user.id)
+                    .order_by(SmsVerification.id).all()]
         export['pending_payments'] = [_pending_to_dict(p) for p in
             PendingPayment.query.filter_by(parent_id=current_user.id).all()]
         export['donations'] = [_donation_to_dict(d) for d in
