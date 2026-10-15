@@ -33,7 +33,7 @@
                     <th class="px-5 py-3 text-left text-[11px] font-bold uppercase tracking-[.06em] text-ink-3">Name</th>
                     <th class="px-5 py-3 text-left text-[11px] font-bold uppercase tracking-[.06em] text-ink-3">Email</th>
                     <th class="px-5 py-3 text-left text-[11px] font-bold uppercase tracking-[.06em] text-ink-3">Phone</th>
-                    <th class="px-5 py-3 text-left text-[11px] font-bold uppercase tracking-[.06em] text-ink-3">RFID</th>
+                    <th class="px-5 py-3 text-left text-[11px] font-bold uppercase tracking-[.06em] text-ink-3">Tag</th>
                     <th class="px-5 py-3 text-left text-[11px] font-bold uppercase tracking-[.06em] text-ink-3">Status</th>
                     <th class="px-5 py-3 text-right text-[11px] font-bold uppercase tracking-[.06em] text-ink-3">Actions</th>
                 </tr>
@@ -174,9 +174,9 @@ function renderStudents(students) {
             <td class="px-5 py-3.5 whitespace-nowrap text-ink-2">${esc(s.email || '—')}</td>
             <td class="px-5 py-3.5 whitespace-nowrap text-ink-2">${esc(s.phone || '—')}</td>
             <td class="px-5 py-3.5 whitespace-nowrap">
-                ${s.has_rfid
-                    ? '<span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-ok/10 text-ok"><i class="fas fa-check"></i>Assigned</span>'
-                    : '<span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-warn/10 text-warn"><i class="fas fa-xmark"></i>None</span>'}
+                ${s.has_tag
+                    ? '<span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-ok/10 text-ok"><i class="fas fa-check"></i>Active</span>'
+                    : `<a href="/students/${s.id}/detail#tags" class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-warn/10 text-warn hover:bg-warn/20"><i class="fas fa-plus"></i>Set up</a>`}
             </td>
             <td class="px-5 py-3.5 whitespace-nowrap">
                 ${s.is_active

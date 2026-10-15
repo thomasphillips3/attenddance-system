@@ -73,20 +73,21 @@ def dashboard():
         func.date(Attendance.check_in_time) == today,
         Attendance.is_present.is_(True),
     ).count()
-    students_without_rfid = Student.query.filter_by(
-        is_active=True, rfid_uid=None
-    ).count()
+    from app.models import NfcTag, TapEvent
+    tagged = db.session.query(NfcTag.student_id).filter(
+        NfcTag.status == 'active', NfcTag.student_id.isnot(None))
+    students_without_tag = Student.query.filter(
+        Student.is_active.is_(True), Student.id.notin_(tagged)).count()
 
     todays_classes = live_class_query().filter_by(
         day_of_week=current_weekday
     ).order_by(DanceClass.start_time).all()
 
-    from app.models import RFIDLog
     recent_attendance = Attendance.query.order_by(
         desc(Attendance.check_in_time)
     ).limit(10).all()
-    recent_rfid_logs = RFIDLog.query.order_by(
-        desc(RFIDLog.scan_time)
+    recent_taps = TapEvent.query.order_by(
+        desc(TapEvent.occurred_at), desc(TapEvent.id)
     ).limit(10).all()
 
     return render_template('dashboard.html',
@@ -94,10 +95,10 @@ def dashboard():
         total_students=total_students,
         total_classes=total_classes,
         todays_attendance=todays_attendance,
-        students_without_rfid=students_without_rfid,
+        students_without_tag=students_without_tag,
         todays_classes=todays_classes,
         recent_attendance=recent_attendance,
-        recent_rfid_logs=recent_rfid_logs,
+        recent_taps=recent_taps,
     )
 
 

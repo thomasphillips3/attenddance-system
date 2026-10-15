@@ -91,11 +91,6 @@ from app.models import (
     WaiverTemplate,
 )
 
-try:
-    from rfid.service import get_rfid_service
-except ImportError:
-    get_rfid_service = None
-
 logger = logging.getLogger(__name__)
 
 
@@ -380,8 +375,11 @@ def get_students():
     query = query.order_by(Student.last_name, Student.first_name)
     pagination = query.paginate(page=page, per_page=per_page, error_out=False)
 
+    page_ids = [s.id for s in pagination.items]
+    tagged = {sid for (sid,) in db.session.query(NfcTag.student_id).filter(
+        NfcTag.student_id.in_(page_ids), NfcTag.status == 'active')} if page_ids else set()
     return jsonify({
-        'students': [student_to_dict(s) for s in pagination.items],
+        'students': [student_to_dict(s, has_tag=s.id in tagged) for s in pagination.items],
         'pagination': {
             'page': page,
             'pages': pagination.pages,
@@ -481,46 +479,6 @@ def delete_student(student_id):
         {'status': 'removed'}, synchronize_session=False)
     db.session.commit()
     return jsonify({'message': 'Student deactivated successfully'})
-
-
-@bp.route('/students/<int:student_id>/assign-rfid', methods=['POST'])
-@login_required
-def assign_rfid(student_id):
-    err = _staff_only()
-    if err:
-        return err
-    student = Student.query.get_or_404(student_id)
-    data = request.get_json()
-    rfid_uid = _clean_str(data.get('rfid_uid')) if data else ''
-    if not rfid_uid:
-        return jsonify({'error': 'RFID UID is required'}), 400
-
-    existing = Student.query.filter_by(rfid_uid=rfid_uid).first()
-    if existing and existing.id != student_id:
-        return jsonify({'error': 'RFID card is already assigned to another student'}), 400
-
-    student.rfid_uid = rfid_uid
-    student.rfid_assigned_at = datetime.utcnow()
-    student.rfid_assigned_by = current_user.id
-    student.updated_at = datetime.utcnow()
-    db.session.commit()
-
-    return jsonify({'message': 'RFID card assigned successfully', 'student': student_to_dict(student)})
-
-
-@bp.route('/students/<int:student_id>/remove-rfid', methods=['POST'])
-@login_required
-def remove_rfid(student_id):
-    err = _staff_only()
-    if err:
-        return err
-    student = Student.query.get_or_404(student_id)
-    student.rfid_uid = None
-    student.rfid_assigned_at = None
-    student.rfid_assigned_by = None
-    student.updated_at = datetime.utcnow()
-    db.session.commit()
-    return jsonify({'message': 'RFID card removed successfully', 'student': student_to_dict(student)})
 
 
 # ── Season endpoints ────────────────────────────────────────────────
@@ -953,7 +911,7 @@ def get_class_enrollments(class_id):
                 'student_id': s.id,
                 'full_name': s.full_name,
                 'email': s.email,
-                'has_rfid': s.has_rfid(),
+                'has_tag': s.has_active_tag(),
                 'enrolled_date': e.enrolled_date.isoformat(),
             })
     return jsonify({'enrollments': students, 'class_name': dance_class.name})
@@ -1350,79 +1308,6 @@ def manual_checkin():
         return jsonify({'error': 'An internal error occurred'}), 500
 
 
-# ── RFID endpoints ──────────────────────────────────────────────────
-
-@bp.route('/rfid/status', methods=['GET'])
-@login_required
-def rfid_status():
-    err = _staff_only()
-    if err:
-        return err
-    if not get_rfid_service:
-        return jsonify({'service_running': False, 'message': 'RFID not available'})
-    stats = get_rfid_service().get_stats()
-    return jsonify({
-        'service_running': stats['running'],
-        'total_scans': stats['total_scans'],
-        'successful_checkins': stats['successful_checkins'],
-        'failed_scans': stats['failed_scans'],
-        'last_scan_time': _utc_iso(stats['last_scan_time']),  # UTC -> 'Z' for correct local display
-        'last_scan_uid': stats['last_scan_uid'],
-    })
-
-
-@bp.route('/rfid/simulate', methods=['POST'])
-@login_required
-def simulate_rfid_scan():
-    if not current_user.is_admin:
-        return jsonify({'error': 'Admin access required'}), 403
-    data = request.get_json()
-    uid = data.get('uid') if data else None
-    if not uid:
-        return jsonify({'error': 'UID is required'}), 400
-    if not get_rfid_service:
-        return jsonify({'error': 'RFID not available'}), 400
-    success = get_rfid_service().simulate_scan(uid)
-    return jsonify({'success': success, 'message': f'Simulated scan for UID: {uid}'})
-
-
-@bp.route('/rfid/logs', methods=['GET'])
-@login_required
-def get_rfid_logs():
-    err = _staff_only()
-    if err:
-        return err
-    from app.models import RFIDLog
-
-    page = request.args.get('page', 1, type=int)
-    per_page = min(request.args.get('per_page', 50, type=int), 100)
-    query = RFIDLog.query.order_by(desc(RFIDLog.scan_time))
-    pagination = query.paginate(page=page, per_page=per_page, error_out=False)
-
-    logs = [{
-        'id': log.id,
-        'rfid_uid': log.rfid_uid,
-        'student_id': log.student_id,
-        'student_name': log.student.full_name if log.student else None,
-        'scan_time': log.scan_time.isoformat(),
-        'action_taken': log.action_taken,
-        'success': log.success,
-        'error_message': log.error_message,
-    } for log in pagination.items]
-
-    return jsonify({
-        'logs': logs,
-        'pagination': {
-            'page': page,
-            'pages': pagination.pages,
-            'per_page': per_page,
-            'total': pagination.total,
-            'has_next': pagination.has_next,
-            'has_prev': pagination.has_prev,
-        },
-    })
-
-
 # ── Dashboard stats ─────────────────────────────────────────────────
 
 @bp.route('/dashboard/stats', methods=['GET'])
@@ -1431,8 +1316,6 @@ def dashboard_stats():
     err = _staff_only()
     if err:
         return err
-    from app.models import RFIDLog
-
     today = date.today()
     total_students = Student.query.filter_by(is_active=True).count()
     total_classes = live_class_query().count()
@@ -1445,9 +1328,9 @@ def dashboard_stats():
         func.date(Attendance.check_in_time) >= week_start,
         Attendance.is_present.is_(True),
     ).count()
-    recent_rfid_logs = RFIDLog.query.filter(
-        # Local: scan_time is stored studio-local, so the cutoff must be too.
-        RFIDLog.scan_time >= datetime.now() - timedelta(days=1)
+    recent_taps = TapEvent.query.filter(
+        # Local: occurred_at is stored studio-local, so the cutoff must be too.
+        TapEvent.occurred_at >= datetime.now() - timedelta(days=1)
     ).count()
 
     return jsonify({
@@ -1455,7 +1338,7 @@ def dashboard_stats():
         'total_classes': total_classes,
         'todays_attendance': todays_attendance,
         'week_attendance': week_attendance,
-        'recent_rfid_activity': recent_rfid_logs,
+        'recent_tap_activity': recent_taps,
         'date': today.isoformat(),
     })
 

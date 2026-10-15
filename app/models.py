@@ -219,7 +219,8 @@ class Student(db.Model):
     # second guardian on file is never texted on the first one's say-so.
     tap_sms_phone = db.Column(db.String(20))
 
-    # RFID information
+    # Legacy RFID badge (the old Raspberry Pi reader). Read-only history now:
+    # Tap-In backfilled these into nfc_tags and never writes them.
     rfid_uid = db.Column(db.String(50), unique=True, index=True)
     rfid_assigned_at = db.Column(db.DateTime)
     rfid_assigned_by = db.Column(db.Integer, db.ForeignKey('users.id'))
@@ -285,9 +286,9 @@ class Student(db.Model):
             )
         return None
     
-    def has_rfid(self):
-        """Check if student has RFID assigned"""
-        return self.rfid_uid is not None
+    def has_active_tag(self):
+        """True when the dancer has an active Tap-In tag."""
+        return self.nfc_tags.filter_by(status='active').first() is not None
     
     def get_recent_attendance(self, days=30):
         """Get recent attendance records"""
@@ -443,7 +444,8 @@ class Attendance(db.Model):
         return f'<Attendance {self.student.full_name} on {self.attendance_date}>'
 
 class RFIDLog(db.Model):
-    """RFID scan log for debugging and security"""
+    """Scan log from the retired Raspberry Pi reader. Kept as read-only history
+    (it's in the parent data export); Tap-In logs to tap_events instead."""
     __tablename__ = 'rfid_logs'
     
     id = db.Column(db.Integer, primary_key=True)

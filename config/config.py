@@ -46,12 +46,6 @@ class Config:
     JWT_SECRET_KEY = os.environ.get('JWT_SECRET_KEY') or SECRET_KEY
     JWT_ACCESS_TOKEN_EXPIRES = timedelta(hours=24)
     
-    # RFID settings
-    RFID_ENABLED = os.environ.get('RFID_ENABLED', 'true').lower() == 'true'
-    RFID_SPI_DEV = int(os.environ.get('RFID_SPI_DEV', 0))
-    RFID_SPI_SPEED = int(os.environ.get('RFID_SPI_SPEED', 1000000))
-    RFID_RST_PIN = int(os.environ.get('RFID_RST_PIN', 25))
-    
     # Application settings
     APP_NAME = 'LSO Dance'
     APP_VERSION = '1.0.0'
@@ -103,7 +97,6 @@ class TestingConfig(Config):
     TESTING = True
     SQLALCHEMY_DATABASE_URI = 'sqlite:///:memory:'
     WTF_CSRF_ENABLED = False
-    RFID_ENABLED = False
 
 # Configuration dictionary
 config = {

@@ -19,7 +19,7 @@
     {{ stat_tile('Active students', total_students or 0, 'users', 'pri') }}
     {{ stat_tile('Active classes', total_classes or 0, 'calendar-week', 'info') }}
     {{ stat_tile("Today's check-ins", todays_attendance or 0, 'clipboard-check', 'ok') }}
-    {{ stat_tile('Missing RFID', students_without_rfid or 0, 'id-card', 'warn') }}
+    <a href="{{ url_for('main.tap_hub') }}" class="block">{{ stat_tile('No tag yet', students_without_tag or 0, 'id-card', 'warn') }}</a>
 </div>
 
 <!-- Two columns -->
@@ -74,34 +74,37 @@
     {% endcall %}
 </div>
 
-<!-- RFID activity (admin) -->
-{% if current_user.is_admin and recent_rfid_logs %}
+<!-- Tap-In activity (staff) -->
+{% if recent_taps %}
 <div class="mb-8">
-    {% call card('RFID System Activity', 'wifi') %}
+    {% call card('Recent Taps', 'id-card') %}
         <div class="overflow-x-auto -m-5">
             <table class="min-w-full text-sm">
                 <thead class="bg-surface-2 border-b border-line">
                     <tr>
                         <th class="text-left text-[11px] font-bold uppercase tracking-[.06em] text-ink-3 px-5 py-2.5">Time</th>
-                        <th class="text-left text-[11px] font-bold uppercase tracking-[.06em] text-ink-3 px-5 py-2.5">RFID UID</th>
-                        <th class="text-left text-[11px] font-bold uppercase tracking-[.06em] text-ink-3 px-5 py-2.5">Student</th>
-                        <th class="text-left text-[11px] font-bold uppercase tracking-[.06em] text-ink-3 px-5 py-2.5">Action</th>
-                        <th class="text-left text-[11px] font-bold uppercase tracking-[.06em] text-ink-3 px-5 py-2.5">Status</th>
+                        <th class="text-left text-[11px] font-bold uppercase tracking-[.06em] text-ink-3 px-5 py-2.5">Dancer</th>
+                        <th class="text-left text-[11px] font-bold uppercase tracking-[.06em] text-ink-3 px-5 py-2.5">Class</th>
+                        <th class="text-left text-[11px] font-bold uppercase tracking-[.06em] text-ink-3 px-5 py-2.5">Result</th>
                     </tr>
                 </thead>
                 <tbody>
-                    {% for log in recent_rfid_logs %}
+                    {% for e in recent_taps %}
                     <tr class="border-b border-line last:border-0">
-                        <td class="px-5 py-3 text-ink">{{ log.scan_time.strftime('%I:%M %p') }}</td>
-                        <td class="px-5 py-3 font-mono text-ink-3">{{ log.rfid_uid[:8] }}…</td>
-                        <td class="px-5 py-3 text-ink">{{ log.student.full_name if log.student else 'Unknown' }}</td>
-                        <td class="px-5 py-3 text-ink-2">{{ log.action_taken.replace('_', ' ').title() }}</td>
-                        <td class="px-5 py-3">{{ pill('Success', 'ok') if log.success else pill('Failed', 'danger') }}</td>
+                        <td class="px-5 py-3 text-ink tabular-nums">{{ e.occurred_at.strftime('%I:%M %p').lstrip('0') }}</td>
+                        <td class="px-5 py-3 text-ink">{{ e.student.full_name if e.student else ('Tag ' ~ e.tag.label if e.tag else 'Unknown tag') }}</td>
+                        <td class="px-5 py-3 text-ink-2">{{ e.dance_class.name if e.dance_class else '' }}</td>
+                        <td class="px-5 py-3">
+                            {% set ok = e.outcome in ('checked_in', 'checked_out', 'reopened', 'rolled_over') %}
+                            {{ pill(e.outcome.replace('_', ' ').capitalize() ~ (' (undone)' if e.undone else ''),
+                                    'neutral' if e.undone else ('ok' if ok else ('warn' if e.outcome in ('needs_class', 'already_in', 'already_out', 'duplicate') else 'danger'))) }}
+                        </td>
                     </tr>
                     {% endfor %}
                 </tbody>
             </table>
         </div>
+        <div class="mt-5 -mb-1 text-right"><a href="{{ url_for('main.tap_today') }}" class="text-sm font-bold text-primary-600 hover:underline">Today's taps</a></div>
     {% endcall %}
 </div>
 {% endif %}
