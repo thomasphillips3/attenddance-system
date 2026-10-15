@@ -154,10 +154,10 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Tap core and hardware gate | 0/TBD | Not started | - |
-| 2. Tag management and enrollment | 0/TBD | Not started | - |
-| 3. iPhone flow, result screen and staff flags | 0/TBD | Not started | - |
-| 4. Parent notifications | 0/TBD | Not started | - |
-| 5. Android kiosk and offline queue | 0/TBD | Not started | - |
-| 6. USB station and missed-checkout report | 0/TBD | Not started | - |
-| 7. Legacy removal, pilot and rollout | 0/TBD | Not started | - |
+| 1. Tap core and hardware gate | code done | Hardware gate open (HW-02, HW-03) | - |
+| 2. Tag management and enrollment | code done | Needs on-device write test | - |
+| 3. iPhone flow, result screen and staff flags | code done | Needs on-device iPhone test | - |
+| 4. Parent notifications | code done | SMS waits on 10DLC check | - |
+| 5. Android kiosk and offline queue | code done | Needs on-device Android test | - |
+| 6. USB station and missed-checkout report | code done | Reader bench test (USB-02) | - |
+| 7. Legacy removal, pilot and rollout | code done | Pilot (ROLL-02) | - |

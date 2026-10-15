@@ -2,12 +2,12 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Tap-In
-status: ready_to_plan
+status: built_awaiting_hardware
 last_updated: "2026-10-15T06:30:00.000Z"
 last_activity: 2026-10-15
 progress:
   total_phases: 7
-  completed_phases: 0
+  completed_phases: 0  # code for all 7 phases is in; phases close after hardware checks
   total_plans: 0
   completed_plans: 0
   percent: 0
@@ -20,16 +20,22 @@ progress:
 See: .planning/PROJECT.md (updated 2026-10-14)
 
 **Core value:** Staff can record who is at class, and bill families correctly, without fighting the software.
-**Current focus:** Phase 1 - Tap core and hardware gate
+**Current focus:** Hardware checks and the pilot (all Tap-In code is built on feature/v2-tap-in)
 
 ## Current Position
 
-Phase: 1 of 7 (Tap core and hardware gate)
-Plan: 0 of TBD in current phase
-Status: Ready to plan
-Last activity: 2026-10-15 - Roadmap created for milestone v2.0 Tap-In (7 phases, 48/48 requirements mapped)
+Phase: code for phases 1-7 built; hardware gates open
+Status: Built, awaiting hardware checks, the hostname decision and the pilot
+Last activity: 2026-10-15 - Built Tap-In end to end on branch feature/v2-tap-in (not pushed, not deployed)
 
-Progress: [░░░░░░░░░░] 0%
+What's left is not code:
+- HW-02: order sample NTAG213 fobs and cards, run NXP TagInfo, read them on one iPhone and one Android phone.
+- HW-03: decide the permanent tag address and save it in Tap-In settings (locking is refused until then).
+- USB-02: bench-test the ACR1281U-C2 settings in docs/tap-in.md, if the reader is bought.
+- ROLL-02: 2-3 week pilot on unlocked tags, then bulk order, lock, hand out.
+- Before turning texts on: confirm the Twilio number's 10DLC registration.
+
+Progress: [█████████░] code complete; 4 of 48 requirements wait on hardware, a decision or the pilot
 
 ## Performance Metrics
 
@@ -87,5 +93,5 @@ Items acknowledged and carried forward from previous milestone close:
 ## Session Continuity
 
 Last session: 2026-10-15
-Stopped at: Roadmap and state created; awaiting approval
+Stopped at: Tap-In built and tested (test_tap, test_tap_flows, test_tap_notices, smoke_audit all green); branch not pushed
 Resume file: None
