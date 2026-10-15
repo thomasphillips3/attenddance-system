@@ -348,7 +348,7 @@ def result_from_event(ev, replayed=False):
 
 # ── The tap ─────────────────────────────────────────────────────────
 
-def process_tap(req: TapRequest) -> TapResult:
+def process_tap(req: TapRequest, _retried: bool = False) -> TapResult:
     if not req.event_key:
         raise TapError('event_key is required')
     existing = TapEvent.query.filter_by(event_key=req.event_key).first()
@@ -409,7 +409,7 @@ def process_tap(req: TapRequest) -> TapResult:
         if picked is not None and open_cls is not None and picked.id != open_cls.id:
             # Staff moved the dancer to another class: close this one now.
             return _roll(req, now, tag, student, in_event, open_att, [picked],
-                         close_at=now)
+                         close_at=now, retried=_retried)
         if (picked is None and open_cls is not None and rollover_enabled()
                 and now > datetime.combine(day, open_cls.end_time)):
             early = timedelta(minutes=setting_int('tap_early_minutes'))
@@ -419,7 +419,8 @@ def process_tap(req: TapRequest) -> TapResult:
                      and datetime.combine(day, c.start_time) - early <= now]
             if later:
                 return _roll(req, now, tag, student, in_event, open_att, later,
-                             close_at=datetime.combine(day, open_cls.end_time))
+                             close_at=datetime.combine(day, open_cls.end_time),
+                             retried=_retried)
 
         if now - in_event.occurred_at < timedelta(minutes=setting_int('tap_dwell_minutes')):
             ev = _new_event(req, now, 'already_in', tag_id=tag.id, student_id=student.id,
@@ -438,7 +439,7 @@ def process_tap(req: TapRequest) -> TapResult:
 
     # No session open.
     if picked is not None:
-        return _check_in(req, now, tag, student, picked)
+        return _check_in(req, now, tag, student, picked, retried=_retried)
 
     cands = candidate_classes(student, now)
     attended = {e.class_id for e in events if e.direction == 'in'}
@@ -462,7 +463,17 @@ def process_tap(req: TapRequest) -> TapResult:
         ev = _new_event(req, now, 'needs_class', tag_id=tag.id, student_id=student.id)
         return _commit_event(req, TapResult(outcome='needs_class', event=ev, student=student,
                                             candidates=picker_options(student, now)))
-    return _check_in(req, now, tag, student, pick_class(fresh, now))
+    return _check_in(req, now, tag, student, pick_class(fresh, now), retried=_retried)
+
+
+def _retry_once(req, retried):
+    """A unique-index race: re-run the tap once against the row the other
+    writer just made. Never more than once, so a constraint that keeps failing
+    is an error, not unbounded recursion."""
+    db.session.rollback()
+    if retried:
+        raise TapError('Attendance changed at the same time. Tap again.')
+    return process_tap(req, _retried=True)
 
 
 def _upsert_present(student, cls, at, tardy_rule=True):
@@ -498,13 +509,12 @@ def _upsert_present(student, cls, at, tardy_rule=True):
     return att, snap
 
 
-def _check_in(req, now, tag, student, cls, rolled_from=None, rolled_ids=None):
+def _check_in(req, now, tag, student, cls, rolled_from=None, rolled_ids=None, retried=False):
     try:
         att, snap = _upsert_present(student, cls, now, tardy_rule=rolled_from is None)
     except IntegrityError:
         # A manual mark raced us to the unique (student, class, day) index.
-        db.session.rollback()
-        return process_tap(req)
+        return _retry_once(req, retried)
     if rolled_ids:
         snap['rolled_event_ids'] = rolled_ids
     ev = _new_event(req, now, 'checked_in', direction='in', tag_id=tag.id,
@@ -515,7 +525,7 @@ def _check_in(req, now, tag, student, cls, rolled_from=None, rolled_ids=None):
                                         rolled_from=rolled_from))
 
 
-def _roll(req, now, tag, student, in_event, open_att, later, close_at):
+def _roll(req, now, tag, student, in_event, open_att, later, close_at, retried=False):
     """Back-to-back classes. Close the open class at `close_at`, mark any class
     that started and ended since then present for its scheduled hour, then:
     if the last class is still running the tap checks the dancer in to it, and
@@ -551,13 +561,12 @@ def _roll(req, now, tag, student, in_event, open_att, later, close_at):
         final = later[-1]
         if now <= datetime.combine(day, final.end_time) + late:
             return _check_in(req, now, tag, student, final, rolled_from=open_cls,
-                             rolled_ids=rolled_ids)
+                             rolled_ids=rolled_ids, retried=retried)
         att, fsnap = _upsert_present(student, final, datetime.combine(day, final.start_time),
                                      tardy_rule=False)
         att.check_out_time = now
     except IntegrityError:
-        db.session.rollback()
-        return process_tap(req)
+        return _retry_once(req, retried)
     fsnap['rolled_event_ids'] = rolled_ids
     ev = _new_event(req, now, 'checked_out', direction='out', tag_id=tag.id,
                     student_id=student.id, class_id=final.id, attendance_id=att.id,

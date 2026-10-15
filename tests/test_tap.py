@@ -372,6 +372,27 @@ with app.app_context():
     record("pick_class: before both, the next to start wins",
            pick_class([j, b], at(16, 45)).id == b.id)
 
+# ── G2. A unique-index race retries once, never forever ─────────────
+import app.tap.service as tap_service  # noqa: E402
+from sqlalchemy.exc import IntegrityError  # noqa: E402
+with app.app_context():
+    calls = {"n": 0}
+    real = tap_service._upsert_present
+
+    def always_conflict(*a, **kw):
+        calls["n"] += 1
+        raise IntegrityError("INSERT", {}, Exception("UNIQUE constraint failed"))
+
+    tap_service._upsert_present = always_conflict
+    try:
+        tap(t_ned, when=at(17, 2, day=DAY + timedelta(days=49)))
+        record("a constraint that keeps failing raises instead of recursing", False)
+    except TapError:
+        record("a constraint that keeps failing raises instead of recursing", calls["n"] == 2,
+               f"tried {calls['n']} times")
+    finally:
+        tap_service._upsert_present = real
+
 # ── H. Flags ────────────────────────────────────────────────────────
 from app.tap.flags import flags_for  # noqa: E402
 with app.app_context():
