@@ -112,11 +112,60 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
+| HW-01 | Phase 1 | Pending |
+| HW-02 | Phase 1 | Pending |
+| HW-03 | Phase 1 | Pending |
+| TAG-01 | Phase 1 | Pending |
+| TAG-02 | Phase 1 | Pending |
+| TAG-03 | Phase 2 | Pending |
+| TAG-04 | Phase 2 | Pending |
+| TAG-05 | Phase 2 | Pending |
+| TAG-06 | Phase 2 | Pending |
+| TAG-07 | Phase 2 | Pending |
+| TAG-08 | Phase 1 | Pending |
+| TAG-09 | Phase 2 | Pending |
+| TAP-01 | Phase 1 | Pending |
+| TAP-02 | Phase 1 | Pending |
+| TAP-03 | Phase 1 | Pending |
+| TAP-04 | Phase 1 | Pending |
+| TAP-05 | Phase 1 | Pending |
+| TAP-06 | Phase 1 | Pending |
+| TAP-07 | Phase 1 | Pending |
+| TAP-08 | Phase 1 | Pending |
+| TAP-09 | Phase 3 | Pending |
+| TAP-10 | Phase 1 | Pending |
+| TAPUI-01 | Phase 3 | Pending |
+| TAPUI-02 | Phase 3 | Pending |
+| TAPUI-03 | Phase 3 | Pending |
+| TAPUI-04 | Phase 3 | Pending |
+| TAPUI-05 | Phase 3 | Pending |
+| TAPUI-06 | Phase 3 | Pending |
+| FLAG-01 | Phase 3 | Pending |
+| FLAG-02 | Phase 3 | Pending |
+| FLAG-03 | Phase 3 | Pending |
+| NOTIF-01 | Phase 4 | Pending |
+| NOTIF-02 | Phase 4 | Pending |
+| NOTIF-03 | Phase 4 | Pending |
+| NOTIF-04 | Phase 4 | Pending |
+| NOTIF-05 | Phase 4 | Pending |
+| NOTIF-06 | Phase 4 | Pending |
+| KIOSK-01 | Phase 5 | Pending |
+| KIOSK-02 | Phase 5 | Pending |
+| KIOSK-03 | Phase 5 | Pending |
+| KIOSK-04 | Phase 5 | Pending |
+| USB-01 | Phase 6 | Pending |
+| USB-02 | Phase 6 | Pending |
+| RPT-01 | Phase 6 | Pending |
+| PHOTO-01 | Phase 3 | Pending |
+| ROLL-01 | Phase 7 | Pending |
+| ROLL-02 | Phase 7 | Pending |
+| ROLL-03 | Phase 7 | Pending |
 
 **Coverage:**
 - v2.0 requirements: 48 total
-- Mapped to phases: 0 (pending roadmap)
+- Mapped to phases: 48
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-10-14*
-*Last updated: 2026-10-14 after initial definition*
+*Last updated: 2026-10-15 after roadmap creation (traceability filled)*
