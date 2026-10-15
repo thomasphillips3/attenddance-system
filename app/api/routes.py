@@ -53,6 +53,7 @@ from app.models import (
     Family,
     Lead,
     Location,
+    NfcTag,
     MakeupClass,
     Message,
     MessageAttachment,
@@ -79,6 +80,7 @@ from app.models import (
     Student,
     StudentSkill,
     TicketOrder,
+    TapEvent,
     TicketType,
     TimeClockEntry,
     Transaction,
@@ -7893,6 +7895,22 @@ def my_data_export():
                     'action_taken': r.action_taken,
                     'success': r.success,
                 } for r in rfid_logs],
+                # Tap-In. The token is never stored, so there is none to export;
+                # the chip serial is a hardware ID of a tag the studio owns.
+                'check_in_tags': [{
+                    'label': t.label,
+                    'kind': t.kind,
+                    'status': t.status,
+                    'chip_serial': t.uid,
+                    'assigned_at': _utc_iso(t.activated_at or t.created_at),
+                } for t in NfcTag.query.filter_by(student_id=child.id).all()],
+                'tap_log': [{
+                    'time': _local_iso(e.occurred_at),
+                    'class_name': e.dance_class.name if e.dance_class else None,
+                    'result': e.outcome,
+                    'undone': e.undone,
+                } for e in TapEvent.query.filter_by(student_id=child.id)
+                            .order_by(TapEvent.occurred_at).all()],
             })
         export['children'] = child_blocks
         export['pending_payments'] = [_pending_to_dict(p) for p in

@@ -93,10 +93,10 @@ async function loadHistory() {
                 <td class="px-5 py-3.5 whitespace-nowrap text-sm font-medium text-ink">${esc(a.student_name)}</td>
                 <td class="px-5 py-3.5 whitespace-nowrap text-sm text-ink-3">${esc(a.class_name)}</td>
                 <td class="px-5 py-3.5 whitespace-nowrap text-sm text-ink-3">${a.attendance_date}</td>
-                <td class="px-5 py-3.5 whitespace-nowrap text-sm text-ink-3">${new Date(a.check_in_time).toLocaleTimeString()}</td>
+                <td class="px-5 py-3.5 whitespace-nowrap text-sm text-ink-3">${new Date(a.check_in_time).toLocaleTimeString()}${a.check_out_time ? `<span class="block text-xs">out ${new Date(a.check_out_time).toLocaleTimeString()}</span>` : ''}</td>
                 <td class="px-5 py-3.5 whitespace-nowrap">
-                    <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold ${a.check_in_method === 'rfid' ? 'bg-info/10 text-info' : 'bg-surface-2 text-ink-2'}">
-                        <i class="fas fa-${a.check_in_method === 'rfid' ? 'credit-card' : 'hand-paper'} mr-1"></i>${a.check_in_method}
+                    <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold ${['rfid', 'tap'].includes(a.check_in_method) ? 'bg-info/10 text-info' : 'bg-surface-2 text-ink-2'}">
+                        <i class="fas fa-${['rfid', 'tap'].includes(a.check_in_method) ? 'id-card' : 'hand-paper'} mr-1"></i>${esc(a.check_in_method)}
                     </span>
                 </td>
             </tr>
