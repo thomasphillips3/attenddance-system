@@ -33,7 +33,9 @@ def _auth_error():
 
 
 def tap_response(result, status=200):
+    from app.tap import outbox
     from app.tap.flags import flags_for
+    outbox.kick()
     body = result.to_dict()
     body['flags'] = flags_for(result.student, include_money=current_user.is_admin)
     return jsonify(body), status
@@ -519,9 +521,15 @@ def _tap_settings():
     from app.models import NfcTag, Setting
     from app.tap.credentials import tag_base_url
     from app.tap.service import rollover_enabled, setting_int
+    from app.tap.outbox import setting_flags
+    flags = setting_flags()
     return {
         **{k: setting_int(k) for k in _INT_SETTINGS},
         'tap_rollover_enabled': rollover_enabled(),
+        'tap_notify_email_enabled': flags['email'],
+        'tap_notify_sms_enabled': flags['sms'],
+        'tap_notify_paused': flags['paused'],
+        'tap_notify_daily_cap': flags['cap'],
         'tap_base_url': Setting.get('tap_base_url', ''),
         'effective_base_url': tag_base_url(),
         'locked_tags': NfcTag.query.filter_by(locked=True).count(),
@@ -573,8 +581,18 @@ def update_tap_settings():
             if key == 'tap_dedup_seconds' and val < 3:
                 return jsonify({'error': 'Keep the double-tap window at 3 seconds or more'}), 400
             changes[key] = str(val)
-    if 'tap_rollover_enabled' in data:
-        changes['tap_rollover_enabled'] = '1' if data['tap_rollover_enabled'] in (True, 1, '1', 'true', 'on') else '0'
+    for flag in ('tap_rollover_enabled', 'tap_notify_email_enabled', 'tap_notify_sms_enabled',
+                 'tap_notify_paused'):
+        if flag in data:
+            changes[flag] = '1' if data[flag] in (True, 1, '1', 'true', 'on') else '0'
+    if 'tap_notify_daily_cap' in data:
+        try:
+            cap = int(data['tap_notify_daily_cap'])
+        except (TypeError, ValueError):
+            return jsonify({'error': 'The daily cap must be a whole number'}), 400
+        if not 1 <= cap <= 2000:
+            return jsonify({'error': 'The daily cap must be between 1 and 2000'}), 400
+        changes['tap_notify_daily_cap'] = str(cap)
     if 'tap_base_url' in data:
         url, verr = _valid_base_url(data.get('tap_base_url'),
                                     allow_http=current_app.debug or current_app.testing)
@@ -685,4 +703,120 @@ def record_tap_batch():
         out.append({'event_key': key, 'ok': True, 'outcome': body['outcome'],
                     'message': body['message'],
                     'first_name': body['student']['first_name'] if body['student'] else None})
+    from app.tap import outbox
+    outbox.kick()
     return jsonify({'results': out})
+
+
+# ── Check-in notice preferences ─────────────────────────────────────
+
+SMS_CONSENT_TEXT = ("Text me when my dancer checks in and out of class. Message and data rates "
+                    "may apply. About 2 texts per class. Reply STOP to cancel.")
+
+
+def _notice_dict(student):
+    from app.tap.outbox import guardian_phones, is_adult
+    phones = guardian_phones(student)
+    return {
+        'student_id': student.id,
+        'first_name': student.first_name,
+        'email_on': not student.tap_email_opt_out,
+        'sms_on': bool(student.tap_sms_opt_in),
+        'adult': is_adult(student),
+        # Last 4 only: enough for a parent to recognize their number.
+        'sms_numbers': ['...' + p[-4:] for p in phones],
+    }
+
+
+@bp.route('/my-notices', methods=['GET'])
+def get_my_notices():
+    if not current_user.is_authenticated:
+        return jsonify({'error': 'Sign in again'}), 401
+    if not current_user.is_parent:
+        return jsonify({'error': 'Parents only'}), 403
+    from app.tap.outbox import setting_flags
+    flags = setting_flags()
+    return jsonify({
+        'children': [_notice_dict(c) for c in current_user.get_children()],
+        'sms_available': flags['sms'],
+        'sms_consent_text': SMS_CONSENT_TEXT,
+    })
+
+
+@bp.route('/my-notices', methods=['POST'])
+def update_my_notices():
+    """A parent turns check-in notices on or off for their whole household.
+    SMS needs the explicit consent box; who agreed and when is recorded."""
+    if not current_user.is_authenticated:
+        return jsonify({'error': 'Sign in again'}), 401
+    if not current_user.is_parent:
+        return jsonify({'error': 'Parents only'}), 403
+    from datetime import datetime
+    from app import db
+    from app.models import AuditLog
+    from app.tap.outbox import guardian_phones, setting_flags
+    data = request.get_json(silent=True) or {}
+    children = current_user.get_children()
+    if 'email' in data:
+        for c in children:
+            c.tap_email_opt_out = not bool(data['email'])
+    if 'sms' in data:
+        want = bool(data['sms'])
+        if want:
+            if not setting_flags()['sms']:
+                return jsonify({'error': "The studio hasn't turned on text notices yet"}), 400
+            if not data.get('consent'):
+                return jsonify({'error': 'Check the box to agree to receive texts'}), 400
+            if not any(guardian_phones(c) for c in children):
+                return jsonify({'error': 'Add a parent phone number with the studio first'}), 400
+        for c in children:
+            if want and not c.tap_sms_opt_in:
+                c.tap_sms_opt_in_at = datetime.utcnow()
+                c.tap_sms_opt_in_by = current_user.id
+            c.tap_sms_opt_in = want
+    AuditLog.record(current_user.id, 'tap.notices',
+                    f"email={data.get('email', '-')} sms={data.get('sms', '-')}")
+    db.session.commit()
+    return jsonify({'children': [_notice_dict(c) for c in children]})
+
+
+@bp.route('/students/<int:student_id>/tap-notices', methods=['PUT'])
+def staff_update_notices(student_id):
+    """Staff can switch a household's notices off (a parent asked by phone or
+    replied to an email) or email back on. Staff can turn SMS off but never on:
+    texting needs the parent's own consent."""
+    err = _auth_error()
+    if err:
+        return err
+    from app import db
+    from app.models import AuditLog, Student
+    student = db.session.get(Student, student_id)
+    if student is None:
+        return jsonify({'error': 'Student not found'}), 404
+    data = request.get_json(silent=True) or {}
+    if data.get('sms') is True:
+        return jsonify({'error': 'Only a parent can turn on text notices, from the parent portal'}), 400
+    members = ([s for s in Student.query.filter_by(family_id=student.family_id).all()]
+               if student.family_id else [student])
+    for s in members:
+        if 'email' in data:
+            s.tap_email_opt_out = not bool(data['email'])
+        if data.get('sms') is False:
+            s.tap_sms_opt_in = False
+    AuditLog.record(current_user.id, 'tap.notices.staff',
+                    f'{student.full_name} household: {data}')
+    db.session.commit()
+    return jsonify(_notice_dict(student))
+
+
+@bp.route('/students/<int:student_id>/tap-notices', methods=['GET'])
+def staff_get_notices(student_id):
+    err = _auth_error()
+    if err:
+        return err
+    from app import db
+    from app.models import Student
+    student = db.session.get(Student, student_id)
+    if student is None:
+        return jsonify({'error': 'Student not found'}), 404
+    return jsonify(_notice_dict(student))

@@ -203,6 +203,13 @@ class Student(db.Model):
     parent_email_2 = db.Column(db.String(120))
     parent_phone = db.Column(db.String(20))
     
+    # Tap-In check-in notices. Email is on unless the household opts out; SMS
+    # needs an explicit opt-in (who and when is kept as the consent record).
+    tap_email_opt_out = db.Column(db.Boolean, default=False, nullable=False)
+    tap_sms_opt_in = db.Column(db.Boolean, default=False, nullable=False)
+    tap_sms_opt_in_at = db.Column(db.DateTime)
+    tap_sms_opt_in_by = db.Column(db.Integer, db.ForeignKey('users.id'))
+
     # RFID information
     rfid_uid = db.Column(db.String(50), unique=True, index=True)
     rfid_assigned_at = db.Column(db.DateTime)
@@ -248,7 +255,8 @@ class Student(db.Model):
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     # Relationships
-    assigned_by_user = db.relationship('User', backref='assigned_students')
+    assigned_by_user = db.relationship('User', backref='assigned_students',
+                                       foreign_keys=[rfid_assigned_by])
     attendances = db.relationship('Attendance', backref='student', lazy='dynamic')
     class_enrollments = db.relationship('ClassEnrollment', backref='student', lazy='dynamic')
     transactions = db.relationship('Transaction', backref='student', lazy='dynamic')
@@ -1416,3 +1424,36 @@ class TapEvent(db.Model):
 
     def __repr__(self):
         return f'<TapEvent {self.outcome} s={self.student_id} {self.occurred_at}>'
+
+
+class TapNotification(db.Model):
+    """Outbox for arrival/departure notices. Written in the same transaction as
+    the tap, sent later by one background thread, so a slow SMTP or Twilio
+    call never holds up a tap. Recipients are resolved at send time, so an
+    opt-out made after the tap still wins. `household_key` ('f12' / 's34')
+    groups siblings who tapped together into one message."""
+    __tablename__ = 'tap_notifications'
+
+    id = db.Column(db.Integer, primary_key=True)
+    tap_event_id = db.Column(db.Integer, db.ForeignKey('tap_events.id'), nullable=False)
+    student_id = db.Column(db.Integer, db.ForeignKey('students.id'), nullable=False)
+    household_key = db.Column(db.String(20), nullable=False, index=True)
+    kind = db.Column(db.String(10), nullable=False)      # arrival, departure
+    channel = db.Column(db.String(5), nullable=False)    # email, sms
+    status = db.Column(db.String(10), default='pending', nullable=False, index=True)
+    reason = db.Column(db.String(80))                    # why skipped/failed
+    attempts = db.Column(db.Integer, default=0, nullable=False)
+    send_after = db.Column(db.DateTime, nullable=False, index=True)  # studio-local
+    created_at = db.Column(db.DateTime, default=datetime.now, nullable=False)
+    sent_at = db.Column(db.DateTime)
+    recipients = db.Column(db.Text)
+
+    event = db.relationship('TapEvent')
+    student = db.relationship('Student')
+
+    __table_args__ = (
+        db.UniqueConstraint('tap_event_id', 'channel', name='unique_tap_notice_channel'),
+    )
+
+    def __repr__(self):
+        return f'<TapNotification {self.kind}/{self.channel} {self.status}>'

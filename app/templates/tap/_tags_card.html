@@ -56,6 +56,21 @@
         </template>
     </div>
 
+    <div class="mt-4 pt-3 border-t border-line text-sm" x-show="notice">
+        <p class="text-xs font-semibold text-ink-2 uppercase tracking-wider mb-1">Parent notices</p>
+        <template x-if="notice && notice.adult"><p class="text-ink-3">Adult dancer: no check-in notices.</p></template>
+        <template x-if="notice && !notice.adult">
+            <div class="space-y-1">
+                <p class="text-ink-2">Email: <b x-text="notice.email_on ? 'on' : 'off'"></b>
+                    <button @click="setNotice({ email: !notice.email_on })" class="ml-1 text-xs font-bold text-primary-600 hover:underline" x-text="notice.email_on ? 'Turn off' : 'Turn on'"></button></p>
+                <p class="text-ink-2">Text: <b x-text="notice.sms_on ? 'on' : 'off'"></b>
+                    <button x-show="notice.sms_on" @click="setNotice({ sms: false })" class="ml-1 text-xs font-bold text-primary-600 hover:underline">Turn off</button>
+                    <span x-show="!notice.sms_on" class="text-xs text-ink-3">(parents turn this on in the portal)</span></p>
+                <p class="text-xs text-ink-3">Applies to the whole household.</p>
+            </div>
+        </template>
+    </div>
+
     {# ── Setup modal ── #}
     <div x-show="setup.open" x-cloak class="fixed inset-0 z-50 bg-ink/40 flex items-end sm:items-center justify-center p-0 sm:p-4" @keydown.escape.window="closeSetup()">
         <div class="bg-surface rounded-t-2xl sm:rounded-2xl shadow-pop w-full max-w-md p-6" @click.outside="closeSetup()">
@@ -163,12 +178,20 @@ window.tagCard = function (studentId, name, active) {
             if (!res.ok) throw new Error(body.error || ('Error ' + res.status));
             return body;
         },
+        notice: null,
         async load() {
             try {
                 const d = await this.api(`/api/students/${this.studentId}/tags`);
                 this.tags = d.tags; this.lockReady = d.lock_ready;
+                this.notice = await this.api(`/api/students/${this.studentId}/tap-notices`);
             } catch (e) { toast(e.message, false); }
             this.loading = false;
+        },
+        async setNotice(change) {
+            try {
+                this.notice = await this.api(`/api/students/${this.studentId}/tap-notices`, { method: 'PUT', body: JSON.stringify(change) });
+                toast('Saved', true);
+            } catch (e) { toast(e.message, false); }
         },
         async setStatus(t, status) {
             const verb = { lost: 'Mark ' + t.label + ' lost? It will stop working right away.',

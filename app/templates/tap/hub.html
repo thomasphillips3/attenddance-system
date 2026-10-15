@@ -55,6 +55,21 @@
                     <label class="flex items-center gap-2 self-end pb-2"><input type="checkbox" x-model="s.tap_rollover_enabled" class="rounded">
                         <span class="text-ink">Back-to-back classes carry over</span></label>
                 </div>
+                <div class="pt-3 border-t border-line">
+                    <p class="font-bold text-ink mb-2">Parent check-in notices</p>
+                    <div class="space-y-2">
+                        <label class="flex items-center gap-2"><input type="checkbox" x-model="s.tap_notify_email_enabled" class="rounded">
+                            <span class="text-ink">Email parents when their dancer checks in and out</span></label>
+                        <label class="flex items-center gap-2"><input type="checkbox" x-model="s.tap_notify_sms_enabled" class="rounded">
+                            <span class="text-ink">Offer text notices (parents opt in from the portal)</span></label>
+                        <p class="text-xs text-ink-3 pl-6">Turn texts on only after the Twilio number is registered for 10DLC, or carriers block them. About 2 texts per dancer per class.</p>
+                        <label class="flex items-center gap-2"><input type="checkbox" x-model="s.tap_notify_paused" class="rounded">
+                            <span class="text-ink font-bold text-danger">Pause all notices</span></label>
+                        <label class="block max-w-xs"><span class="block font-bold text-ink mb-1">Daily limit (messages)</span>
+                            <input type="number" min="1" max="2000" x-model.number="s.tap_notify_daily_cap" class="w-full border border-line-2 rounded-lg px-3 py-2"></label>
+                        <p class="text-xs text-ink-3">Keep this under the studio Gmail's daily sending limit (about 500), or receipts and reminders stop for the day.</p>
+                    </div>
+                </div>
                 <button type="submit" class="px-4 py-2 rounded-xl bg-primary-500 text-white font-bold hover:bg-primary-600">Save settings</button>
             </form>
         {% endcall %}

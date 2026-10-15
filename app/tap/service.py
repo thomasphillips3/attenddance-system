@@ -310,6 +310,13 @@ def _new_event(req, now, outcome, **kw):
     return ev
 
 
+def _notify(ev, kind):
+    """Queue the parent notice in the same transaction as the tap."""
+    from app.tap import outbox
+    db.session.flush()
+    outbox.enqueue(ev, kind)
+
+
 def _commit_event(req, result):
     """Commit, turning an event_key race into the winner's result."""
     try:
@@ -441,6 +448,7 @@ def process_tap(req: TapRequest, _retried: bool = False) -> TapResult:
         ev = _new_event(req, now, 'checked_out', direction='out', tag_id=tag.id,
                         student_id=student.id, class_id=in_event.class_id,
                         attendance_id=open_att.id, undo_data=json.dumps(snap))
+        _notify(ev, 'departure')
         return _commit_event(req, TapResult(outcome='checked_out', event=ev, student=student,
                                             dance_class=open_cls, attendance=open_att))
 
@@ -527,6 +535,10 @@ def _check_in(req, now, tag, student, cls, rolled_from=None, rolled_ids=None, re
     ev = _new_event(req, now, 'checked_in', direction='in', tag_id=tag.id,
                     student_id=student.id, class_id=cls.id, attendance_id=att.id,
                     undo_data=json.dumps(snap))
+    if rolled_from is None:
+        # A rolled-over check-in is the same dancer staying for the next
+        # class: they never left, so nobody is told they arrived.
+        _notify(ev, 'arrival')
     return _commit_event(req, TapResult(outcome='checked_in', event=ev, student=student,
                                         dance_class=cls, attendance=att,
                                         rolled_from=rolled_from))
@@ -578,6 +590,7 @@ def _roll(req, now, tag, student, in_event, open_att, later, close_at, retried=F
     ev = _new_event(req, now, 'checked_out', direction='out', tag_id=tag.id,
                     student_id=student.id, class_id=final.id, attendance_id=att.id,
                     undo_data=json.dumps(fsnap))
+    _notify(ev, 'departure')
     return _commit_event(req, TapResult(outcome='checked_out', event=ev, student=student,
                                         dance_class=final, attendance=att,
                                         rolled_from=open_cls))
@@ -625,6 +638,8 @@ def undo_tap(event_id: int, actor_id=None) -> TapEvent:
                 _restore(rolled.attendance, rsnap)
         rolled.undone = True
     ev.undone = True
+    from app.tap import outbox
+    outbox.cancel_for_event(ev.id)
     db.session.add(TapEvent(event_key=f'undo:{ev.id}', occurred_at=datetime.now().replace(microsecond=0),
                             source='api', actor_id=actor_id, outcome='undone',
                             tag_id=ev.tag_id, student_id=ev.student_id, class_id=ev.class_id,

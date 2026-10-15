@@ -80,6 +80,10 @@ class Config:
     MAIL_USERNAME = os.environ.get('MAIL_USERNAME')
     MAIL_PASSWORD = os.environ.get('MAIL_PASSWORD')
     MAIL_REPLY_TO = os.environ.get('MAIL_REPLY_TO', 'LaShellesDance@gmail.com')
+
+    # Tap-In parent notices are sent by one background thread. Only production
+    # runs it by default; set TAP_NOTIFY_WORKER=1 to run it in dev.
+    TAP_NOTIFY_WORKER = False
     
 class DevelopmentConfig(Config):
     """Development configuration"""
@@ -92,6 +96,7 @@ class ProductionConfig(Config):
     TESTING = False
     SESSION_COOKIE_SECURE = True
     REMEMBER_COOKIE_SECURE = True  # persistent-login cookie only over HTTPS
+    TAP_NOTIFY_WORKER = True
 
 class TestingConfig(Config):
     """Testing configuration"""

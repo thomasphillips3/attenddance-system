@@ -21,6 +21,10 @@ STUDENT_COLUMNS = [
     ('chest', 'VARCHAR(20)'), ('size_notes', 'TEXT'),
     ('parent_phone', 'VARCHAR(20)'),
     ('parent_email_2', 'VARCHAR(120)'),
+    ('tap_email_opt_out', 'BOOLEAN DEFAULT 0 NOT NULL'),
+    ('tap_sms_opt_in', 'BOOLEAN DEFAULT 0 NOT NULL'),
+    ('tap_sms_opt_in_at', 'DATETIME'),
+    ('tap_sms_opt_in_by', 'INTEGER'),
 ]
 
 USER_COLUMNS = [

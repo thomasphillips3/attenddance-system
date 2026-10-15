@@ -81,6 +81,7 @@ from app.models import (
     StudentSkill,
     TicketOrder,
     TapEvent,
+    TapNotification,
     TicketType,
     TimeClockEntry,
     Transaction,
@@ -310,6 +311,8 @@ _PARENT_WRITE_ALLOWED = {
     'api.create_donation',
     'api.acknowledge_rule',
     'api.request_data_deletion',
+    # A parent switching check-in notices on/off for their own household.
+    'api.update_my_notices',
 }
 
 
@@ -7904,6 +7907,19 @@ def my_data_export():
                     'chip_serial': t.uid,
                     'assigned_at': _utc_iso(t.activated_at or t.created_at),
                 } for t in NfcTag.query.filter_by(student_id=child.id).all()],
+                'checkin_notice_settings': {
+                    'email_notices': not child.tap_email_opt_out,
+                    'text_notices': bool(child.tap_sms_opt_in),
+                    'text_consent_at': _utc_iso(child.tap_sms_opt_in_at),
+                },
+                'checkin_notices_sent': [{
+                    'kind': n.kind,
+                    'channel': n.channel,
+                    'status': n.status,
+                    'sent_at': _local_iso(n.sent_at),
+                    'recipients': n.recipients,
+                } for n in TapNotification.query.filter_by(student_id=child.id)
+                            .order_by(TapNotification.id).all()],
                 'tap_log': [{
                     'time': _local_iso(e.occurred_at),
                     'class_name': e.dance_class.name if e.dance_class else None,

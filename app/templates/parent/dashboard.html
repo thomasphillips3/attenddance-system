@@ -156,6 +156,61 @@
         <div class="p-5"><div id="makeups-list" class="space-y-2 text-sm"></div></div>
     </div>
 
+    <!-- Check-in notices (Tap-In) -->
+    <script>
+    window.parentNotices = function () {
+        return {
+            d: null, consent: false, busy: false,
+            async load() {
+                try { const r = await fetch('/api/my-notices'); if (r.ok) this.d = await r.json(); } catch (e) { }
+            },
+            kids() { return this.d ? this.d.children.filter(c => !c.adult) : []; },
+            emailOn() { return this.kids().some(c => c.email_on); },
+            smsOn() { return this.kids().some(c => c.sms_on); },
+            numbers() { const n = new Set(); this.kids().forEach(c => c.sms_numbers.forEach(x => n.add(x))); return [...n].join(', '); },
+            async save(body) {
+                this.busy = true;
+                try {
+                    const r = await fetch('/api/my-notices', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+                    const j = await r.json();
+                    if (!r.ok) { toast(j.error || 'Could not save', false); return; }
+                    this.d.children = j.children; this.consent = false; toast('Saved', true);
+                } finally { this.busy = false; }
+            },
+        };
+    };
+    </script>
+    <div x-data="parentNotices()" x-init="load()" x-show="kids().length" x-cloak class="bg-surface border border-line rounded-2xl shadow-soft mb-6 overflow-hidden">
+        <div class="px-5 py-3.5 border-b border-line"><h2 class="font-bold text-ink"><i class="fas fa-bell mr-2 text-ink-3"></i>Check-in notices</h2></div>
+        <div class="p-5 space-y-4 text-sm">
+            <p class="text-ink-2">When your dancer taps their tag at the studio, we can let you know they checked in and out.</p>
+            <label class="flex items-start gap-3">
+                <input type="checkbox" :checked="emailOn()" :disabled="busy" @change="save({ email: $event.target.checked })" class="mt-0.5 rounded">
+                <span><b class="text-ink">Email me</b> <span class="text-ink-3">at the addresses the studio has for your family</span></span>
+            </label>
+            <template x-if="d && d.sms_available">
+                <div class="space-y-2">
+                    <template x-if="smsOn()">
+                        <label class="flex items-start gap-3">
+                            <input type="checkbox" checked :disabled="busy" @change="save({ sms: false })" class="mt-0.5 rounded">
+                            <span><b class="text-ink">Text me</b> <span class="text-ink-3" x-text="numbers() ? 'at ' + numbers() : ''"></span></span>
+                        </label>
+                    </template>
+                    <template x-if="!smsOn()">
+                        <div class="p-3 rounded-xl bg-surface-2 space-y-2">
+                            <label class="flex items-start gap-3">
+                                <input type="checkbox" x-model="consent" class="mt-0.5 rounded">
+                                <span class="text-ink-2" x-text="d.sms_consent_text"></span>
+                            </label>
+                            <button :disabled="!consent || busy" @click="save({ sms: true, consent: true })" class="px-3 py-1.5 rounded-lg bg-primary-500 text-white text-xs font-bold disabled:opacity-40">Turn on texts</button>
+                        </div>
+                    </template>
+                </div>
+            </template>
+            <p class="text-xs text-ink-3">These are attendance notices, not pickup confirmations. Turning them off doesn't change how check-in works.</p>
+        </div>
+    </div>
+
     <!-- Payment history & pending claims -->
     <div class="bg-surface border border-line rounded-2xl shadow-soft mb-6 overflow-hidden">
         <div class="px-5 py-3.5 border-b border-line"><h2 class="font-bold text-ink"><i class="fas fa-receipt mr-2 text-ink-3"></i>Payments</h2></div>
