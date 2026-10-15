@@ -1,5 +1,19 @@
 # What's New in AttenDANCE
 
+## Tap-In: tag check-in (October 2026)
+
+Dancers can tap a key fob or card on a staff phone to check in and out. No more calling roll at the door.
+
+- **Tap in, tap out.** First tap checks them in to their class, a second tap later checks them out. Back-to-back classes just work.
+- **Any staff phone.** iPhones read the tag and tap a banner. An Android phone or tablet runs a hands-free station that keeps working if the Wi-Fi drops.
+- **Parents get a heads up.** An email when their dancer checks in and out. They can turn it off, or sign up for texts, in their portal.
+- **Easy fixes.** Undo is on every screen. A lost tag gets replaced in one click and stops working right away.
+- **Who needs a tag**, **who never tapped out**, and a quiet "Forms needed" badge for staff.
+
+To get started we order a few sample tags, test them, then do a short pilot with a class or two before handing tags out to everyone. Details are in the Tap-In section of the manual.
+
+---
+
 Hey Wilkanda!
 
 Big update — your system now does basically everything Jackrabbit did, built for LaShelle's. Billing, the parent portal, recital and costumes, the company, registration, all of it in one spot.

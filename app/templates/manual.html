@@ -388,6 +388,36 @@
       and the number is meaningless. This is the most common false alarm in the system.
     {% endcall %}
 
+    <h3 id="tap-in" class="{{ h3 }}">Tap-In: tag check-in</h3>
+    <p class="{{ p }}">Dancers can check themselves in and out by tapping a key fob or card on a staff
+    phone. A tap marks them present on the card (a teacher's P, A, T or E still works the same), and a
+    second tap at least 5 minutes later checks them out. Everything lives under <strong>Tap-In</strong>
+    in the menu.</p>
+    <ol class="{{ ol }}">
+      <li><strong>Give a dancer a tag:</strong> open their page, then <strong>Check-in Tags &rsaquo; Set up a
+      tag</strong>. On an Android phone, hold a blank tag to the phone and follow the steps. On an iPhone,
+      copy the link into the free NXP TagWriter app, write it, then tap the tag and choose
+      <strong>Finish setup</strong>.</li>
+      <li><strong>Drop-off:</strong> on an Android phone or tablet, open <strong>Tap-In &rsaquo; Start a tap
+      station</strong> and tap Start. Dancers tap one after another. On an iPhone, hold the top of the phone to
+      the tag and tap the banner.</li>
+      <li><strong>Lost tag:</strong> on the dancer's page, choose <strong>Replace</strong>. The old tag stops
+      working right away.</li>
+      <li><strong>Who still needs a tag:</strong> the Tap-In page lists them. <strong>Today's taps</strong>
+      shows who's here and who never tapped out.</li>
+    </ol>
+    {% call tip("Mistakes are one tap to fix") %}
+      Every result screen has <strong>Undo</strong>, and a dancer who checked out by accident can be put
+      <strong>back in class</strong>. A tap with no class at that time asks you to pick the class.
+    {% endcall %}
+    {% call warn("Never write a dancer's name on a tag") %}
+      Write the tag's label (like T-0014) on its box instead. If a tag is lost, whoever finds it learns
+      nothing about the dancer.
+    {% endcall %}
+    <p class="{{ p }}">Parents get an email when their dancer checks in and out, and can turn it off or
+    sign up for texts in their portal. Admins control all of this in <strong>Tap-In &rsaquo; Settings</strong>,
+    including a pause switch.</p>
+
     <h3 class="{{ h3 }}">Makeups</h3>
     <p class="{{ p }}">Parents can request a makeup from their portal; those land on the
     <strong>Makeups</strong> page marked <strong>Requested</strong>, and you use
