@@ -160,7 +160,16 @@
     <script>
     window.parentNotices = function () {
         return {
-            d: null, consent: false, busy: false, phone: '',
+            d: null, consent: false, busy: false, phone: '', code: '', codeSent: false,
+            async sendCode() {
+                this.busy = true;
+                try {
+                    const r = await fetch('/api/my-notices/code', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: this.phone }) });
+                    const j = await r.json();
+                    if (!r.ok) { toast(j.error || 'Could not send a code', false); return; }
+                    this.codeSent = true; toast('Code sent to ...' + j.phone_last4, true);
+                } finally { this.busy = false; }
+            },
             async load() {
                 try {
                     const r = await fetch('/api/my-notices');
@@ -177,7 +186,7 @@
                     const r = await fetch('/api/my-notices', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
                     const j = await r.json();
                     if (!r.ok) { toast(j.error || 'Could not save', false); return; }
-                    this.d.children = j.children; this.consent = false; toast('Saved', true);
+                    this.d.children = j.children; this.consent = false; this.codeSent = false; this.code = ''; toast('Saved', true);
                 } finally { this.busy = false; }
             },
         };
@@ -210,7 +219,13 @@
                                 <span class="text-ink-2" x-text="d.sms_consent_text"></span>
                             </label>
                             <p class="text-xs text-ink-3">Texts go only to this number. Another parent can turn on texts from their own login.</p>
-                            <button :disabled="!consent || !phone || busy" @click="save({ sms: true, consent: true, phone })" class="px-3 py-1.5 rounded-lg bg-primary-500 text-white text-xs font-bold disabled:opacity-40">Turn on texts</button>
+                            <button x-show="!codeSent" :disabled="!consent || !phone || busy" @click="sendCode()" class="px-3 py-1.5 rounded-lg bg-primary-500 text-white text-xs font-bold disabled:opacity-40">Text me a code</button>
+                            <div x-show="codeSent" class="flex flex-wrap items-end gap-2">
+                                <label class="block"><span class="block text-xs font-bold text-ink-2 mb-1">6-digit code</span>
+                                    <input x-model="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" class="w-28 border border-line-2 rounded-lg px-3 py-1.5 tracking-widest"></label>
+                                <button :disabled="code.length !== 6 || busy" @click="save({ sms: true, consent: true, phone, code })" class="px-3 py-1.5 rounded-lg bg-primary-500 text-white text-xs font-bold disabled:opacity-40">Turn on texts</button>
+                                <button @click="codeSent = false; code = ''" class="text-xs text-ink-3 underline">New code</button>
+                            </div>
                         </div>
                     </template>
                 </div>

@@ -1466,3 +1466,19 @@ class TapNotification(db.Model):
 
     def __repr__(self):
         return f'<TapNotification {self.kind}/{self.channel} {self.status}>'
+
+
+class SmsVerification(db.Model):
+    """A one-time code texted to a number before it can get check-in texts.
+    Proves the parent holds the phone, so the portal can't be used to text a
+    stranger. Only a hash of the code is stored."""
+    __tablename__ = 'sms_verifications'
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
+    phone = db.Column(db.String(20), nullable=False, index=True)
+    code_hash = db.Column(db.String(64), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    expires_at = db.Column(db.DateTime, nullable=False)
+    attempts = db.Column(db.Integer, default=0, nullable=False)
+    used = db.Column(db.Boolean, default=False, nullable=False)

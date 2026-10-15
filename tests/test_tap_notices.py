@@ -345,8 +345,30 @@ record("turning on texts without a number is refused", r.status_code == 400)
 r = pc.post("/api/my-notices", json={"sms": True, "consent": True, "phone": "12345"})
 record("a number that isn't a real phone is refused", r.status_code == 400)
 r = pc.post("/api/my-notices", json={"sms": True, "consent": True, "phone": "(586) 555-0123"})
-record("with consent and a number, texts turn on for the household", r.status_code == 200
-       and all(c["sms_on"] and c["sms_numbers"] == ["...0123"] for c in r.get_json()["children"]))
+record("a number that hasn't been verified with a texted code is refused", r.status_code == 400)
+import app.api.tap_routes as tap_routes  # noqa: E402
+codes = []
+tap_routes._code_sender = lambda to, body: (codes.append((to, body)) or (True, None))
+r = pc.post("/api/my-notices/code", json={"phone": "(586) 555-0123"})
+record("the portal texts a 6-digit code to the number", r.status_code == 200 and codes
+       and codes[0][0] == "+15865550123", f"got {r.status_code} {r.get_json()}")
+import re as _re  # noqa: E402
+code = _re.search(r"\b(\d{6})\b", codes[0][1]).group(1)
+wrong = "000000" if code != "000000" else "111111"
+r = pc.post("/api/my-notices", json={"sms": True, "consent": True, "phone": "5865550123", "code": wrong})
+record("a wrong code is refused", r.status_code == 400)
+r = pc.post("/api/my-notices", json={"sms": True, "consent": True, "phone": "(586) 555-0199", "code": code})
+record("a code only works for the number it was sent to", r.status_code == 400)
+r = pc.post("/api/my-notices", json={"sms": True, "consent": True, "phone": "(586) 555-0123", "code": code})
+record("with consent, a number and its code, texts turn on for the household", r.status_code == 200
+       and all(c["sms_on"] and c["sms_numbers"] == ["...0123"] for c in r.get_json()["children"]),
+       f"got {r.status_code} {r.get_json()}")
+r = pc.post("/api/my-notices", json={"sms": True, "consent": True, "phone": "(586) 555-0123", "code": code})
+record("a used code can't be replayed", r.status_code == 400)
+for _ in range(3):
+    pc.post("/api/my-notices/code", json={"phone": "5865550123"})
+r = pc.post("/api/my-notices/code", json={"phone": "5865550123"})
+record("codes are rate-limited per account", r.status_code == 429)
 with app.app_context():
     a = db.session.get(Student, ids["ava"])
     record("and who agreed, when, and which number is recorded",

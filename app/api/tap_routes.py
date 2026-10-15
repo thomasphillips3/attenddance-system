@@ -749,6 +749,81 @@ def get_my_notices():
     })
 
 
+CODE_TTL_MINUTES = 10
+CODE_MAX_ATTEMPTS = 5
+CODES_PER_USER_PER_HOUR = 3
+CODES_PER_PHONE_PER_DAY = 5
+_code_sender = None   # tests swap this; default is sms.send_sms_result
+
+
+def _code_hash(user_id, phone, code):
+    import hashlib
+    from flask import current_app
+    raw = f"{current_app.config['SECRET_KEY']}:{user_id}:{phone}:{code}"
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+@bp.route('/my-notices/code', methods=['POST'])
+def send_my_notice_code():
+    """Text a 6-digit code to the number a parent wants texts at. Texts only
+    turn on once that code comes back, so nobody can sign a stranger up.
+    Rate-limited per account and per number."""
+    if not current_user.is_authenticated:
+        return jsonify({'error': 'Sign in again'}), 401
+    if not current_user.is_parent:
+        return jsonify({'error': 'Parents only'}), 403
+    import secrets
+    from datetime import datetime, timedelta
+    from app import db
+    from app import sms as sms_service
+    from app.models import SmsVerification
+    from app.tap.outbox import setting_flags
+    if not setting_flags()['sms'] or not sms_service.is_configured():
+        return jsonify({'error': "The studio hasn't turned on text notices yet"}), 400
+    data = request.get_json(silent=True) or {}
+    phone = sms_service.normalize_us_phone(data.get('phone'))
+    if phone is None:
+        return jsonify({'error': 'Enter the mobile number to text, like 248-555-0100'}), 400
+    now = datetime.utcnow()
+    recent_user = SmsVerification.query.filter(
+        SmsVerification.user_id == current_user.id,
+        SmsVerification.created_at > now - timedelta(hours=1)).count()
+    recent_phone = SmsVerification.query.filter(
+        SmsVerification.phone == phone,
+        SmsVerification.created_at > now - timedelta(days=1)).count()
+    if recent_user >= CODES_PER_USER_PER_HOUR or recent_phone >= CODES_PER_PHONE_PER_DAY:
+        return jsonify({'error': 'Too many codes. Try again later.'}), 429
+    code = f'{secrets.randbelow(10 ** 6):06d}'
+    db.session.add(SmsVerification(user_id=current_user.id, phone=phone,
+                                   code_hash=_code_hash(current_user.id, phone, code),
+                                   expires_at=now + timedelta(minutes=CODE_TTL_MINUTES)))
+    db.session.commit()
+    sender = _code_sender or sms_service.send_sms_result
+    ok, _ = sender(phone, f'LSO Dance code: {code}. Enter it in the parent portal to get '
+                          'check-in texts. Reply STOP to opt out.')
+    if not ok:
+        return jsonify({'error': "Couldn't text that number. Check it and try again."}), 400
+    return jsonify({'sent': True, 'phone_last4': phone[-4:]})
+
+
+def _check_code(phone, code):
+    """True when `code` is the live code texted to `phone` for this parent."""
+    import hmac
+    from datetime import datetime
+    from app.models import SmsVerification
+    if not isinstance(code, str) or not code.strip().isdigit():
+        return False
+    v = (SmsVerification.query.filter_by(user_id=current_user.id, phone=phone, used=False)
+         .order_by(SmsVerification.id.desc()).first())
+    if v is None or v.expires_at < datetime.utcnow() or v.attempts >= CODE_MAX_ATTEMPTS:
+        return False
+    v.attempts += 1
+    if hmac.compare_digest(v.code_hash, _code_hash(current_user.id, phone, code.strip())):
+        v.used = True
+        return True
+    return False
+
+
 @bp.route('/my-notices', methods=['POST'])
 def update_my_notices():
     """A parent turns check-in notices on or off for their whole household.
@@ -780,6 +855,9 @@ def update_my_notices():
             phone = normalize_us_phone(data.get('phone'))
             if phone is None:
                 return jsonify({'error': 'Enter the mobile number to text, like 248-555-0100'}), 400
+            if not _check_code(phone, data.get('code')):
+                db.session.commit()   # keep the attempt count
+                return jsonify({'error': "That code didn't match. Check the text or send a new code."}), 400
         for c in children:
             if want:
                 c.tap_sms_opt_in_at = datetime.utcnow()

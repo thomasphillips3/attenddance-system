@@ -313,6 +313,7 @@ _PARENT_WRITE_ALLOWED = {
     'api.request_data_deletion',
     # A parent switching check-in notices on/off for their own household.
     'api.update_my_notices',
+    'api.send_my_notice_code',
 }
 
 
