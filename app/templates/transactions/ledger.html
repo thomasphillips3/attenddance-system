@@ -114,6 +114,12 @@
                         </select>
                     </div>
                     <div class="col-span-2">
+                        <label class="{{ lpl }}" for="lp-charge">Apply to charge</label>
+                        <select id="lp-charge" class="{{ lpi }}" onchange="selectLedgerCharge()">
+                            <option value="">No specific charge</option>
+                        </select>
+                    </div>
+                    <div class="col-span-2">
                         <label class="{{ lpl }}">Note</label>
                         <input id="lp-desc" type="text" placeholder="Optional" class="{{ lpi }}">
                     </div>
@@ -243,7 +249,7 @@ function renderLedger(rows) {
             : '';
         return `<tr class="border-b border-line last:border-0">
             <td class="px-5 py-3.5 whitespace-nowrap text-sm text-ink tabular-nums">${esc(r.transaction_date)}</td>
-            <td class="px-5 py-3.5 text-sm text-ink-2">${esc(desc)}${isCharge ? '' : '<span class="text-ink-3 text-xs">' + esc(method) + '</span>'}</td>
+            <td class="px-5 py-3.5 text-sm text-ink-2">${esc(desc)}${isCharge ? '' : '<span class="text-ink-3 text-xs">' + esc(method) + '</span>'}${r.applied_charge_id ? `<div class="text-xs text-primary-600">Applied to #${r.applied_charge_id}: ${esc(r.applied_charge_description || 'charge')}</div>` : ''}</td>
             <td class="px-5 py-3.5 whitespace-nowrap"><span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold ${r.fund === 'company' ? 'bg-gold-300 text-gold-ink' : 'bg-surface-2 text-ink-2'}">${esc(FUND_LABELS[r.fund] || r.fund)}</span></td>
             <td class="px-5 py-3.5 whitespace-nowrap"><span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold ${pillClass(r.category)}">${esc(r.category)}</span></td>
             <td class="px-5 py-3.5 whitespace-nowrap text-sm text-right tabular-nums ${isCharge ? 'text-danger' : ''}">${isCharge ? '$' + parseFloat(r.amount).toFixed(2) : ''}</td>
@@ -339,12 +345,42 @@ async function sendInvoice() {
     }
 }
 
+let ledgerOpenCharges = [];
+async function loadLedgerOpenCharges() {
+    const select = document.getElementById('lp-charge');
+    select.innerHTML = '<option value="">No specific charge</option>';
+    ledgerOpenCharges = [];
+    try {
+        const res = await fetch('/api/students/{{ student.id }}/open-charges');
+        if (!res.ok) throw new Error('Could not load charges');
+        ledgerOpenCharges = (await res.json()).charges;
+        for (const c of ledgerOpenCharges) {
+            const option = new Option(`${c.date} · ${c.description || c.category} · $${c.remaining.toFixed(2)} due (${c.fund})`, c.id);
+            select.add(option);
+        }
+    } catch (err) { toast('Could not load open charges', false); }
+}
+function selectLedgerCharge() {
+    const charge = ledgerOpenCharges.find(c => c.id === Number(document.getElementById('lp-charge').value));
+    if (!charge) return;
+    document.getElementById('lp-amount').value = charge.remaining.toFixed(2);
+    document.getElementById('lp-fund').value = charge.fund;
+    const category = document.getElementById('lp-category');
+    if (!Array.from(category.options).some(option => option.value === charge.category)) {
+        const option = new Option(charge.category, charge.category);
+        option.dataset.chargeOnly = 'true';
+        category.add(option);
+    }
+    category.value = charge.category;
+}
 function openLedgerPay() {
     const fund = document.getElementById('lp-fund').value;  // preselected by loadLedger
     document.getElementById('ledger-pay-form').reset();
+    document.querySelectorAll('#lp-category option[data-charge-only]').forEach(option => option.remove());
     document.getElementById('lp-fund').value = fund;
     document.getElementById('lp-date').value = new Date().toISOString().split('T')[0];
     document.getElementById('ledger-pay-modal').classList.remove('hidden');
+    loadLedgerOpenCharges();
 }
 function closeLedgerPay() { document.getElementById('ledger-pay-modal').classList.add('hidden'); }
 async function saveLedgerPay(e) {
@@ -363,6 +399,8 @@ async function saveLedgerPay(e) {
         category: document.getElementById('lp-category').value,
         description: document.getElementById('lp-desc').value,
     };
+    const charge = ledgerOpenCharges.find(c => c.id === Number(document.getElementById('lp-charge').value));
+    if (charge) body.applied_charge_id = charge.id;
     try {
         const res = await fetch('/api/transactions', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
         if (res.ok) { closeLedgerPay(); loadLedger(); toast('Payment recorded', true); }
