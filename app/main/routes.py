@@ -660,11 +660,10 @@ def sign_waivers_page(student_id):
 
 
 @bp.route('/manual')
-@admin_required
+@staff_required
 def manual_page():
-    """The studio operations manual. Admin-only: it documents billing, payout
-    settings, and destructive admin actions that teachers can't perform anyway."""
-    return render_template('manual.html', updated=date.today())
+    """Shared teacher/admin guide; contains instructions, never account data."""
+    return render_template('manual.html', updated=date(2026, 10, 17))
 
 
 # ── Tap-In ──────────────────────────────────────────────────────────

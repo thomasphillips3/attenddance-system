@@ -31,6 +31,14 @@ pay a Company balance. If a parent pays the wrong account, an admin can use
 "Move money between funds" on the student's ledger, which posts two offsetting
 `transfer` rows sharing a reference and writes an audit entry.
 
+## User manual
+
+Teachers and admins can open **User Manual** from the portal sidebar or Dashboard,
+or visit `/manual` while signed in. The guide covers daily teacher tasks and studio
+administration, with search, a linked contents list, and Print / Save PDF support.
+Its source is [`app/templates/manual.html`](app/templates/manual.html); update the
+review date in `manual_page` when changing the instructions.
+
 ## Running it locally
 
 ```bash
