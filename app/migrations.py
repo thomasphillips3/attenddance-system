@@ -31,6 +31,7 @@ USER_COLUMNS = [
 TRANSACTION_COLUMNS = [
     ('type', "VARCHAR(10) DEFAULT 'payment'"),
     ('recurring_charge_id', 'INTEGER'),
+    ('applied_charge_id', 'INTEGER REFERENCES transactions(id)'),
     ('fund', "VARCHAR(10) DEFAULT 'studio'"),
 ]
 
@@ -164,6 +165,9 @@ def run_migrations(db):
             _reconcile_admin_role(conn)
         if 'transactions' in inspector.get_table_names():
             _add_missing_columns(conn, inspector, 'transactions', TRANSACTION_COLUMNS)
+            conn.execute(sqlalchemy.text(
+                'CREATE INDEX IF NOT EXISTS ix_transactions_applied_charge_id '
+                'ON transactions(applied_charge_id)'))
             _backfill_transaction_fund(conn)
         if 'pending_payments' in inspector.get_table_names():
             _add_missing_columns(conn, inspector, 'pending_payments', PENDING_PAYMENT_COLUMNS)

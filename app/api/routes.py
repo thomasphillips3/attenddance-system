@@ -25,6 +25,7 @@ from app.helpers import (
     attendance_state,
     attendance_to_dict,
     build_aging,
+    charge_remainders,
     build_ledger,
     calc_balance,
     calc_balance_bulk,
@@ -1495,9 +1496,20 @@ def get_transactions():
     })
 
 
+_APPLIED_PAYMENT_LOCK = threading.Lock()
+
+
 @bp.route('/transactions', methods=['POST'])
 @login_required
 def create_transaction():
+    # One Gunicorn worker serves requests in multiple threads. Keep the
+    # remaining-charge check and payment insert together so two requests cannot
+    # both claim the same remainder.
+    with _APPLIED_PAYMENT_LOCK:
+        return _create_transaction_locked()
+
+
+def _create_transaction_locked():
     err = _admin_only()
     if err:
         return err
@@ -1530,6 +1542,24 @@ def create_transaction():
     if not student:
         return jsonify({'error': 'Student not found'}), 404
 
+    applied_charge_id = None
+    if data.get('applied_charge_id') not in (None, ''):
+        if txn_type != 'payment':
+            return jsonify({'error': 'Only payments can be applied to a charge'}), 400
+        applied_charge_id, err = _valid_id(data['applied_charge_id'])
+        if err:
+            return err
+        charge = Transaction.query.get(applied_charge_id)
+        if not charge or charge.type != 'charge' or charge.student_id != student.id:
+            return jsonify({'error': 'Charge not found for this student'}), 400
+        if charge.fund != fund or charge.category != data['category']:
+            return jsonify({'error': 'Payment fund and category must match the charge'}), 400
+        rows = Transaction.query.filter_by(student_id=student.id, fund=fund).all()
+        remainder = next((c['remaining'] for c in charge_remainders(rows)
+                          if c['id'] == charge.id), 0)
+        if float(amount) > round(remainder, 2):
+            return jsonify({'error': f'Charge has only ${max(remainder, 0):.2f} remaining'}), 400
+
     try:
         t = Transaction(
             student_id=student.id,
@@ -1540,6 +1570,7 @@ def create_transaction():
             payment_method=data.get('payment_method') or 'n/a',
             description=_clean_str(data.get('description')) or None,
             transaction_date=txn_date,
+            applied_charge_id=applied_charge_id,
             created_by=current_user.id,
         )
         db.session.add(t)
@@ -1547,13 +1578,26 @@ def create_transaction():
         # otherwise the trail shows who *removed* a charge but not who *posted* one
         # (matters since staff, not only admins, can post charges).
         AuditLog.record(current_user.id, 'transaction.create',
-                        f'{txn_type} ${float(amount):.2f} {data["category"]} ({fund}) for {student.full_name}')
+                        f'{txn_type} ${float(amount):.2f} {data["category"]} ({fund}) for {student.full_name}'
+                        + (f' applied to charge #{applied_charge_id}' if applied_charge_id else ''))
         db.session.commit()
         return jsonify(transaction_to_dict(t)), 201
     except Exception:
         db.session.rollback()
         logger.exception("Failed to create transaction")
         return jsonify({'error': 'An internal error occurred'}), 500
+
+
+@bp.route('/students/<int:student_id>/open-charges', methods=['GET'])
+@login_required
+def open_charges(student_id):
+    err = _admin_only()
+    if err:
+        return err
+    Student.query.get_or_404(student_id)
+    rows = Transaction.query.filter_by(student_id=student_id).all()
+    charges = [c for c in charge_remainders(rows) if c['remaining'] > 0]
+    return jsonify({'charges': [{**c, 'date': c['date'].isoformat()} for c in charges]})
 
 
 @bp.route('/balances', methods=['GET'])
@@ -2207,11 +2251,14 @@ def delete_transaction(tid):
     t = Transaction.query.get_or_404(tid)
     detail = (f'{t.type} ${float(t.amount):.2f} {t.category} ({t.fund}) for '
               f'{t.student.full_name if t.student else t.student_id} on {t.transaction_date}')
-    # Clear the two back-references that FK to transactions so nothing dangles.
+    # Clear back-references that FK to transactions so nothing dangles.
     PendingPayment.query.filter_by(transaction_id=t.id).update(
         {'transaction_id': None}, synchronize_session=False)
     CostumeAssignment.query.filter_by(transaction_id=t.id).update(
         {'transaction_id': None}, synchronize_session=False)
+    if t.type == 'charge':
+        Transaction.query.filter_by(applied_charge_id=t.id).update(
+            {'applied_charge_id': None}, synchronize_session=False)
     db.session.delete(t)
     AuditLog.record(current_user.id, 'transaction.delete', detail)
     db.session.commit()
