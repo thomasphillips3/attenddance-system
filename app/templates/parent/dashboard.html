@@ -409,7 +409,20 @@ function renderMethods() {
                 </div>`;
             cHtml += `<button onclick="submitClaim('cashapp')" class="px-3 py-2 bg-ok text-white rounded-xl text-sm font-bold hover:opacity-90">I sent it with Cash App</button>`;
         }
-        if (opt.type === 'paypal' && opt.username) {
+        if (opt.type === 'paypal' && opt.checkout && opt.url) {
+            // A PayPal checkout link can't carry an amount, so the parent types
+            // it on PayPal's page (same as the Square link). The server only
+            // hands out paypal.com/ncp/payment/<id> links.
+            mHtml += `
+                <div class="border border-info/30 rounded-xl p-3 bg-info/10">
+                    <div class="font-bold text-info text-sm mb-2"><i class="fab fa-paypal mr-1"></i>PayPal</div>
+                    <a href="${esc(opt.url)}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center px-3 py-2 bg-info text-white rounded-xl text-sm font-bold hover:opacity-90">
+                        Pay with PayPal${amt ? ' - $' + amt.toFixed(2) : ''}
+                    </a>
+                    <p class="text-xs text-info mt-2">Opens PayPal's checkout${amt ? `. Enter $${amt.toFixed(2)} there` : ''}, then tap "I sent it with PayPal" below.</p>
+                </div>`;
+            cHtml += `<button onclick="submitClaim('paypal')" class="px-3 py-2 bg-info text-white rounded-xl text-sm font-bold hover:opacity-90">I sent it with PayPal</button>`;
+        } else if (opt.type === 'paypal' && opt.username) {
             const url = `https://paypal.me/${encodeURIComponent(opt.username)}${amt ? '/' + amt.toFixed(2) : ''}`;
             mHtml += `
                 <div class="border border-info/30 rounded-xl p-3 bg-info/10">
