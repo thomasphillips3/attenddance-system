@@ -472,8 +472,9 @@ Search narrows the page; Print includes the full manual and can save a PDF.</p>
 
     <h3 id="tap-how" class="{{ h3 }}">Tapping a card or fob: what to do and what to expect</h3>
     <p class="{{ p }}">The cards and fobs are NFC tags, a short-range kind of RFID. A tag has no battery and no
-    screen. It holds one private link, and it works when it is held right up against the back of a staff
-    phone or tablet. It does not track anyone, and it does not work from across the room.</p>
+    screen. Most tags hold one private link, and they work when held right up against the back of a staff
+    phone or tablet. A tag set up as <strong>USB-only</strong> holds no link and works only on the USB
+    reader station, not on phones. A tag does not track anyone, and it does not work from across the room.</p>
 
     <p class="{{ p }}"><strong>How to tap</strong></p>
     <ol class="{{ ol }}">
@@ -496,7 +497,7 @@ Search narrows the page; Print includes the full manual and can save a PDF.</p>
       appears.</li>
       <li><strong>iPad:</strong> cannot read tags by itself. Use an iPhone, an Android device, or the USB reader.</li>
       <li><strong>USB reader:</strong> touch the tag to the reader's marked surface. The result appears on the
-      laptop or tablet it is plugged into.</li>
+      laptop or tablet it is plugged into. USB-only tags work here and nowhere else.</li>
     </ul>
     {% call tip("If a tap won't read, check these first") %}
       A <strong>thick or metal phone case</strong>, a magnetic wallet or ring stuck to the back, a tag held
@@ -528,13 +529,18 @@ Search narrows the page; Print includes the full manual and can save a PDF.</p>
           <tr class="border-b border-line"><td class="px-3 py-2.5 font-bold text-warn">Amber: OUT, <em>Already checked out</em></td>
             <td class="px-3 py-2.5">They already left this class.</td>
             <td class="px-3 py-2.5">Choose <strong>Put back in class</strong> if they came back, or pick another class.</td></tr>
+          <tr class="border-b border-line"><td class="px-3 py-2.5 font-bold text-warn">Amber: !</td>
+            <td class="px-3 py-2.5">The tag belongs to a dancer who is marked inactive.</td>
+            <td class="px-3 py-2.5">Ask an admin to reactivate the dancer, or mark them on the attendance card.</td></tr>
           <tr class="border-b border-line"><td class="px-3 py-2.5 font-bold text-danger">Red: NO</td>
             <td class="px-3 py-2.5">The tag is not recognized, was reported lost, is retired, was never finished,
             or is not assigned to a dancer.</td>
             <td class="px-3 py-2.5">Mark them on the attendance card, then look the tag up on the dancer's page.</td></tr>
           <tr><td class="px-3 py-2.5 font-bold text-danger">Red: NOT RECORDED</td>
-            <td class="px-3 py-2.5">The phone had no connection, so nothing saved.</td>
-            <td class="px-3 py-2.5">Tap again once it's back online, or use the attendance card.</td></tr>
+            <td class="px-3 py-2.5">The phone could not confirm the tap (no connection, or an error). It may
+            or may not have saved: the tap can reach the server and the reply get lost.</td>
+            <td class="px-3 py-2.5">Open <strong>Today's taps</strong> and look for the dancer. If they're
+            there, leave it alone. If not, tap again, or mark the attendance card.</td></tr>
         </tbody>
       </table>
     </div>
@@ -596,8 +602,9 @@ Search narrows the page; Print includes the full manual and can save a PDF.</p>
     reconnect so the queue can upload. The <strong>N saved, not sent</strong> counter disappears when
     the queue empties. If an upload error says a saved tap could not be recorded, check and correct
     the attendance card; an empty queue alone does not prove every tap succeeded. <strong>NOT RECORDED</strong> means the
-    attendance has not saved. A regular iPhone tag page cannot queue a tap offline: retry online or use
-    the attendance card. Do not treat an offline message as proof the dancer checked in.</p>
+    phone could not confirm the tap, so it may or may not have saved. A regular iPhone tag page cannot queue
+    a tap offline: check <strong>Today's taps</strong>, then retry online or use the attendance card. Do not
+    treat an offline message as proof the dancer checked in, or as proof they didn't.</p>
 
     <h3 class="{{ h3 }}">Reading and correcting tap results</h3>
     <p class="{{ p }}">By default, check-in opens 30 minutes before class and closes at its end.
@@ -1161,7 +1168,7 @@ Search narrows the page; Print includes the full manual and can save a PDF.</p>
             <td class="px-3 py-2.5">Approval and Send logins try to email the setup link; check the result message and spam folder. Manual invite/reset links must be copied and sent by staff. Generate a fresh link if expired.</td></tr>
           <tr class="border-b border-line">
             <td class="px-3 py-2.5 font-bold">Tag shows NOT RECORDED or a generic page</td>
-            <td class="px-3 py-2.5">Reconnect and retry; on iPhone, sign in as staff in Safari. For a pending, lost, or retired tag, finish setup or check its status on the dancer's page.</td></tr>
+            <td class="px-3 py-2.5">Reconnect, then check <strong>Today's taps</strong> to see whether the tap saved before tapping again or fixing the card; on iPhone, sign in as staff in Safari. For a pending, lost, or retired tag, finish setup or check its status on the dancer's page.</td></tr>
           <tr class="border-b border-line">
             <td class="px-3 py-2.5 font-bold">A Studio credit did not clear a Company balance</td>
             <td class="px-3 py-2.5">The funds stay separate. An admin can correct a misfiled payment with Move money between funds after checking which account received it.</td></tr>

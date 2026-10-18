@@ -84,9 +84,13 @@ class ManualTests(unittest.TestCase):
         self.assertIn('id="tap-how"', html)
         self.assertIn('href="#tap-how"', html)
         for phrase in ('flat against the back', 'top edge', 'NOT RECORDED',
-                       'What to tell families', 'NTAG215'):
+                       'What to tell families', 'NTAG215',
+                       'may or may not have saved', 'USB-only'):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, html)
+        # NOT RECORDED is uncertain, never "nothing saved".
+        self.assertNotIn('so nothing saved', html)
+        self.assertNotIn('attendance has not saved', html)
         # House style: no em or en dashes in manual copy.
         self.assertNotIn('\u2014', html.split('id="tap-how"')[1].split('Tap-In setup, tag status')[0])
 
