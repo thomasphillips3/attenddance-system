@@ -483,7 +483,7 @@ Search narrows the page; Print includes the full manual and can save a PDF.</p>
     <ol class="{{ ol }}">
       <li>Hold the tag <strong>flat against the back</strong> of the phone, touching or within about an inch.</li>
       <li>Hold it still for a second or two, then wait for the screen. Tapping again and again does not
-      make it faster, and a repeat read within 10 seconds is ignored anyway.</li>
+      make it faster, and a repeat read within a few seconds (10 by default, set in Tap-In settings) is ignored anyway.</li>
       <li><strong>One tag at a time.</strong> Two tags together, or a tag stacked with a bank or
       transit card, can confuse the reader.</li>
       <li>Wait for the result before the next dancer steps up, so staff can see whose tap it was.</li>
@@ -520,7 +520,7 @@ Search narrows the page; Print includes the full manual and can save a PDF.</p>
         <tbody class="text-ink-2">
           <tr class="border-b border-line"><td class="px-3 py-2.5 font-bold text-ok">Green: IN</td>
             <td class="px-3 py-2.5">Checked in to the class shown. If it says <em>Already checked in at ...</em>,
-            they tapped again within a few minutes and nothing changed.</td>
+            they tapped again soon after checking in (within 5 minutes by default) and nothing changed.</td>
             <td class="px-3 py-2.5">Nothing. Check the name and class are right.</td></tr>
           <tr class="border-b border-line"><td class="px-3 py-2.5 font-bold text-info">Blue: OUT</td>
             <td class="px-3 py-2.5">Checked out of the class shown.</td>
@@ -616,7 +616,9 @@ Search narrows the page; Print includes the full manual and can save a PDF.</p>
 
     <h3 class="{{ h3 }}">Reading and correcting tap results</h3>
     <p class="{{ p }}">By default, check-in opens 30 minutes before class and closes at its end.
-    Repeat reads within 10 seconds are ignored; an early second tap may say the dancer is already in.
+    Repeat reads within 10 seconds are ignored, and a second tap within 5 minutes of check-in says the dancer
+    is already in. Both delays are settings an admin can change in Tap-In settings, so if taps behave
+    differently, check the numbers there.
     With back-to-back carry-over enabled, a later check-out also records the intervening consecutive
     classes. If a tap asks for a class, select the right one before leaving the result screen.</p>
     <p class="{{ p }}">Use <strong>Undo</strong> for a wrong tap, or <strong>Put back in class</strong>

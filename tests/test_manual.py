@@ -92,6 +92,8 @@ class ManualTests(unittest.TestCase):
         self.assertNotIn('nowhere else', html)
         self.assertNotIn('works only on the USB', html)
         self.assertIn('compare the', html)
+        # The timing numbers are settings, so the manual must call them defaults.
+        self.assertIn('10 by default, set in Tap-In settings', html)
         self.assertIn('Only use a <strong>blank</strong> tag', html)
         # NOT RECORDED is uncertain, never "nothing saved".
         self.assertNotIn('so nothing saved', html)
