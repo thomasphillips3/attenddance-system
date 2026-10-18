@@ -299,6 +299,35 @@ def test_company_other_and_paypal():
         options = client.get('/api/payment-options').get_json()['payment_options']
         paypal = [o for o in options['company'] if o['type'] == 'paypal'][0]
         assert paypal['checkout'] is False and 'evil' not in paypal['url'], paypal
+        # Junk that would 500 urlparse/.port is a clean 400, and a stored junk
+        # value never breaks the parent options.
+        for junk in ('https://www.paypal.com:abc/ncp/payment/ABCDEF', 'https://[/ncp/payment/ABCDEF'):
+            assert client.put('/api/settings/payments',
+                              json={'company_payments_paypal_link': junk}).status_code == 400, junk
+        assert client.put('/api/settings/payments',
+                          json={'payments_square_link': 'https://[x'}).status_code == 400
+        with app.app_context():
+            Setting.set('company_payments_paypal_link', 'https://www.paypal.com:abc/ncp/payment/ABCDEF')
+            db.session.commit()
+        assert client.get('/api/payment-options').status_code == 200
+        # A PayPal.me name is letters and digits only; a squashed URL is refused.
+        for junk in ('httpswwwpaypalcomdon/', 'name with space', 'x' * 21):
+            assert client.put('/api/settings/payments',
+                              json={'company_payments_paypal_username': junk}).status_code == 400, junk
+        # Studio fund works the same way, and saving a PayPal.me name with an
+        # empty link clears a saved link.
+        assert client.put('/api/settings/payments', json={
+            'payments_paypal_enabled': '1',
+            'payments_paypal_link': 'https://www.paypal.com/ncp/payment/STUDIO123'}).status_code == 200
+        studio = [o for o in client.get('/api/payment-options').get_json()['payment_options']['studio']
+                  if o['type'] == 'paypal']
+        assert studio and studio[0]['checkout'] and studio[0]['url'].endswith('/STUDIO123')
+        assert client.put('/api/settings/payments', json={
+            'payments_paypal_link': '', 'payments_paypal_username': 'StudioName'}).status_code == 200
+        studio = [o for o in client.get('/api/payment-options').get_json()['payment_options']['studio']
+                  if o['type'] == 'paypal']
+        assert studio == [{'type': 'paypal', 'checkout': False, 'username': 'StudioName',
+                           'url': 'https://paypal.me/StudioName'}], studio
         # Clearing the link falls back to the PayPal.me name.
         assert client.put('/api/settings/payments', json={'company_payments_paypal_link': ''}).status_code == 200
         options = client.get('/api/payment-options').get_json()['payment_options']

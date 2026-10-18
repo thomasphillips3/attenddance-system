@@ -447,16 +447,21 @@ async function loadSettings() {
 
 // One box takes either kind of PayPal link. A checkout link
 // (paypal.com/ncp/payment/...) is sent as the link and checked by the server;
-// anything else is read as a PayPal.me link (paypal.me/Name/25,
-// paypal.com/paypalme/Name) or a bare name: letters and digits, at most 20.
-// Setting one clears the other so the portal never shows a stale one.
+// otherwise a PayPal.me link (paypal.me/Name/25, paypal.com/paypalme/Name)
+// or a bare name (letters and digits, at most 20). Setting one clears the
+// other so the portal never shows a stale one. Anything else (a Donate
+// button link, a typo) returns null and the save stops: squashing it into a
+// name could send parents to a stranger's PayPal.me.
 function paypalFields(id) {
     const raw = document.getElementById(id).value.trim();
-    if (/paypal\.com\/ncp\/payment\//i.test(raw)) return { link: raw, username: '' };
-    const link = raw.match(/paypal\.(?:me|com\/paypalme)\/([^/?#\s]+)/i);
-    const name = (link ? link[1] : raw).replace(/[^A-Za-z0-9]/g, '').slice(0, 20);
-    if (raw && (!name || (!link && /[^A-Za-z0-9]/.test(raw)))) {
-        toast("That PayPal link doesn't look right. Paste a paypal.com/ncp/payment link or your PayPal.me name.", false);
+    if (/paypal\.com\/ncp\/payment\//i.test(raw)) {
+        return { link: /^https?:\/\//i.test(raw) ? raw : 'https://' + raw, username: '' };
+    }
+    const link = raw.match(/paypal\.(?:me|com\/paypalme)\/([A-Za-z0-9]{1,20})(?:[/?#]|$)/i);
+    const name = link ? link[1] : raw;
+    if (raw && !/^[A-Za-z0-9]{1,20}$/.test(name)) {
+        toast("That PayPal link isn't one we can use. Paste a paypal.com/ncp/payment/... checkout link or your PayPal.me name.", false);
+        return null;
     }
     return { link: '', username: name };
 }
@@ -466,6 +471,7 @@ async function saveSettings() {
     const coTag = document.getElementById('co-cashapp-tag').value.trim();
     const paypal = paypalFields('paypal-name');
     const coPaypal = paypalFields('co-paypal-name');
+    if (!paypal || !coPaypal) return;
     const body = {
         company_payments_zelle_enabled: document.getElementById('co-zelle-enabled').checked ? '1' : '0',
         company_payments_zelle_name: document.getElementById('co-zelle-name').value.trim(),

@@ -2,7 +2,7 @@
 
 ## PayPal checkout links (October 2026)
 
-- **Use your PayPal checkout link.** Paste a PayPal checkout link (paypal.com/ncp/payment/...) into Payment Methods, for the studio or the Company. Parents get a "Pay with PayPal" button and are told the amount to enter. PayPal.me links still work too.
+- **Use your PayPal checkout link.** Paste a PayPal checkout link (https://www.paypal.com/ncp/payment/...) into Payment Methods, for the studio or the Company. Parents get a "Pay with PayPal" button and are told the amount to enter. PayPal.me links still work too.
 
 ---
 

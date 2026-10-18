@@ -3666,10 +3666,13 @@ def _valid_square_link(value):
         return '', None
     if len(val) > 500:
         return None, 'Square link is too long'
-    parsed = urlparse(val)
+    try:
+        parsed = urlparse(val)
+        host = (parsed.hostname or '').lower()
+    except ValueError:  # malformed host, e.g. an unbalanced [
+        return None, 'Square link is not a valid URL'
     if parsed.scheme != 'https':
         return None, 'Square link must start with https://'
-    host = (parsed.hostname or '').lower()
     if host not in SQUARE_LINK_HOSTS and not host.endswith(SQUARE_LINK_SUFFIXES):
         return None, ('Square link must be a Square checkout URL '
                       '(square.link, checkout.square.site, or squareup.com)')
@@ -3694,13 +3697,23 @@ def _valid_paypal_link(value):
         return '', None
     if len(val) > 300:
         return None, 'PayPal link is too long'
-    parsed = urlparse(val)
+    bad = (None, 'PayPal link must be a PayPal checkout link like '
+                 'https://www.paypal.com/ncp/payment/ABC123')
+    try:
+        parsed = urlparse(val)
+    except ValueError:  # e.g. an unbalanced [ in the host
+        return bad
+    # Compare the whole netloc, not .hostname: that rules out a port or
+    # user@ prefix in one check, and never touches .port (which raises on
+    # junk like :abc).
     match = _PAYPAL_LINK_PATH.match(parsed.path or '')
-    if (parsed.scheme != 'https' or (parsed.hostname or '').lower() not in PAYPAL_LINK_HOSTS
-            or parsed.port or parsed.username or parsed.password or not match):
-        return None, ('PayPal link must be a PayPal checkout link like '
-                      'https://www.paypal.com/ncp/payment/ABC123')
+    if parsed.scheme != 'https' or parsed.netloc.lower() not in PAYPAL_LINK_HOSTS or not match:
+        return bad
     return f'https://www.paypal.com/ncp/payment/{match.group(1)}', None
+
+
+# A PayPal.me name: letters and digits, at most 20 (empty clears it).
+_PAYPAL_NAME = re.compile(r'^[A-Za-z0-9]{0,20}$')
 
 
 @bp.route('/settings/payments', methods=['GET'])
@@ -3755,6 +3768,12 @@ def update_payment_settings():
             checked_links[key], lerr = _valid_paypal_link(data[key])
             if lerr:
                 return jsonify({'error': lerr}), 400
+    # A PayPal.me name becomes paypal.me/<name> on the parent portal, so junk
+    # (a pasted non-PayPal.me URL squashed into letters) could be a stranger's
+    # account. Refuse it instead of saving it.
+    for key in ('payments_paypal_username', 'company_payments_paypal_username'):
+        if key in data and not _PAYPAL_NAME.match((data[key] or '').strip()):
+            return jsonify({'error': 'A PayPal.me name is letters and numbers only, up to 20'}), 400
 
     changed = []
     for key in PAYMENT_SETTINGS_KEYS:
