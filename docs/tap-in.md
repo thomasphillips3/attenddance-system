@@ -16,20 +16,22 @@ There are three ways to read a tag:
 
 What a tap does:
 
-- **First tap** during a class window (30 minutes before start until the end) checks the dancer in. Several classes today resolve to one, the same way every time.
-- **A repeat read** within 10 seconds is ignored.
-- **A tap 5+ minutes later** checks them out of that same class.
+- **First tap** during a class window (by default 30 minutes before start until the end) checks the dancer in. Several classes today resolve to one, the same way every time.
+- **A repeat read** within 10 seconds (the default) is ignored.
+- **A tap 5+ minutes later** (the default) checks them out of that same class.
 - **Back-to-back classes**: a dancer who taps in for ballet and out after jazz is marked present for both.
 - **A tap outside any class window** shows a class picker and records nothing until staff pick.
 - **Undo** and **Put back in class** are on every result screen.
 - **Staff badges**: "Forms needed" for an unsigned waiver, and "Check account" (admins only) when the household owes money. Never a dollar amount, and neither ever blocks a check-in.
 - **Parent notices**: an email when the dancer checks in and out. Texts are opt-in from the portal and need a code texted to the parent's phone first.
 
+The class window, the repeat-read delay and the check-out delay are settings an admin can change under **Tap-In > Settings**. The numbers above are the defaults, so check Settings for the current values if taps behave differently than described.
+
 A tag link opened by anyone who isn't signed-in staff shows a generic "this is a studio tag, please return it" page. That page is the same for a real, unknown or revoked tag.
 
 ## What to buy
 
-Buy **NTAG213** tags. iPhones, Android phones and USB readers can all read them, and 144 bytes is plenty for the link. Skip NTAG215/216 (no benefit, and "NTAG215 compatible" listings are often Amiibo clones), MIFARE Classic and 125 kHz tags (iPhones can't read them).
+Buy **NTAG213** tags if you can find a trusted source. iPhones, Android phones and USB readers can all read them, and 144 bytes is plenty for the link. **NTAG215 also works** with the app (it has more memory than the link needs), and it is what most Amazon fob and card listings sell. NTAG215 listings sold for Amiibo cloning are the ones to be careful of, since counterfeit chips turn up there, so check every batch with TagInfo. Skip NTAG216, and skip MIFARE Classic and 125 kHz tags (iPhones can't read those two).
 
 Prices are from GoToTags on 2026-10-14, before shipping.
 
@@ -67,7 +69,7 @@ From a dancer's page, open **Check-in Tags > Set up a tag**:
   1. Choose "Write it with an app" to get the tag's link (shown once).
   2. Write the link with NXP TagWriter.
   3. Tap the tag on a signed-in staff phone and choose **Finish setup**.
-- **USB reader only**: choose "Scan on the USB reader" and tap the tag. That tag works on the USB station only.
+- **USB reader only**: choose "Scan on the USB reader" and tap the tag. That tag gets no link, so it works on the USB station and the Android station (which reads its serial number) but not on an iPhone. Use a blank tag: setup doesn't erase what's already on it, and an old link on a reused tag can still open on a phone and makes the Android station go by that link instead of the serial number.
 
 Write the tag's label (like `T-0014`) on its box or a sticker. Never write the dancer's name on the tag.
 
@@ -111,7 +113,7 @@ Cheap no-name keyboard-wedge readers often only output 4 bytes as 10 decimal dig
 2. In Chrome: Tap-In > Start a tap station > Start. Keep the page open; the screen stays on by itself.
 3. Dancers hold the tag to the middle of the back of the phone.
 
-If a phone shows **NOT RECORDED**, the tap didn't count. Tap again once it's back online, or mark the dancer on the attendance card.
+If a phone shows **NOT RECORDED**, it couldn't confirm the tap, so the tap may or may not have saved (the request can reach the server and the reply get lost). Open **Today's taps** and compare the dancer's In and Out times with the tap you just made. Tap again, or mark the attendance card, only if the expected time is missing. Tapping again blindly can undo a check-in that did save: a second tap after the check-out delay (5 minutes by default, see Tap-In > Settings) checks the dancer out.
 
 ## Parent notices
 

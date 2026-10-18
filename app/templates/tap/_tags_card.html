@@ -135,7 +135,7 @@
                         </button>
                         <button @click="setup.step = 'usb'; $nextTick(() => $refs.usbInput && $refs.usbInput.focus())" class="w-full text-left p-3 rounded-xl border border-line-2 hover:border-primary-300">
                             <p class="text-sm font-bold text-ink"><i class="fas fa-keyboard mr-1 text-primary-500"></i>Scan on the USB reader</p>
-                            <p class="text-xs text-ink-3">For the tablet or laptop station. The tag will work on the USB reader only.</p>
+                            <p class="text-xs text-ink-3">For the tablet or laptop station. Use a blank tag: it holds no link, so it won't work on an iPhone, and an old link already on the tag can make the Android station reject it.</p>
                         </button>
                     </div>
                     <div x-show="setup.step === 'link'" class="space-y-3">
@@ -249,8 +249,14 @@ window.tagCard = function (studentId, name, active) {
             try { await this.api(`/api/tags/${t.id}`, { method: 'DELETE' }); this.load(); }
             catch (e) { toast(e.message, false); }
         },
-        replace(t) {
+        async replace(t) {
             if (!confirm('Mark ' + t.label + ' lost and set up a replacement?')) return;
+            // Switch the old tag off now, not when the new one is finished: closing
+            // the setup window must never leave a lost tag working.
+            try {
+                await this.api(`/api/tags/${t.id}/status`, { method: 'POST', body: JSON.stringify({ status: 'lost' }) });
+            } catch (e) { toast(e.message, false); return; }
+            this.load();
             this.resetSetup();
             this.setup.replacing = t.label; this.setup.replaceOf = t.id; this.setup.kind = t.kind;
             this.setup.open = true;
@@ -383,7 +389,7 @@ window.tagCard = function (studentId, name, active) {
                     await this.api(`/api/tags/${this.setup.replaceOf}/status`, { method: 'POST', body: JSON.stringify({ status: 'lost' }) });
                 }
                 this.setup.step = 'done'; this.setup.error = false;
-                this.say(d.label + ' is ready for ' + this.name, 'It works on the USB reader station.');
+                this.say(d.label + ' is ready for ' + this.name, 'It works on the USB reader and the Android station, not on an iPhone.');
             } catch (e) { this.setup.error = true; this.setup.detail = e.message; }
         },
     };
