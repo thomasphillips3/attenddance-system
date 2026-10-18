@@ -377,7 +377,11 @@ def family_emails(family):
     return _dedupe_emails(candidates)
 
 
-def student_to_dict(student) -> dict:
+def student_to_dict(student, has_tag=None) -> dict:
+    """`has_tag` lets a list endpoint pass a precomputed answer instead of one
+    query per dancer."""
+    if has_tag is None:
+        has_tag = student.has_active_tag()
     return {
         'id': student.id,
         'first_name': student.first_name,
@@ -415,8 +419,8 @@ def student_to_dict(student) -> dict:
         'size_notes': student.size_notes,
         'family_id': student.family_id,
         'family_name': student.family.name if student.family else None,
-        'rfid_uid': student.rfid_uid,
-        'has_rfid': student.has_rfid(),
+        'has_tag': has_tag,
+        'rfid_uid': student.rfid_uid,  # legacy badge, read-only history
         'rfid_assigned_at': _utc_iso(student.rfid_assigned_at),  # UTC metadata -> 'Z' for correct local display
         'is_active': student.is_active,
         'enrollment_date': student.enrollment_date.isoformat(),

@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""AttenDANCE - RFID Attendance System — main entry point."""
+"""AttenDANCE studio management - main entry point."""
 
 import logging
 import os
-import threading
 
 # Configure logging at import time so it applies under BOTH gunicorn (which
 # imports `run:app`, so __main__ never runs) and the dev server. Without this,
@@ -21,21 +20,8 @@ app = create_app()
 
 
 def main():
-    """Run the dev server with optional RFID service."""
-    if not app.config.get('TESTING', False):
-        try:
-            from rfid.service import RFIDService
-            rfid_service = RFIDService()
-            rfid_thread = threading.Thread(
-                target=rfid_service.start_listening,
-                daemon=True,
-                name="RFID-Service",
-            )
-            rfid_thread.start()
-            logger.info("RFID service started successfully")
-        except Exception:
-            logger.info("RFID service not available (normal on non-Raspberry Pi hardware)")
-
+    """Run the dev server. Check-in hardware lives on staff phones and the tap
+    station page now (Tap-In); nothing runs beside the app."""
     host = os.environ.get('FLASK_HOST', '0.0.0.0')
     # Honor PORT (12-factor / PaaS / preview harness) first, then FLASK_PORT.
     port = int(os.environ.get('PORT') or os.environ.get('FLASK_PORT', 5000))

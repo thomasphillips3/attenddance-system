@@ -38,9 +38,17 @@
                 <li><strong>Student profile:</strong> name, date of birth, the student's own email if one is
                 given, up to two parent/guardian email addresses and a phone number, school and grade,
                 emergency contact (including their relationship to the student),
-                allergies and special needs, costume/uniform measurements, and an RFID badge ID used only for
-                class check-in (it is not a biometric identifier — it's a physical card we assign).</li>
-                <li><strong>Attendance:</strong> which classes a student checked into and when.</li>
+                allergies and special needs, and costume/uniform measurements.</li>
+                <li><strong>Check-in tags:</strong> the key fob or card a student taps to check in. We record
+                which tag belongs to which student, a short label like T-0014, the chip's serial number, and
+                whether the tag is active or was reported lost. The tag itself holds only a random code that
+                means nothing outside the studio's system; it contains no name or other personal
+                information. It is not a biometric identifier.</li>
+                <li><strong>Check-in photo (optional):</strong> a small photo staff may take so the check-in screen
+                shows who tapped. Only studio staff can see it; it is never published or shared.</li>
+                <li><strong>Attendance:</strong> which classes a student checked into, when they arrived, and
+                when they checked out, plus a log of each tag tap (time, class, and result) used to catch
+                double taps and fix mistakes.</li>
                 <li><strong>Billing:</strong> charges, payments, and payment method (we do not store full card
                 numbers — card payments are processed by Square; we store their transaction record).</li>
                 <li><strong>Forms &amp; consent:</strong> signed liability/photo/medical waivers and studio rule
@@ -49,6 +57,12 @@
                 casting, costume and ticket orders, skill milestones, and awards.</li>
                 <li><strong>Communications:</strong> messages the studio sends to your email, and any donation or
                 payment-plan records tied to your account.</li>
+                <li><strong>Check-in notices:</strong> whether you want an email or text when your dancer checks in
+                and out, and, if you opted in to texts, the mobile number you gave and when and by which account you
+                agreed. Texts go only to that number, after we text it a one-time code to confirm it's yours. We keep a
+                record of each code request (the number and when) for 30 days to stop misuse; the code itself is
+                never stored. We keep a record of
+                each notice sent (time and the address or number it went to).</li>
             </ul>
         </section>
 
@@ -65,7 +79,7 @@
             outside services process a limited slice of data on our behalf, only for the purpose stated:</p>
             <ul class="list-disc pl-5 space-y-1 mt-2">
                 <li><strong>Square</strong> — processes card payments and invoices.</li>
-                <li><strong>Twilio</strong> — delivers SMS balance reminders, if enabled.</li>
+                <li><strong>Twilio</strong> — delivers SMS balance reminders and check-in texts, if enabled.</li>
                 <li><strong>Email provider (Gmail SMTP)</strong> — delivers receipts, reminders, and studio
                 messages.</li>
                 <li><strong>Fly.io</strong> — hosts the application and database.</li>

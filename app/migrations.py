@@ -21,6 +21,13 @@ STUDENT_COLUMNS = [
     ('chest', 'VARCHAR(20)'), ('size_notes', 'TEXT'),
     ('parent_phone', 'VARCHAR(20)'),
     ('parent_email_2', 'VARCHAR(120)'),
+    ('tap_email_opt_out', 'BOOLEAN DEFAULT 0 NOT NULL'),
+    ('tap_sms_opt_in', 'BOOLEAN DEFAULT 0 NOT NULL'),
+    ('tap_sms_opt_in_at', 'DATETIME'),
+    ('tap_sms_opt_in_by', 'INTEGER'),
+    ('tap_sms_phone', 'VARCHAR(20)'),
+    ('photo_data', 'TEXT'),
+    ('photo_updated_at', 'DATETIME'),
 ]
 
 USER_COLUMNS = [
@@ -156,6 +163,33 @@ def _seed_default_season(conn, inspector):
         'UPDATE classes SET season_id = :sid WHERE season_id IS NULL'), {'sid': season_id})
 
 
+def _backfill_nfc_tags(conn):
+    """Carry every legacy `students.rfid_uid` badge into `nfc_tags` as an
+    active, token-less tag, so a dancer who already had a card keeps working
+    on the USB reader. The legacy column is left untouched as history.
+    Idempotent: a badge whose UID is already in nfc_tags is skipped."""
+    from app.tap.credentials import legacy_uid
+    rows = conn.execute(sqlalchemy.text(
+        'SELECT id, rfid_uid, rfid_assigned_at, rfid_assigned_by FROM students '
+        "WHERE rfid_uid IS NOT NULL AND rfid_uid != ''")).fetchall()
+    for sid, raw, assigned_at, assigned_by in rows:
+        uid = legacy_uid(raw)
+        if not uid:
+            continue
+        taken = conn.execute(sqlalchemy.text('SELECT 1 FROM nfc_tags WHERE uid = :u'),
+                             {'u': uid}).first()
+        if taken:
+            continue
+        conn.execute(sqlalchemy.text(
+            "INSERT INTO nfc_tags (student_id, uid, kind, status, locked, source, "
+            "created_at, created_by, activated_at) VALUES (:s, :u, 'card', 'active', 0, "
+            "'legacy', COALESCE(:at, CURRENT_TIMESTAMP), :by, COALESCE(:at, CURRENT_TIMESTAMP))"),
+            {'s': sid, 'u': uid, 'at': assigned_at, 'by': assigned_by})
+        conn.execute(sqlalchemy.text(
+            "UPDATE nfc_tags SET label = printf('T-%04d', id) WHERE uid = :u AND label IS NULL"),
+            {'u': uid})
+
+
 def run_migrations(db):
     with db.engine.connect() as conn:
         inspector = sqlalchemy.inspect(db.engine)
@@ -183,4 +217,6 @@ def run_migrations(db):
             _add_missing_columns(conn, inspector, 'attendance', ATTENDANCE_COLUMNS)
             _enforce_attendance_uniqueness(conn)
         _seed_default_season(conn, inspector)
+        if 'nfc_tags' in inspector.get_table_names():
+            _backfill_nfc_tags(conn)
         conn.commit()

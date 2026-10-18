@@ -1,0 +1,391 @@
+{# Check-in tags card for the student detail page (staff). Lists the dancer's
+   fobs/cards and runs tag setup. Setup on Android Chrome uses Web NFC end to
+   end; anywhere else it hands out the link to write with a tag-writer app, or
+   takes a chip serial from a USB reader. Rendered with x-text throughout, so
+   names and labels are escaped. The x-data attribute is single-quoted on
+   purpose: tojson emits double quotes and escapes single ones. #}
+<div id="tags" class="bg-surface border border-line rounded-2xl shadow-soft p-6"
+     x-data='tagCard({{ student.id }}, {{ student.first_name|tojson }}, {{ 'true' if student.is_active else 'false' }})' x-init="load()">
+    <div class="flex items-center justify-between mb-3">
+        <h2 class="text-sm font-semibold text-ink-2 uppercase tracking-wider">Check-in Tags</h2>
+        <button x-show="active" @click="openSetup()" class="text-xs font-bold text-primary-600 hover:text-primary-700"><i class="fas fa-plus mr-1"></i>Set up a tag</button>
+    </div>
+
+    <template x-if="loading"><p class="text-sm text-ink-3">Loading…</p></template>
+    <template x-if="!loading && !tags.length">
+        <p class="text-sm text-ink-3">No tag yet. Set one up so <span x-text="name"></span> can tap in.</p>
+    </template>
+    <div class="space-y-2">
+        <template x-for="t in tags" :key="t.id">
+            <div class="p-3 rounded-xl border border-line" :class="t.status === 'active' ? 'bg-surface' : 'bg-surface-2'">
+                <div class="flex items-center justify-between gap-2">
+                    <div class="min-w-0">
+                        <p class="text-sm font-bold text-ink">
+                            <i class="fas mr-1 text-ink-3" :class="t.kind === 'card' ? 'fa-id-card' : 'fa-key'"></i>
+                            <span x-text="t.label"></span>
+                            <span class="text-xs font-normal text-ink-3" x-text="t.kind"></span>
+                            <i x-show="t.locked" class="fas fa-lock text-xs text-ink-3 ml-1" title="Locked (read-only)"></i>
+                        </p>
+                        <p class="text-xs text-ink-3" x-show="!t.has_token">Serial only (USB reader)</p>
+                    </div>
+                    <span class="shrink-0 px-2 py-0.5 rounded-full text-xs font-bold"
+                          :class="{'bg-ok/10 text-ok': t.status === 'active', 'bg-warn/10 text-warn': t.status === 'pending',
+                                   'bg-danger/10 text-danger': t.status === 'lost', 'bg-surface-2 text-ink-3': t.status === 'retired'}"
+                          x-text="statusLabel(t.status)"></span>
+                </div>
+                <div class="mt-2 flex flex-wrap gap-2 text-xs">
+                    <template x-if="t.status === 'active'">
+                        <span class="contents">
+                            <button @click="setStatus(t, 'lost')" class="px-2 py-1 rounded-lg border border-line-2 text-ink-2 hover:border-danger hover:text-danger">Lost</button>
+                            <button @click="replace(t)" class="px-2 py-1 rounded-lg border border-line-2 text-ink-2 hover:border-primary-300 hover:text-primary-700">Replace</button>
+                            <button @click="setStatus(t, 'retired')" class="px-2 py-1 rounded-lg border border-line-2 text-ink-2 hover:bg-surface-2">Retire</button>
+                            <button x-show="t.has_token && !t.locked && nfc" @click="lock(t)" class="px-2 py-1 rounded-lg border border-line-2 text-ink-2 hover:bg-surface-2"><i class="fas fa-lock mr-1"></i>Lock</button>
+                        </span>
+                    </template>
+                    <template x-if="t.status === 'pending'">
+                        <span class="contents">
+                            <span class="text-ink-3 self-center">Setup not finished.</span>
+                            <button @click="removePending(t)" class="px-2 py-1 rounded-lg border border-line-2 text-ink-2 hover:border-danger hover:text-danger">Delete</button>
+                        </span>
+                    </template>
+                    <template x-if="t.status === 'lost' || t.status === 'retired'">
+                        <button @click="setStatus(t, 'active')" class="px-2 py-1 rounded-lg border border-line-2 text-ink-2 hover:bg-surface-2">Found it, reactivate</button>
+                    </template>
+                </div>
+            </div>
+        </template>
+    </div>
+
+    <div class="mt-4 pt-3 border-t border-line text-sm">
+        <p class="text-xs font-semibold text-ink-2 uppercase tracking-wider mb-2">Check-in photo</p>
+        <div class="flex items-center gap-3">
+            <template x-if="photoUrl"><img :src="photoUrl" alt="" class="w-14 h-14 rounded-full object-cover border border-line"></template>
+            <template x-if="!photoUrl"><span class="w-14 h-14 rounded-full bg-surface-2 border border-dashed border-line-2 flex items-center justify-center text-ink-3"><i class="fas fa-user"></i></span></template>
+            <div class="space-x-2">
+                <label class="text-xs font-bold text-primary-600 hover:underline cursor-pointer">
+                    <span x-text="photoUrl ? 'Change' : 'Add photo'"></span>
+                    <input type="file" accept="image/*" capture="user" class="hidden" @change="uploadPhoto($event)">
+                </label>
+                <button x-show="photoUrl" @click="removePhoto()" class="text-xs font-bold text-ink-3 hover:text-danger">Remove</button>
+            </div>
+        </div>
+        <p class="text-xs text-ink-3 mt-1">Staff only. Shown on the tap screen so staff can see it's the right dancer. Never published.</p>
+    </div>
+
+    <div class="mt-4 pt-3 border-t border-line text-sm" x-show="notice">
+        <p class="text-xs font-semibold text-ink-2 uppercase tracking-wider mb-1">Parent notices</p>
+        <template x-if="notice && notice.adult"><p class="text-ink-3">Adult dancer: no check-in notices.</p></template>
+        <template x-if="notice && !notice.adult">
+            <div class="space-y-1">
+                <p class="text-ink-2">Email: <b x-text="notice.email_on ? 'on' : 'off'"></b>
+                    <button @click="setNotice({ email: !notice.email_on })" class="ml-1 text-xs font-bold text-primary-600 hover:underline" x-text="notice.email_on ? 'Turn off' : 'Turn on'"></button></p>
+                <p class="text-ink-2">Text: <b x-text="notice.sms_on ? 'on' : 'off'"></b>
+                    <button x-show="notice.sms_on" @click="setNotice({ sms: false })" class="ml-1 text-xs font-bold text-primary-600 hover:underline">Turn off</button>
+                    <span x-show="!notice.sms_on" class="text-xs text-ink-3">(parents turn this on in the portal)</span></p>
+                <p class="text-xs text-ink-3">Applies to the whole household.</p>
+            </div>
+        </template>
+    </div>
+
+    {# ── Setup modal ── #}
+    <div x-show="setup.open" x-cloak class="fixed inset-0 z-50 bg-ink/40 flex items-end sm:items-center justify-center p-0 sm:p-4" @keydown.escape.window="closeSetup()">
+        <div class="bg-surface rounded-t-2xl sm:rounded-2xl shadow-pop w-full max-w-md p-6" @click.outside="closeSetup()">
+            <div class="flex items-start justify-between mb-4">
+                <div>
+                    <h3 class="font-display text-2xl text-ink">Set up a tag</h3>
+                    <p class="text-sm text-ink-3">For <span x-text="name"></span><span x-show="setup.replacing"> (replacing <span x-text="setup.replacing"></span>)</span></p>
+                </div>
+                <button @click="closeSetup()" aria-label="Close" class="text-ink-3 hover:text-ink p-1"><i class="fas fa-xmark"></i></button>
+            </div>
+
+            <div class="flex gap-2 mb-4" x-show="setup.step === 'start'">
+                <template x-for="k in ['fob', 'card']" :key="k">
+                    <button @click="setup.kind = k" class="flex-1 px-3 py-2 rounded-xl border text-sm font-bold"
+                            :class="setup.kind === k ? 'border-primary-500 bg-primary-50 text-primary-700' : 'border-line-2 text-ink-2'">
+                        <i class="fas mr-1" :class="k === 'card' ? 'fa-id-card' : 'fa-key'"></i><span x-text="k === 'card' ? 'Card' : 'Key fob'"></span>
+                    </button>
+                </template>
+            </div>
+
+            {# Android Chrome: Web NFC #}
+            <template x-if="nfc">
+                <div>
+                    <div x-show="setup.step === 'start'">
+                        <p class="text-sm text-ink-2 mb-4">Tap Start, then hold a blank NTAG213 tag flat against the back of this phone and keep it there.</p>
+                        <button @click="startNfc()" class="w-full px-4 py-3 rounded-xl bg-primary-500 text-white font-bold hover:bg-primary-600"><i class="fas fa-wifi rotate-90 mr-2"></i>Start</button>
+                    </div>
+                    <div x-show="setup.step !== 'start'" class="text-center py-4">
+                        <div class="text-4xl mb-3" :class="setup.step === 'done' ? 'text-ok' : (setup.error ? 'text-danger' : 'text-primary-500')">
+                            <i class="fas" :class="setup.step === 'done' ? 'fa-circle-check' : (setup.error ? 'fa-circle-exclamation' : 'fa-wifi rotate-90 animate-pulse')"></i>
+                        </div>
+                        <p class="text-lg font-bold text-ink" x-text="setup.headline"></p>
+                        <p class="text-sm text-ink-2 mt-1" x-text="setup.detail"></p>
+                    </div>
+                </div>
+            </template>
+
+            {# iPhone / desktop: link for a tag-writer app, or USB serial #}
+            <template x-if="!nfc">
+                <div>
+                    <div x-show="setup.step === 'start'" class="space-y-3">
+                        <p class="text-sm text-ink-2">This phone can't write tags from the browser. Pick one:</p>
+                        <button @click="getLink()" class="w-full text-left p-3 rounded-xl border border-line-2 hover:border-primary-300">
+                            <p class="text-sm font-bold text-ink"><i class="fas fa-link mr-1 text-primary-500"></i>Write it with an app</p>
+                            <p class="text-xs text-ink-3">Get a setup link, write it with NXP TagWriter (free), then tap the tag on a staff phone to finish.</p>
+                        </button>
+                        <button @click="setup.step = 'usb'; $nextTick(() => $refs.usbInput && $refs.usbInput.focus())" class="w-full text-left p-3 rounded-xl border border-line-2 hover:border-primary-300">
+                            <p class="text-sm font-bold text-ink"><i class="fas fa-keyboard mr-1 text-primary-500"></i>Scan on the USB reader</p>
+                            <p class="text-xs text-ink-3">For the tablet or laptop station. The tag will work on the USB reader only.</p>
+                        </button>
+                    </div>
+                    <div x-show="setup.step === 'link'" class="space-y-3">
+                        <p class="text-sm text-ink-2">Setup link for tag <b x-text="setup.label"></b>:</p>
+                        <div class="flex gap-2">
+                            <input x-ref="linkInput" :value="setup.url" readonly @focus="$event.target.select()" class="flex-1 border border-line-2 rounded-lg px-2 py-1.5 text-xs bg-surface-2">
+                            <button @click="copyLink()" class="px-3 py-1.5 rounded-lg bg-primary-500 text-white text-xs font-bold">Copy</button>
+                        </div>
+                        <ol class="text-sm text-ink-2 list-decimal pl-5 space-y-1">
+                            <li>Open <b>NXP TagWriter</b>, choose Write, New dataset, Link.</li>
+                            <li>Paste the link and write it to the tag.</li>
+                            <li>Tap the tag on a signed-in staff phone and choose <b>Finish setup</b>.</li>
+                        </ol>
+                        <p class="text-xs text-ink-3">The link is shown only once. Write the label <b x-text="setup.label"></b> on the tag's box, never the dancer's name.</p>
+                    </div>
+                    <div x-show="setup.step === 'usb'" class="space-y-3">
+                        <p class="text-sm text-ink-2">Click the box, then tap the tag on the USB reader.</p>
+                        <input x-ref="usbInput" x-model="setup.uid" @keydown.enter.prevent="enrollUid()" autocomplete="off" placeholder="Chip serial"
+                               class="w-full border border-line-2 rounded-lg px-3 py-2 font-mono text-sm uppercase">
+                        <button @click="enrollUid()" class="w-full px-4 py-2 rounded-xl bg-primary-500 text-white font-bold hover:bg-primary-600">Save tag</button>
+                    </div>
+                    <div x-show="setup.step === 'done'" class="text-center py-4">
+                        <div class="text-4xl mb-3 text-ok"><i class="fas fa-circle-check"></i></div>
+                        <p class="text-lg font-bold text-ink" x-text="setup.headline"></p>
+                        <p class="text-sm text-ink-2 mt-1" x-text="setup.detail"></p>
+                    </div>
+                    <p x-show="setup.error" class="mt-3 text-sm text-danger font-bold" x-text="setup.detail"></p>
+                </div>
+            </template>
+
+            <div class="mt-5 flex gap-2" x-show="setup.step === 'done' || setup.error">
+                <button @click="closeSetup()" class="flex-1 px-4 py-2 rounded-xl border border-line-2 text-ink-2 font-bold">Done</button>
+                <button x-show="setup.step === 'done'" @click="resetSetup(); openSetup()" class="flex-1 px-4 py-2 rounded-xl bg-primary-50 text-primary-700 font-bold">Set up another</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="{{ url_for('static', filename='js/tap-nfc.js') }}"></script>
+<script>
+window.tagCard = function (studentId, name, active) {
+    const blankSetup = () => ({ open: false, step: 'start', kind: 'fob', headline: '', detail: '', error: false,
+                                tagId: null, url: '', label: '', serial: '', uid: '', replacing: '', replaceOf: null });
+    return {
+        studentId, name, active, tags: [], loading: true, lockReady: false,
+        nfc: window.TapNFC && TapNFC.supported(),
+        setup: blankSetup(),
+        reader: null, abort: null,
+
+        statusLabel(s) { return { active: 'Active', pending: 'Setting up', lost: 'Lost', retired: 'Retired' }[s] || s; },
+
+        async api(url, opts) {
+            const res = await fetch(url, Object.assign({ headers: { 'Content-Type': 'application/json' } }, opts || {}));
+            let body = {};
+            try { body = await res.json(); } catch (e) { /* non-JSON */ }
+            if (!res.ok) throw new Error(body.error || ('Error ' + res.status));
+            return body;
+        },
+        notice: null,
+        photoUrl: {{ ("'/api/students/%d/photo?v=%d'" % (student.id, student.photo_updated_at.timestamp()|int)) if student.photo_updated_at else 'null' }},
+        // Shrink in the browser: a 320px JPEG is ~20 KB, small enough to keep
+        // in the database for every dancer.
+        async uploadPhoto(ev) {
+            const file = ev.target.files && ev.target.files[0];
+            ev.target.value = '';
+            if (!file) return;
+            try {
+                const img = await new Promise((res, rej) => {
+                    const i = new Image(); i.onload = () => res(i); i.onerror = rej;
+                    i.src = URL.createObjectURL(file);
+                });
+                const side = 320, c = document.createElement('canvas');
+                const s = Math.min(img.width, img.height);
+                c.width = side; c.height = side;
+                c.getContext('2d').drawImage(img, (img.width - s) / 2, (img.height - s) / 2, s, s, 0, 0, side, side);
+                const data = c.toDataURL('image/jpeg', 0.82);
+                const d = await this.api(`/api/students/${this.studentId}/photo`, { method: 'POST', body: JSON.stringify({ photo: data }) });
+                this.photoUrl = d.photo_url + '?v=' + Date.now();
+                toast('Photo saved', true);
+            } catch (e) { toast(e.message || "Couldn't read that image", false); }
+        },
+        async removePhoto() {
+            if (!confirm('Remove the check-in photo?')) return;
+            try { await this.api(`/api/students/${this.studentId}/photo`, { method: 'DELETE' }); this.photoUrl = null; }
+            catch (e) { toast(e.message, false); }
+        },
+        async load() {
+            try {
+                const d = await this.api(`/api/students/${this.studentId}/tags`);
+                this.tags = d.tags; this.lockReady = d.lock_ready;
+                this.notice = await this.api(`/api/students/${this.studentId}/tap-notices`);
+            } catch (e) { toast(e.message, false); }
+            this.loading = false;
+        },
+        async setNotice(change) {
+            try {
+                this.notice = await this.api(`/api/students/${this.studentId}/tap-notices`, { method: 'PUT', body: JSON.stringify(change) });
+                toast('Saved', true);
+            } catch (e) { toast(e.message, false); }
+        },
+        async setStatus(t, status) {
+            const verb = { lost: 'Mark ' + t.label + ' lost? It will stop working right away.',
+                           retired: 'Retire ' + t.label + '? It will stop working.',
+                           active: 'Reactivate ' + t.label + '?' }[status];
+            if (!confirm(verb)) return;
+            try { await this.api(`/api/tags/${t.id}/status`, { method: 'POST', body: JSON.stringify({ status }) }); toast('Saved', true); this.load(); }
+            catch (e) { toast(e.message, false); }
+        },
+        async removePending(t) {
+            if (!confirm('Delete the unfinished setup ' + t.label + '?')) return;
+            try { await this.api(`/api/tags/${t.id}`, { method: 'DELETE' }); this.load(); }
+            catch (e) { toast(e.message, false); }
+        },
+        replace(t) {
+            if (!confirm('Mark ' + t.label + ' lost and set up a replacement?')) return;
+            this.resetSetup();
+            this.setup.replacing = t.label; this.setup.replaceOf = t.id; this.setup.kind = t.kind;
+            this.setup.open = true;
+        },
+
+        openSetup() { this.setup.open = true; },
+        resetSetup() { this.stopNfc(); this.setup = blankSetup(); },
+        closeSetup() { this.resetSetup(); this.load(); },
+        stopNfc() { if (this.abort) { try { this.abort.abort(); } catch (e) { } } this.abort = null; this.reader = null; },
+        say(headline, detail, error) { this.setup.headline = headline; this.setup.detail = detail || ''; this.setup.error = !!error; },
+
+        // Mint the pending tag (or the replacement) and get its URL.
+        async mint(uid) {
+            if (this.setup.tagId) return;
+            let d;
+            if (this.setup.replaceOf) {
+                d = (await this.api(`/api/tags/${this.setup.replaceOf}/replace`, { method: 'POST', body: JSON.stringify({ kind: this.setup.kind }) })).new;
+                this.setup.replaceOf = null;
+            } else {
+                d = await this.api(`/api/students/${this.studentId}/tags`, { method: 'POST', body: JSON.stringify({ kind: this.setup.kind, uid: uid || null }) });
+            }
+            this.setup.tagId = d.id; this.setup.url = d.url; this.setup.label = d.label;
+        },
+
+        // ── Android: read blank tag -> check -> mint -> write -> read back -> activate
+        async startNfc() {
+            this.setup.step = 'scan';
+            this.say('Hold the tag to the phone', 'Flat against the back, near the middle. Keep it there.');
+            try {
+                this.abort = new AbortController();
+                this.reader = new NDEFReader();
+                await this.reader.scan({ signal: this.abort.signal });
+                this.reader.onreadingerror = () => this.say("Couldn't read that tag", 'Hold it still, flat on the back of the phone.', true);
+                this.reader.onreading = (ev) => this.onRead(ev);
+            } catch (e) {
+                this.say('NFC not available', TapNFC.errorText(e), true);
+            }
+        },
+        busy: false,
+        async onRead(ev) {
+            if (this.busy) return;
+            this.busy = true;
+            try {
+                const serial = ev.serialNumber || '';
+                const onTag = TapNFC.firstUrl(ev.message);
+                if (this.setup.step === 'verify') {
+                    if (this.setup.serial && serial && serial !== this.setup.serial) {
+                        this.say('That is a different tag', 'Tap the same tag you just wrote.', true);
+                        return;
+                    }
+                    if (onTag !== this.setup.url) {
+                        this.say("The tag didn't save", 'Tap it again and hold it still.', true);
+                        this.setup.step = 'write';
+                        await this.write();
+                        return;
+                    }
+                    const done = await this.api(`/api/tags/${this.setup.tagId}/activate`, { method: 'POST', body: JSON.stringify({ uid: serial, url: onTag }) });
+                    this.stopNfc();
+                    this.setup.step = 'done';
+                    this.say(done.label + ' is ready for ' + this.name, 'Write ' + done.label + " on the tag's box, never the dancer's name.");
+                    return;
+                }
+                if (this.setup.step === 'scan') {
+                    this.setup.serial = serial;
+                    const chk = await this.api('/api/tags/check', { method: 'POST', body: JSON.stringify({ student_id: this.studentId, uid: serial, url: onTag }) });
+                    if (!chk.ok) { this.say("Can't use this tag", chk.error, true); return; }
+                    await this.mint(serial);
+                    this.setup.step = 'write';
+                    await this.write();
+                }
+            } catch (e) {
+                this.say('Something went wrong', e.message, true);
+            } finally {
+                this.busy = false;
+            }
+        },
+        async write() {
+            this.say('Writing…', 'Keep holding the tag still.');
+            try {
+                await this.reader.write({ records: [{ recordType: 'url', data: this.setup.url }] }, { overwrite: true, signal: this.abort.signal });
+                this.setup.step = 'verify';
+                this.say('Now check it', 'Lift the tag off the phone, then tap it again.');
+            } catch (e) {
+                this.setup.step = 'write';
+                this.say("Couldn't write the tag", TapNFC.errorText(e) + ' Tap it again to retry.', true);
+                this.setup.step = 'scan';
+            }
+        },
+
+        // ── Lock (Android): make the chip read-only, then record it
+        async lock(t) {
+            if (!this.lockReady) { toast('An admin has to save the permanent tag address in Tap-In settings first.', false); return; }
+            if (!confirm('Lock ' + t.label + '? This is permanent: the tag can never be rewritten. Only lock tags after the pilot.')) return;
+            try {
+                const abort = new AbortController();
+                const reader = new NDEFReader();
+                toast('Hold ' + t.label + ' to the phone', true);
+                await reader.scan({ signal: abort.signal });
+                reader.onreading = async (ev) => {
+                    const serial = (ev.serialNumber || '').replace(/:/g, '').toUpperCase();
+                    if (t.uid && serial !== t.uid) { toast('That is a different tag', false); return; }
+                    try {
+                        await reader.makeReadOnly({ signal: abort.signal });
+                        abort.abort();
+                        await this.api(`/api/tags/${t.id}/lock`, { method: 'POST' });
+                        toast(t.label + ' locked', true);
+                        this.load();
+                    } catch (e) { abort.abort(); toast(TapNFC.errorText(e), false); }
+                };
+            } catch (e) { toast(TapNFC.errorText(e), false); }
+        },
+
+        // ── iPhone/desktop: setup link
+        async getLink() {
+            try {
+                await this.mint(null);
+                this.setup.step = 'link';
+            } catch (e) { this.say('', e.message, true); }
+        },
+        copyLink() {
+            const v = this.setup.url;
+            (navigator.clipboard ? navigator.clipboard.writeText(v) : Promise.reject()).then(
+                () => toast('Copied', true),
+                () => { this.$refs.linkInput.select(); document.execCommand('copy'); toast('Copied', true); });
+        },
+        async enrollUid() {
+            try {
+                const d = await this.api(`/api/students/${this.studentId}/tags/uid`, { method: 'POST', body: JSON.stringify({ uid: this.setup.uid, kind: this.setup.kind }) });
+                if (this.setup.replaceOf) {
+                    await this.api(`/api/tags/${this.setup.replaceOf}/status`, { method: 'POST', body: JSON.stringify({ status: 'lost' }) });
+                }
+                this.setup.step = 'done'; this.setup.error = false;
+                this.say(d.label + ' is ready for ' + this.name, 'It works on the USB reader station.');
+            } catch (e) { this.setup.error = true; this.setup.detail = e.message; }
+        },
+    };
+};
+</script>

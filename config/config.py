@@ -46,12 +46,6 @@ class Config:
     JWT_SECRET_KEY = os.environ.get('JWT_SECRET_KEY') or SECRET_KEY
     JWT_ACCESS_TOKEN_EXPIRES = timedelta(hours=24)
     
-    # RFID settings
-    RFID_ENABLED = os.environ.get('RFID_ENABLED', 'true').lower() == 'true'
-    RFID_SPI_DEV = int(os.environ.get('RFID_SPI_DEV', 0))
-    RFID_SPI_SPEED = int(os.environ.get('RFID_SPI_SPEED', 1000000))
-    RFID_RST_PIN = int(os.environ.get('RFID_RST_PIN', 25))
-    
     # Application settings
     APP_NAME = 'LSO Dance'
     APP_VERSION = '1.0.0'
@@ -80,6 +74,10 @@ class Config:
     MAIL_USERNAME = os.environ.get('MAIL_USERNAME')
     MAIL_PASSWORD = os.environ.get('MAIL_PASSWORD')
     MAIL_REPLY_TO = os.environ.get('MAIL_REPLY_TO', 'LaShellesDance@gmail.com')
+
+    # Tap-In parent notices are sent by one background thread. Only production
+    # runs it by default; set TAP_NOTIFY_WORKER=1 to run it in dev.
+    TAP_NOTIFY_WORKER = False
     
 class DevelopmentConfig(Config):
     """Development configuration"""
@@ -92,13 +90,13 @@ class ProductionConfig(Config):
     TESTING = False
     SESSION_COOKIE_SECURE = True
     REMEMBER_COOKIE_SECURE = True  # persistent-login cookie only over HTTPS
+    TAP_NOTIFY_WORKER = True
 
 class TestingConfig(Config):
     """Testing configuration"""
     TESTING = True
     SQLALCHEMY_DATABASE_URI = 'sqlite:///:memory:'
     WTF_CSRF_ENABLED = False
-    RFID_ENABLED = False
 
 # Configuration dictionary
 config = {

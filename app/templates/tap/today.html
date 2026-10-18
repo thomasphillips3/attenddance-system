@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% from "_components.html" import page_header, card, empty_state %}
+
+{% block content %}
+<div class="flex flex-wrap items-end justify-between gap-3 mb-6">
+    <div>
+        <a href="{{ url_for('main.tap_hub') }}" class="text-sm text-ink-2 hover:text-ink"><i class="fas fa-arrow-left mr-1"></i>Tap-In</a>
+        <h1 class="font-display text-3xl text-ink mt-1">{{ 'Today\'s taps' if is_today else 'Taps' }}</h1>
+        <p class="text-sm text-ink-2">{{ day.strftime('%A, %B %d, %Y') }}</p>
+    </div>
+    <div class="flex gap-2 text-sm">
+        <a href="{{ url_for('main.tap_today', date=prev_day.isoformat()) }}" class="px-3 py-1.5 rounded-xl border border-line-2 text-ink-2 hover:bg-surface-2"><i class="fas fa-chevron-left"></i></a>
+        {% if not is_today %}<a href="{{ url_for('main.tap_today') }}" class="px-3 py-1.5 rounded-xl border border-line-2 text-ink-2 hover:bg-surface-2">Today</a>{% endif %}
+        <a href="{{ url_for('main.tap_today', date=next_day.isoformat()) }}" class="px-3 py-1.5 rounded-xl border border-line-2 text-ink-2 hover:bg-surface-2"><i class="fas fa-chevron-right"></i></a>
+    </div>
+</div>
+
+{% if missed %}
+<div class="mb-6 p-4 rounded-2xl border border-warn/40 bg-warn/10">
+    <p class="font-bold text-warn"><i class="fas fa-triangle-exclamation mr-1"></i>{{ missed|length }} dancer{{ '' if missed|length == 1 else 's' }} tapped in but never tapped out</p>
+    <ul class="mt-2 text-sm text-ink space-y-1">
+        {% for r in missed %}
+        <li><a href="{{ url_for('main.student_detail', student_id=r.att.student_id) }}" class="font-bold hover:underline">{{ r.att.student.full_name }}</a>
+            <span class="text-ink-2">{{ r.att.dance_class.name }}, in at {{ r.att.check_in_time.strftime('%I:%M %p').lstrip('0') }}</span></li>
+        {% endfor %}
+    </ul>
+    <p class="mt-2 text-xs text-ink-3">They still count as present. This list is for pickup follow-up only.</p>
+</div>
+{% endif %}
+
+{% if groups %}
+<div class="space-y-6">
+    {% for g in groups %}
+    {% call card(g.cls.name ~ ' · ' ~ g.cls.start_time.strftime('%I:%M %p').lstrip('0') ~ ' to ' ~ g.cls.end_time.strftime('%I:%M %p').lstrip('0'), 'calendar-week') %}
+        <table class="min-w-full text-sm">
+            <thead><tr class="text-left text-xs text-ink-3"><th class="pb-2">Dancer</th><th class="pb-2">In</th><th class="pb-2">Out</th></tr></thead>
+            <tbody>
+            {% for r in g.rows %}
+            <tr class="border-t border-line">
+                <td class="py-2 font-medium text-ink">{{ r.att.student.full_name }}{% if r.att.is_tardy %} <span class="text-xs font-bold text-warn">T</span>{% endif %}</td>
+                <td class="py-2 tabular-nums text-ink-2">{{ r.att.check_in_time.strftime('%I:%M %p').lstrip('0') }}</td>
+                <td class="py-2 tabular-nums {{ 'text-warn font-bold' if r.missing else 'text-ink-2' }}">
+                    {% if r.att.check_out_time %}{{ r.att.check_out_time.strftime('%I:%M %p').lstrip('0') }}{% elif r.missing %}never tapped out{% else %}still here{% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    {% endcall %}
+    {% endfor %}
+</div>
+{% else %}
+    {% call card() %}{{ empty_state('No tag check-ins', 'Taps show up here as dancers check in.', 'id-card') }}{% endcall %}
+{% endif %}
+
+{% if refused %}
+<div class="mt-6">
+{% call card('Taps that need a look', 'circle-question') %}
+    <ul class="text-sm divide-y divide-line">
+        {% for e in refused %}
+        <li class="py-2 flex justify-between gap-3">
+            <span class="text-ink">
+                {% if e.student %}{{ e.student.full_name }}{% else %}Unknown tag{% endif %}
+                <span class="text-ink-3">&middot;
+                {{ {'unknown_tag': 'tag not recognized', 'inactive_tag': 'tag is ' ~ (e.detail or 'not active'),
+                    'unassigned_tag': 'tag not assigned to a dancer', 'inactive_student': 'dancer is inactive',
+                    'needs_class': 'no class at that time'}[e.outcome] }}</span>
+                {% if e.tag %}<span class="text-ink-3">&middot; {{ e.tag.label }}</span>{% endif %}
+            </span>
+            <span class="tabular-nums text-ink-3 shrink-0">{{ e.occurred_at.strftime('%I:%M %p').lstrip('0') }}</span>
+        </li>
+        {% endfor %}
+    </ul>
+{% endcall %}
+</div>
+{% endif %}
+{% endblock %}

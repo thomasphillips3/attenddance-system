@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>LSO Dance check-in tag</title>
+<style>
+  body { margin: 0; font-family: system-ui, -apple-system, sans-serif; background: #f7f3ee; color: #1f1a17;
+         min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 1.5rem; box-sizing: border-box; }
+  .box { max-width: 24rem; text-align: center; }
+  h1 { font-size: 1.5rem; margin: 0 0 .75rem; }
+  p { color: #5a534c; line-height: 1.5; }
+  a { color: #6b228a; font-weight: 700; }
+  .small { font-size: .85rem; margin-top: 2rem; }
+</style>
+</head>
+<body>
+<div class="box">
+  <h1>LSO Dance check-in tag</h1>
+  <p>This tag is used to check dancers in at LaShelle's School of Dance. It works only on studio staff phones.</p>
+  <p>If you found it, please bring it back to the studio.</p>
+  <p class="small"><a id="staff" href="/auth/login">Studio staff: sign in</a></p>
+</div>
+<script>
+  // The sign-in link returns staff to this tag. Built here, not by the
+  // server, so this page's bytes are the same for every tag.
+  document.getElementById('staff').href = '/auth/login?next=' + encodeURIComponent(location.pathname);
+</script>
+</body>
+</html>

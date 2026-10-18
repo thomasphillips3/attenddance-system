@@ -30,6 +30,11 @@ jobs:
           RFID_ENABLED: "false"
         run: python tests/smoke_audit.py
 
+      - name: Teacher and admin manual access
+        env:
+          RFID_ENABLED: "false"
+        run: python tests/test_manual.py
+
       - name: Billing correctness harness
         env:
           RFID_ENABLED: "false"
@@ -64,6 +69,21 @@ jobs:
         env:
           RFID_ENABLED: "false"
         run: python tests/test_attendance_card.py
+
+      - name: Tap-In harness
+        env:
+          RFID_ENABLED: "false"
+        run: python tests/test_tap.py
+
+      - name: Tap-In flows harness
+        env:
+          RFID_ENABLED: "false"
+        run: python tests/test_tap_flows.py
+
+      - name: Tap-In notices harness
+        env:
+          RFID_ENABLED: "false"
+        run: python tests/test_tap_notices.py
 
       - name: Message attachment harness
         env:

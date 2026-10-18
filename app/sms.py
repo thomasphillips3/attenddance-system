@@ -31,13 +31,20 @@ def is_configured() -> bool:
     return bool(sid and token and from_number)
 
 
-def send_sms(to: str, body: str) -> bool:
-    """Send a single SMS. Returns True on success. Never raises."""
+# Twilio error codes that mean "never send to this number again".
+# 21610: the recipient replied STOP. 21614: not a mobile number.
+OPTED_OUT_CODES = {21610}
+
+
+def send_sms_result(to: str, body: str):
+    """Send a single SMS. Returns (ok, twilio_error_code_or_None). Never raises.
+    Callers that must honor STOP (error 21610) read the code; everyone else
+    uses send_sms()."""
     if not to:
-        return False
+        return False, None
     sid, token, from_number = _creds()
     if not (sid and token and from_number):
-        return False
+        return False, None
     try:
         resp = requests.post(
             TWILIO_API.format(sid=sid),
@@ -46,12 +53,38 @@ def send_sms(to: str, body: str) -> bool:
             timeout=15,
         )
         if resp.status_code in (200, 201):
-            return True
-        logger.error("Twilio send failed (%s): %s", resp.status_code, resp.text[:300])
-        return False
+            return True, None
+        code = None
+        try:
+            code = int(resp.json().get('code'))
+        except Exception:  # noqa: BLE001 - a non-JSON error body has no code
+            code = None
+        logger.error("Twilio send failed (%s, code %s): %s", resp.status_code, code, resp.text[:300])
+        return False, code
     except Exception:
         logger.exception("Twilio request error sending to %s", to)
-        return False
+        return False, None
+
+
+def send_sms(to: str, body: str) -> bool:
+    """Send a single SMS. Returns True on success. Never raises."""
+    return send_sms_result(to, body)[0]
+
+
+def normalize_us_phone(raw):
+    """E.164 for a US number typed any common way, or None. Twilio wants
+    +1XXXXXXXXXX; registration forms hold "(248) 555-0100"."""
+    if not raw:
+        return None
+    s = str(raw).strip()
+    digits = ''.join(ch for ch in s if ch.isdigit())
+    if s.startswith('+') and 8 <= len(digits) <= 15:
+        return '+' + digits
+    if len(digits) == 10:
+        return '+1' + digits
+    if len(digits) == 11 and digits[0] == '1':
+        return '+' + digits
+    return None
 
 
 def test_connection():
