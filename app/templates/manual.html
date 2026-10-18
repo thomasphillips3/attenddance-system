@@ -473,8 +473,11 @@ Search narrows the page; Print includes the full manual and can save a PDF.</p>
     <h3 id="tap-how" class="{{ h3 }}">Tapping a card or fob: what to do and what to expect</h3>
     <p class="{{ p }}">The cards and fobs are NFC tags, a short-range kind of RFID. A tag has no battery and no
     screen. Most tags hold one private link, and they work when held right up against the back of a staff
-    phone or tablet. A tag set up as <strong>USB-only</strong> holds no link, so it will not open on an
-    iPhone. It works on the USB reader and on the Android tap station, which reads its serial number. A tag does not track anyone, and it does not work from across the room.</p>
+    phone or tablet. A tag set up as <strong>USB-only</strong> is saved by its serial number and gets no link, so
+    it will not open on an iPhone. It works on the USB reader and on the Android tap station, which reads its
+    serial number. Only use a <strong>blank</strong> tag for this: setup does not erase what is already on a tag,
+    so a tag that was written before can still open its old link on a phone, and the Android station will follow
+    that old link instead of the serial number and may reject the tag. A tag does not track anyone, and it does not work from across the room.</p>
 
     <p class="{{ p }}"><strong>How to tap</strong></p>
     <ol class="{{ ol }}">
@@ -597,7 +600,8 @@ Search narrows the page; Print includes the full manual and can save a PDF.</p>
       Keep the phone awake; close Camera and Wallet. Hold its top edge to the tag and open the banner.</li>
       <li><strong>Android:</strong> enable NFC, use Chrome, open the station, press <strong>Start</strong>, and keep it open.</li>
       <li><strong>USB reader:</strong> choose <strong>Scan on the USB reader</strong> during setup if enrolling a serial-only tag.
-      That tag holds no link, so it works on the USB station and the Android station but not on an iPhone.
+      That tag gets no link, so it works on the USB station and the Android station but not on an iPhone.
+      Use a blank tag, because an old link already on the tag can make the Android station reject it.
       Configure the reader for the full NTAG213 serial:
       14 hexadecimal characters, normal byte order, no separators, and Enter at the end.</li>
     </ul>

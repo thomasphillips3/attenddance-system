@@ -92,6 +92,7 @@ class ManualTests(unittest.TestCase):
         self.assertNotIn('nowhere else', html)
         self.assertNotIn('works only on the USB', html)
         self.assertIn('compare the', html)
+        self.assertIn('Only use a <strong>blank</strong> tag', html)
         # NOT RECORDED is uncertain, never "nothing saved".
         self.assertNotIn('so nothing saved', html)
         self.assertNotIn('attendance has not saved', html)

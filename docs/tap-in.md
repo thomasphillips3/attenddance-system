@@ -67,7 +67,7 @@ From a dancer's page, open **Check-in Tags > Set up a tag**:
   1. Choose "Write it with an app" to get the tag's link (shown once).
   2. Write the link with NXP TagWriter.
   3. Tap the tag on a signed-in staff phone and choose **Finish setup**.
-- **USB reader only**: choose "Scan on the USB reader" and tap the tag. That tag holds no link, so it works on the USB station and the Android station (which reads its serial number) but not on an iPhone.
+- **USB reader only**: choose "Scan on the USB reader" and tap the tag. That tag gets no link, so it works on the USB station and the Android station (which reads its serial number) but not on an iPhone. Use a blank tag: setup doesn't erase what's already on it, and an old link on a reused tag can still open on a phone and makes the Android station go by that link instead of the serial number.
 
 Write the tag's label (like `T-0014`) on its box or a sticker. Never write the dancer's name on the tag.
 
