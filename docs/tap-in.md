@@ -29,7 +29,7 @@ A tag link opened by anyone who isn't signed-in staff shows a generic "this is a
 
 ## What to buy
 
-Buy **NTAG213** tags. iPhones, Android phones and USB readers can all read them, and 144 bytes is plenty for the link. Skip NTAG215/216 (no benefit, and "NTAG215 compatible" listings are often Amiibo clones), MIFARE Classic and 125 kHz tags (iPhones can't read them).
+Buy **NTAG213** tags if you can find a trusted source. iPhones, Android phones and USB readers can all read them, and 144 bytes is plenty for the link. **NTAG215 also works** with the app (it has more memory than the link needs), and it is what most Amazon fob and card listings sell. NTAG215 listings sold for Amiibo cloning are the ones to be careful of, since counterfeit chips turn up there, so check every batch with TagInfo. Skip NTAG216, and skip MIFARE Classic and 125 kHz tags (iPhones can't read those two).
 
 Prices are from GoToTags on 2026-10-14, before shipping.
 

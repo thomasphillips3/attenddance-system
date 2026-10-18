@@ -79,6 +79,17 @@ class ManualTests(unittest.TestCase):
         self.assertTrue(response.location.endswith('/parent'))
         self.assertNotIn('href="/manual"', parent.get('/parent').get_data(as_text=True))
 
+    def test_manual_explains_how_to_tap_a_tag(self):
+        html = self.client_for('teacher').get('/manual').get_data(as_text=True)
+        self.assertIn('id="tap-how"', html)
+        self.assertIn('href="#tap-how"', html)
+        for phrase in ('flat against the back', 'top edge', 'NOT RECORDED',
+                       'What to tell families', 'NTAG215'):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, html)
+        # House style: no em or en dashes in manual copy.
+        self.assertNotIn('\u2014', html.split('id="tap-how"')[1].split('Tap-In setup, tag status')[0])
+
     def test_teacher_manual_access_does_not_grant_admin_controls(self):
         client = self.client_for('teacher')
         for path in ('/settings', '/transactions', '/staff', '/pending-payments'):

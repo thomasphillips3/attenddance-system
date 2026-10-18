@@ -73,6 +73,7 @@ Search narrows the page; Print includes the full manual and can save a PDF.</p>
         <li><a href="#enrollment" class="hover:text-primary-700">5. Enrollment &amp; parent portal</a></li>
         <li><a href="#attendance" class="hover:text-primary-700">6. Attendance &amp; makeups</a></li>
         <li class="pl-3"><a href="#tap-in" class="hover:text-primary-700">Tap-In setup &amp; troubleshooting</a></li>
+        <li class="pl-3"><a href="#tap-how" class="hover:text-primary-700">Tapping a card or fob</a></li>
         <li><a href="#money" class="hover:text-primary-700">7. Money</a></li>
         <li class="pl-3"><a href="#applied-payments" class="hover:text-primary-700">Apply a payment to a charge</a></li>
         <li><a href="#messages" class="hover:text-primary-700">8. Messages &amp; reminders</a></li>
@@ -469,8 +470,104 @@ Search narrows the page; Print includes the full manual and can save a PDF.</p>
     sign up for texts in their portal. Admins control all of this in <strong>Tap-In &rsaquo; Settings</strong>,
     including a pause switch.</p>
 
+    <h3 id="tap-how" class="{{ h3 }}">Tapping a card or fob: what to do and what to expect</h3>
+    <p class="{{ p }}">The cards and fobs are NFC tags, a short-range kind of RFID. A tag has no battery and no
+    screen. It holds one private link, and it works when it is held right up against the back of a staff
+    phone or tablet. It does not track anyone, and it does not work from across the room.</p>
+
+    <p class="{{ p }}"><strong>How to tap</strong></p>
+    <ol class="{{ ol }}">
+      <li>Hold the tag <strong>flat against the back</strong> of the phone, touching or within about an inch.</li>
+      <li>Hold it still for a second or two, then wait for the screen. Tapping again and again does not
+      make it faster, and a repeat read within 10 seconds is ignored anyway.</li>
+      <li><strong>One tag at a time.</strong> Two tags together, or a tag stacked with a bank or
+      transit card, can confuse the reader.</li>
+      <li>Wait for the result before the next dancer steps up, so staff can see whose tap it was.</li>
+    </ol>
+
+    <p class="{{ p }}"><strong>Where on the phone</strong></p>
+    <ul class="{{ ul }}">
+      <li><strong>iPhone (XS or newer):</strong> the reader is at the <strong>top edge</strong> of the back.
+      A banner appears after the tag is read; tap it to open the result. If nothing appears, close the Camera
+      and Wallet apps, wake the phone, and try again.</li>
+      <li><strong>Android phone or tablet:</strong> the reader is usually near the <strong>middle or upper
+      part of the back</strong>, but it varies by model. Find the spot once by sliding a tag slowly across the
+      back until the station reacts, then tell everyone where it is. No banner on the station: the result just
+      appears.</li>
+      <li><strong>iPad:</strong> cannot read tags by itself. Use an iPhone, an Android device, or the USB reader.</li>
+      <li><strong>USB reader:</strong> touch the tag to the reader's marked surface. The result appears on the
+      laptop or tablet it is plugged into.</li>
+    </ul>
+    {% call tip("If a tap won't read, check these first") %}
+      A <strong>thick or metal phone case</strong>, a magnetic wallet or ring stuck to the back, a tag held
+      against a <strong>metal surface</strong>, a screen that is off or locked, and a tag that isn't touching the
+      phone are the usual causes. Take the case off or move the tag a little. On an Android station, check the
+      page is still open and shows <strong>NFC on</strong>.
+    {% endcall %}
+
+    <p class="{{ p }}"><strong>What the result screen means</strong></p>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm mb-3">
+        <thead class="bg-surface-2"><tr class="text-left">
+          <th class="px-3 py-2 font-bold text-ink rounded-l-lg">Screen</th>
+          <th class="px-3 py-2 font-bold text-ink">It means</th>
+          <th class="px-3 py-2 font-bold text-ink rounded-r-lg">What to do</th>
+        </tr></thead>
+        <tbody class="text-ink-2">
+          <tr class="border-b border-line"><td class="px-3 py-2.5 font-bold text-ok">Green: IN</td>
+            <td class="px-3 py-2.5">Checked in to the class shown. If it says <em>Already checked in at ...</em>,
+            they tapped again within a few minutes and nothing changed.</td>
+            <td class="px-3 py-2.5">Nothing. Check the name and class are right.</td></tr>
+          <tr class="border-b border-line"><td class="px-3 py-2.5 font-bold text-info">Blue: OUT</td>
+            <td class="px-3 py-2.5">Checked out of the class shown.</td>
+            <td class="px-3 py-2.5">Nothing. If it was a mistake, choose <strong>Put back in class</strong>.</td></tr>
+          <tr class="border-b border-line"><td class="px-3 py-2.5 font-bold text-warn">Amber: PICK</td>
+            <td class="px-3 py-2.5">No class for this dancer right now (too early, too late, or not their
+            day).</td>
+            <td class="px-3 py-2.5">Choose the right class from the list. Nothing is recorded until you do.</td></tr>
+          <tr class="border-b border-line"><td class="px-3 py-2.5 font-bold text-warn">Amber: OUT, <em>Already checked out</em></td>
+            <td class="px-3 py-2.5">They already left this class.</td>
+            <td class="px-3 py-2.5">Choose <strong>Put back in class</strong> if they came back, or pick another class.</td></tr>
+          <tr class="border-b border-line"><td class="px-3 py-2.5 font-bold text-danger">Red: NO</td>
+            <td class="px-3 py-2.5">The tag is not recognized, was reported lost, is retired, was never finished,
+            or is not assigned to a dancer.</td>
+            <td class="px-3 py-2.5">Mark them on the attendance card, then look the tag up on the dancer's page.</td></tr>
+          <tr><td class="px-3 py-2.5 font-bold text-danger">Red: NOT RECORDED</td>
+            <td class="px-3 py-2.5">The phone had no connection, so nothing saved.</td>
+            <td class="px-3 py-2.5">Tap again once it's back online, or use the attendance card.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="{{ p }}">A name followed by a yellow <strong>Forms needed</strong> badge means paperwork is missing;
+    it never stops a check-in. On the Android station you also hear a short sound: two rising notes for IN,
+    two falling notes for OUT, a low buzz for a problem, and one soft beep when a tap was saved for later.
+    The screen clears by itself and goes back to <strong>Tap your tag</strong>.</p>
+
+    <p class="{{ p }}"><strong>Younger dancers</strong></p>
+    <ul class="{{ ul }}">
+      <li>For the littlest dancers, a teacher can take the fob from their bag and tap it for them. A fob clipped to a
+      zipper or backpack strap is easier to keep track of than a card.</li>
+      <li>Teens and adults can tap their own card on the station.</li>
+      <li>The tap records <strong>attendance</strong>. It does not confirm who is picking a child up, so keep
+      following the studio's normal pickup rules.</li>
+    </ul>
+
+    <p class="{{ p }}"><strong>What to tell families</strong></p>
+    <ol class="{{ ol }}">
+      <li>Bring the tag to every class, on the dance bag or zipper. Keep it out of the wash.</li>
+      <li>Tap in when you arrive and tap out when you leave.</li>
+      <li>Tap once and wait for the green or blue screen.</li>
+      <li>Don't bend, drill, or stick things on the tag. Don't write on a fob.</li>
+      <li>If a tag is lost or damaged, tell the front desk right away. It is switched off immediately and a new
+      one is set up, and the old one can't be used by anyone who finds it.</li>
+      <li>Parents can turn the check-in email on or off in the parent portal, and sign up for texts too once the
+      studio has turned texts on.</li>
+    </ol>
+
     <h3 class="{{ h3 }}">Tap-In setup, tag status, and photos</h3>
-    <p class="{{ p }}">Use blank <strong>NTAG213</strong> fobs or cards. Keep pilot tags unlocked.
+    <p class="{{ p }}">Use blank <strong>NTAG213</strong> (or <strong>NTAG215</strong>) fobs or cards. Test a few from every new
+    batch with the free <strong>NXP TagInfo</strong> app before handing any out, since some cheap listings
+    carry fake chips. Keep pilot tags unlocked.
     Android Chrome writes the link and asks for a second tap to verify it; with an external writer,
     the link is shown once, so write it before closing setup. An unfinished tag stays
     <strong>Pending</strong> and does not check anyone in. Finish setup from the written tag, or delete
