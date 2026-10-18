@@ -21,6 +21,7 @@ Run:  RFID_ENABLED=false python3 tests/test_tap_flows.py
 Exit 0 = all green, 1 = failures.
 """
 import os
+import re
 import sys
 import tempfile
 import time as _time
@@ -347,6 +348,19 @@ with app.app_context():
            f"got {old_ev and (old_ev.student_id, old_ev.occurred_at, old_ev.tag_id)} ben={kids['Ben']}")
 html = teach.get("/tap-in/today").get_data(as_text=True)
 record("and it shows under Taps that need a look today", "too old to record" in html)
+with app.app_context():
+    for i in range(60):
+        db.session.add(TapEvent(event_key=f"bulk-refused-{i:03d}", outcome="replay_refused",
+                                occurred_at=datetime.now() - timedelta(days=3),
+                                source="kiosk", detail="older than a day"))
+    db.session.commit()
+    total_refused = TapEvent.query.filter_by(outcome="replay_refused").count()
+html = teach.get("/tap-in/today").get_data(as_text=True)
+record("every refused replay is listed, with a count (no 50-row cutoff)",
+       html.count("too old to record") == total_refused
+       and re.search(r"Taps that need a look \((\d+)\)", html)
+       and int(re.search(r"Taps that need a look \((\d+)\)", html).group(1)) >= total_refused,
+       f"listed {html.count('too old to record')} of {total_refused}")
 import app.api.tap_routes as _tr  # noqa: E402
 from app.tap.service import TapError as _TE  # noqa: E402
 _real = _tr.process_tap

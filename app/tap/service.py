@@ -25,8 +25,8 @@ The rules, in order:
      asks staff to pick a class and writes no attendance.
 
 Check-out updates the existing attendance row. It never inserts a second one:
-the unique (student, class, day) index and the boot-time de-dupe in
-app/migrations.py would reject or delete it.
+the unique (student, class, day) index from app/migrations.py would reject
+it.
 """
 
 import json

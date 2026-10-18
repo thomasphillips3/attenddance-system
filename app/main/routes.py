@@ -783,7 +783,7 @@ def tap_today():
                    # reached the server, which is when staff can act on them.
                    and_(func.date(TapEvent.recorded_at) == day,
                         TapEvent.outcome == 'replay_refused')))
-               .order_by(desc(TapEvent.occurred_at)).limit(50).all())
+               .order_by(desc(TapEvent.occurred_at)).all())
     return render_template('tap/today.html', title='Today\'s taps', day=day, groups=groups,
                            missed=missed, refused=refused,
                            prev_day=day - timedelta(days=1), next_day=day + timedelta(days=1),

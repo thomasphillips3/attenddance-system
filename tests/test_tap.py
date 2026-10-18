@@ -484,6 +484,34 @@ with app.app_context():
            and tags[0].label == label_for(tags[0].id))
     record("the legacy column is untouched", db.session.get(Student, ids["old"]).rfid_uid == legacy_dec)
 
+# ── I2. The unique-day index is added safely, once ──────────────────
+import sqlalchemy as _sa  # noqa: E402
+with app.app_context():
+    with db.engine.begin() as c:
+        c.execute(_sa.text("DROP INDEX IF EXISTS ix_attendance_unique_day"))
+        c.execute(_sa.text(
+            "INSERT INTO attendance (student_id, class_id, check_in_time, check_in_method, "
+            "is_present, is_tardy, is_excused, notes) VALUES "
+            "(:s, :c, '2026-01-07 17:00:00', 'manual', 1, 0, 0, 'first'), "
+            "(:s, :c, '2026-01-07 17:05:00', 'manual', 1, 1, 0, 'teacher fix')"),
+            {"s": ids["lia"], "c": ids["ballet"]})
+    run_migrations(db)
+    with db.engine.connect() as c:
+        kept = c.execute(_sa.text(
+            "SELECT notes FROM attendance WHERE student_id=:s AND date(check_in_time)='2026-01-07'"),
+            {"s": ids["lia"]}).fetchall()
+        archived = c.execute(_sa.text(
+            "SELECT notes, is_tardy FROM attendance_dupe_archive")).fetchall()
+        has_index = c.execute(_sa.text(
+            "SELECT 1 FROM sqlite_master WHERE name='ix_attendance_unique_day'")).first()
+    record("a duplicate is archived (not just deleted) before the unique index goes on",
+           [k[0] for k in kept] == ["first"] and [tuple(a) for a in archived] == [("teacher fix", 1)]
+           and has_index is not None, f"kept={kept} archived={archived}")
+    run_migrations(db)
+    with db.engine.connect() as c:
+        n_arch = c.execute(_sa.text("SELECT COUNT(*) FROM attendance_dupe_archive")).scalar()
+    record("with the index in place, later boots touch nothing", n_arch == 1)
+
 # ── J. API ──────────────────────────────────────────────────────────
 anon = app.test_client()
 r = anon.post("/api/tap", json={"event_key": "anon-key-0001", "token": t_zoe})

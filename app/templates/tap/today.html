@@ -55,7 +55,7 @@
 
 {% if refused %}
 <div class="mt-6">
-{% call card('Taps that need a look', 'circle-question') %}
+{% call card('Taps that need a look (' ~ refused|length ~ ')', 'circle-question') %}
     <ul class="text-sm divide-y divide-line">
         {% for e in refused %}
         <li class="py-2 flex justify-between gap-3">
