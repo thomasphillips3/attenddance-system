@@ -3883,10 +3883,46 @@ def confirm_pending_payment(pid):
         who = p.student.full_name
     else:
         students = p.family.students.filter_by(is_active=True).all()
-        if p.parent and p.parent.is_parent:
-            linked_ids = _parent_student_ids(p.parent)
-            students = [s for s in students if s.id in linked_ids]
-        allocations = allocate_family_payment([s.id for s in students], amount, p.fund)
+        explicit = data.get('allocations')
+        if explicit is not None:
+            # The admin split it by hand (see below). Every share must go to a
+            # dancer in this family and the shares must add up to the claim.
+            if not isinstance(explicit, list) or not explicit:
+                return jsonify({'error': 'allocations must be a list of {student_id, amount}'}), 400
+            fam_ids = {s.id for s in p.family.students.all()}
+            allocations = []
+            for a in explicit:
+                if not isinstance(a, dict):
+                    return jsonify({'error': 'allocations must be a list of {student_id, amount}'}), 400
+                sid, serr = _valid_id(a.get('student_id'))
+                if serr or sid not in fam_ids:
+                    return jsonify({'error': 'Every share must go to a dancer in this family'}), 400
+                amt, aerr = _valid_amount(a.get('amount'))
+                if aerr:
+                    return aerr
+                allocations.append((sid, amt))
+            if abs(sum(a for _, a in allocations) - amount) > 0.005:
+                return jsonify({'error': f'The shares must add up to ${amount:.2f}'}), 400
+        else:
+            # A parent can only see (and so only claim for) the dancers they
+            # are linked to. If this family has other active dancers - a claim
+            # made before that rule, or links that changed since - an automatic
+            # split could credit the whole payment to the wrong child. Stop and
+            # have the admin split it by hand.
+            if p.parent and p.parent.is_parent:
+                linked_ids = _parent_student_ids(p.parent)
+                if {s.id for s in students} - linked_ids:
+                    return jsonify({
+                        'error': ("This family payment came from a parent linked to only some of "
+                                  "the family's dancers. Split it by hand so the right dancers are "
+                                  "credited."),
+                        'needs_allocation': True,
+                        'amount': f'{amount:.2f}',
+                        'students': [{'id': s.id, 'name': s.full_name,
+                                      'linked_to_claimant': s.id in linked_ids}
+                                     for s in students],
+                    }), 409
+            allocations = allocate_family_payment([s.id for s in students], amount, p.fund)
         if not allocations:
             # Nobody owed and no students — record against first student if any
             if students:

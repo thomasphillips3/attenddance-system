@@ -207,8 +207,22 @@ async function confirmPay(id, fund) {
     // and confirming it must never touch the studio balance.
     if (!confirm(`Confirm this payment? It will be recorded and the ${FUND_LABELS[fund] || fund} balance reduced.`)) return;
     try {
-        const res = await fetch(`/api/pending-payments/${id}/confirm`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'});
-        const d = await res.json();
+        let res = await fetch(`/api/pending-payments/${id}/confirm`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'});
+        let d = await res.json();
+        if (res.status === 409 && d.needs_allocation) {
+            // The claimant isn't linked to every dancer in the family, so the
+            // server won't guess who it was for. Ask for each dancer's share.
+            alert(d.error + `\n\nEnter how much of the $${d.amount} goes to each dancer (0 to skip).`);
+            const allocations = [];
+            for (const s of d.students) {
+                const v = prompt(`${s.name}${s.linked_to_claimant ? ' (linked to this parent)' : ''}: amount`, '0');
+                if (v === null) return;
+                const amt = parseFloat(v);
+                if (amt > 0) allocations.push({student_id: s.id, amount: amt});
+            }
+            res = await fetch(`/api/pending-payments/${id}/confirm`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({allocations})});
+            d = await res.json();
+        }
         showMsg(res.ok ? d.message : (d.error || 'Error'), res.ok);
         loadPending(); loadAudit();
     } catch { showMsg('Network error', false); }

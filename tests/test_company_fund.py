@@ -500,13 +500,31 @@ def test_parent_family_ledger_scope():
         pending_id = pending.id
     with app.test_client() as c:
         login_admin(c)
-        confirmed = c.post(f"/api/pending-payments/{pending_id}/confirm", json={})
+        refused = c.post(f"/api/pending-payments/{pending_id}/confirm", json={})
+        body = refused.get_json() or {}
         with app.app_context():
-            paid_ids = {t.student_id for t in Transaction.query.filter_by(type="payment", fund="company").all()
-                        if t.student_id in {linked, linked_two, other}}
-        record("legacy family claim confirmation credits only linked children",
-               confirmed.status_code == 200 and paid_ids <= {linked, linked_two} and paid_ids,
-               str(paid_ids))
+            none_paid = not [t for t in Transaction.query.filter_by(type="payment", fund="company").all()
+                             if t.student_id in {linked, linked_two, other}]
+        record("a legacy family claim from a partly linked parent isn't auto-split",
+               refused.status_code == 409 and body.get("needs_allocation") and none_paid
+               and {s["id"] for s in body.get("students", [])} >= {linked, linked_two, other}
+               and {s["id"] for s in body["students"] if s["linked_to_claimant"]} == {linked, linked_two},
+               str(body))
+        bad = c.post(f"/api/pending-payments/{pending_id}/confirm",
+                     json={"allocations": [{"student_id": linked, "amount": 20}]})
+        record("a hand split that doesn't add up to the claim is refused", bad.status_code == 400)
+        stranger = c.post(f"/api/pending-payments/{pending_id}/confirm",
+                          json={"allocations": [{"student_id": 999999, "amount": 35}]})
+        record("a hand split can't credit a dancer outside the family", stranger.status_code == 400)
+        confirmed = c.post(f"/api/pending-payments/{pending_id}/confirm",
+                           json={"allocations": [{"student_id": linked, "amount": 25},
+                                                 {"student_id": other, "amount": 10}]})
+        with app.app_context():
+            paid = {t.student_id: float(t.amount)
+                    for t in Transaction.query.filter_by(type="payment", fund="company").all()
+                    if t.student_id in {linked, linked_two, other}}
+        record("the admin's hand split is posted exactly, in the claim's fund",
+               confirmed.status_code == 200 and paid == {linked: 25.0, other: 10.0}, str(paid))
 
 
 def test_family_banner_excludes_withdrawn_students():
