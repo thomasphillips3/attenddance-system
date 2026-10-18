@@ -111,7 +111,7 @@ Cheap no-name keyboard-wedge readers often only output 4 bytes as 10 decimal dig
 2. In Chrome: Tap-In > Start a tap station > Start. Keep the page open; the screen stays on by itself.
 3. Dancers hold the tag to the middle of the back of the phone.
 
-If a phone shows **NOT RECORDED**, the tap didn't count. Tap again once it's back online, or mark the dancer on the attendance card.
+If a phone shows **NOT RECORDED**, it couldn't confirm the tap, so the tap may or may not have saved (the request can reach the server and the reply get lost). Open **Today's taps** and compare the dancer's In and Out times with the tap you just made. Tap again, or mark the attendance card, only if the expected time is missing. Tapping again blindly can undo a check-in that did save: a second tap 5 or more minutes later checks the dancer out.
 
 ## Parent notices
 
