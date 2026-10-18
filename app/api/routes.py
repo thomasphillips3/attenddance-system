@@ -3576,7 +3576,7 @@ def deactivate_location(location_id):
 PAYMENT_SETTINGS_KEYS = [
     'payments_zelle_enabled', 'payments_zelle_name', 'payments_zelle_memo',
     'payments_cashapp_enabled', 'payments_cashapp_tag',
-    'payments_paypal_enabled', 'payments_paypal_username',
+    'payments_paypal_enabled', 'payments_paypal_username', 'payments_paypal_link',
     'payments_square_enabled', 'payments_square_access_token',
     'payments_square_location_id', 'payments_square_environment',
     'payments_square_webhook_signature_key', 'payments_square_link',
@@ -3585,7 +3585,7 @@ PAYMENT_SETTINGS_KEYS = [
     # keys under a company_ prefix; no Square API token for this fund.
     'company_payments_zelle_enabled', 'company_payments_zelle_name', 'company_payments_zelle_memo',
     'company_payments_cashapp_enabled', 'company_payments_cashapp_tag',
-    'company_payments_paypal_enabled', 'company_payments_paypal_username',
+    'company_payments_paypal_enabled', 'company_payments_paypal_username', 'company_payments_paypal_link',
     'company_payments_square_enabled', 'company_payments_square_link',
     # SMS / Twilio
     'sms_enabled', 'sms_twilio_sid', 'sms_twilio_token', 'sms_from_number',
@@ -3614,6 +3614,7 @@ DEFAULT_COMPANY_ZELLE_MEMO = "Put your dancer's full name and 'Company' in the m
 FUND_SETTING_PREFIX = {'studio': 'payments_', 'company': 'company_payments_'}
 FUND_ZELLE_MEMO_DEFAULT = {'studio': DEFAULT_ZELLE_MEMO, 'company': DEFAULT_COMPANY_ZELLE_MEMO}
 SQUARE_LINK_KEYS = ('payments_square_link', 'company_payments_square_link')
+PAYPAL_LINK_KEYS = ('payments_paypal_link', 'company_payments_paypal_link')
 
 
 def _zelle_qr_key(fund):
@@ -3665,14 +3666,54 @@ def _valid_square_link(value):
         return '', None
     if len(val) > 500:
         return None, 'Square link is too long'
-    parsed = urlparse(val)
+    try:
+        parsed = urlparse(val)
+        host = (parsed.hostname or '').lower()
+    except ValueError:  # malformed host, e.g. an unbalanced [
+        return None, 'Square link is not a valid URL'
     if parsed.scheme != 'https':
         return None, 'Square link must start with https://'
-    host = (parsed.hostname or '').lower()
     if host not in SQUARE_LINK_HOSTS and not host.endswith(SQUARE_LINK_SUFFIXES):
         return None, ('Square link must be a Square checkout URL '
                       '(square.link, checkout.square.site, or squareup.com)')
     return val, None
+
+
+# A PayPal checkout link ("PayPal button" / no-code checkout) looks like
+# https://www.paypal.com/ncp/payment/5T2V5ZY2NVAN6. It renders into an href on
+# the parent portal, so only that exact shape on PayPal's own host is allowed,
+# and it is stored rebuilt from the id, never as pasted (a query string or
+# fragment on a pasted share link is dropped).
+PAYPAL_LINK_HOSTS = {'www.paypal.com', 'paypal.com'}
+_PAYPAL_LINK_PATH = re.compile(r'^/ncp/payment/([A-Za-z0-9]{6,40})/?$')
+
+
+def _valid_paypal_link(value):
+    """('normalized url', None) on success, (None, error message) on failure.
+    Empty input is valid and clears the setting."""
+    from urllib.parse import urlparse
+    val = (value or '').strip()
+    if not val:
+        return '', None
+    if len(val) > 300:
+        return None, 'PayPal link is too long'
+    bad = (None, 'PayPal link must be a PayPal checkout link like '
+                 'https://www.paypal.com/ncp/payment/ABC123')
+    try:
+        parsed = urlparse(val)
+    except ValueError:  # e.g. an unbalanced [ in the host
+        return bad
+    # Compare the whole netloc, not .hostname: that rules out a port or
+    # user@ prefix in one check, and never touches .port (which raises on
+    # junk like :abc).
+    match = _PAYPAL_LINK_PATH.match(parsed.path or '')
+    if parsed.scheme != 'https' or parsed.netloc.lower() not in PAYPAL_LINK_HOSTS or not match:
+        return bad
+    return f'https://www.paypal.com/ncp/payment/{match.group(1)}', None
+
+
+# A PayPal.me name: letters and digits, at most 20 (empty clears it).
+_PAYPAL_NAME = re.compile(r'^[A-Za-z0-9]{0,20}$')
 
 
 @bp.route('/settings/payments', methods=['GET'])
@@ -3716,20 +3757,31 @@ def update_payment_settings():
 
     # Validate BEFORE writing anything: Setting.set commits per key, so bailing
     # out mid-loop would leave the rest of the form half-saved.
-    square_links = {}
+    checked_links = {}
     for key in SQUARE_LINK_KEYS:
         if key in data:
-            square_links[key], lerr = _valid_square_link(data[key])
+            checked_links[key], lerr = _valid_square_link(data[key])
             if lerr:
                 return jsonify({'error': lerr}), 400
+    for key in PAYPAL_LINK_KEYS:
+        if key in data:
+            checked_links[key], lerr = _valid_paypal_link(data[key])
+            if lerr:
+                return jsonify({'error': lerr}), 400
+    # A PayPal.me name becomes paypal.me/<name> on the parent portal, so junk
+    # (a pasted non-PayPal.me URL squashed into letters) could be a stranger's
+    # account. Refuse it instead of saving it.
+    for key in ('payments_paypal_username', 'company_payments_paypal_username'):
+        if key in data and not _PAYPAL_NAME.match((data[key] or '').strip()):
+            return jsonify({'error': 'A PayPal.me name is letters and numbers only, up to 20'}), 400
 
     changed = []
     for key in PAYMENT_SETTINGS_KEYS:
         if key not in data:
             continue
         val = (data[key] or '').strip()
-        if key in square_links:
-            val = square_links[key]
+        if key in checked_links:
+            val = checked_links[key]
         if key in SECRET_SETTINGS_KEYS:
             # Skip masked placeholders — means "leave unchanged"
             if not val or '••••' in val:
@@ -3877,14 +3929,20 @@ def _options_for_fund(fund):
             'url': f'https://cash.app/${tag}' if tag else '',
         })
     if Setting.get_bool(prefix + 'paypal_enabled'):
-        # A PayPal.me name is letters and digits; strip anything else for the
-        # same reason as the cashtag above.
+        # Either a PayPal checkout link (wins when set) or a PayPal.me name.
+        # The link is re-validated on the way out like the Square link; a
+        # PayPal.me name is letters and digits, scrubbed like the cashtag.
+        link, lerr = _valid_paypal_link(Setting.get(prefix + 'paypal_link', ''))
         name = re.sub(r'[^A-Za-z0-9]', '', Setting.get(prefix + 'paypal_username', ''))[:20]
-        options.append({
-            'type': 'paypal',
-            'username': name,
-            'url': f'https://paypal.me/{name}' if name else '',
-        })
+        if link and not lerr:
+            options.append({'type': 'paypal', 'checkout': True, 'username': '', 'url': link})
+        else:
+            options.append({
+                'type': 'paypal',
+                'checkout': False,
+                'username': name,
+                'url': f'https://paypal.me/{name}' if name else '',
+            })
     if Setting.get_bool(prefix + 'square_enabled'):
         # Re-validate on the way out, not just on write: this URL goes straight
         # into an href on the parent portal, and a value that bypassed the PUT

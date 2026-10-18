@@ -87,7 +87,7 @@
     <div class="px-6 py-4 border-b border-line flex items-center justify-between">
         <div class="flex items-center">
             <span class="font-display text-xl text-ink mr-3">PayPal</span>
-            <span class="text-xs text-ink-3">Link parents to your PayPal.me page</span>
+            <span class="text-xs text-ink-3">Link parents to your PayPal checkout or PayPal.me page</span>
         </div>
         <label class="relative inline-flex items-center cursor-pointer">
             <input type="checkbox" id="paypal-enabled" class="sr-only peer" onchange="saveSettings()">
@@ -96,12 +96,9 @@
     </div>
     <div class="px-6 py-4">
         <div>
-            <label class="{{ lbl }}" for="paypal-name">PayPal.me name</label>
-            <div class="mt-1 flex rounded-xl shadow-sm">
-                <span class="inline-flex items-center px-3 rounded-l-xl border border-r-0 border-line-2 bg-surface-2 text-ink-3 text-sm">paypal.me/</span>
-                <input type="text" id="paypal-name" placeholder="LaShellesDance" class="flex-1 block w-full bg-surface border border-line-2 rounded-none rounded-r-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-200 focus:border-primary-400">
-            </div>
-            <p class="mt-1 text-xs text-ink-3">The name after <code>paypal.me/</code> on your PayPal.me link. Parents open it with the amount filled in.</p>
+            <label class="{{ lbl }}" for="paypal-name">PayPal link or PayPal.me name</label>
+            <input type="text" id="paypal-name" placeholder="https://www.paypal.com/ncp/payment/... or paypal.me/YourName" class="mt-1 block w-full bg-surface border border-line-2 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-200 focus:border-primary-400">
+            <p class="mt-1 text-xs text-ink-3">Paste a PayPal checkout link (<code>paypal.com/ncp/payment/...</code>) or a PayPal.me link or name. A PayPal.me link fills in the amount for parents; a checkout link has them type it on PayPal.</p>
         </div>
     </div>
 </div>
@@ -243,7 +240,7 @@
         <div class="flex items-center justify-between mb-3">
             <div class="flex items-center">
                 <span class="font-bold text-ink mr-3">PayPal</span>
-                <span class="text-xs text-ink-3">The Foundation's PayPal.me page</span>
+                <span class="text-xs text-ink-3">The Foundation's PayPal checkout or PayPal.me page</span>
             </div>
             <label class="relative inline-flex items-center cursor-pointer">
                 <input type="checkbox" id="co-paypal-enabled" class="sr-only peer" onchange="saveSettings()">
@@ -251,12 +248,9 @@
             </label>
         </div>
         <div>
-            <label class="{{ lbl }}" for="co-paypal-name">PayPal.me name</label>
-            <div class="mt-1 flex rounded-xl shadow-sm">
-                <span class="inline-flex items-center px-3 rounded-l-xl border border-r-0 border-line-2 bg-surface-2 text-ink-3 text-sm">paypal.me/</span>
-                <input type="text" id="co-paypal-name" placeholder="LSODanceFoundation" class="flex-1 block w-full bg-surface border border-line-2 rounded-none rounded-r-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-200 focus:border-primary-400">
-            </div>
-            <p class="mt-1 text-xs text-ink-3">The name after <code>paypal.me/</code> on your PayPal.me link. Parents open it with the amount filled in.</p>
+            <label class="{{ lbl }}" for="co-paypal-name">PayPal link or PayPal.me name</label>
+            <input type="text" id="co-paypal-name" placeholder="https://www.paypal.com/ncp/payment/... or paypal.me/YourName" class="mt-1 block w-full bg-surface border border-line-2 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-200 focus:border-primary-400">
+            <p class="mt-1 text-xs text-ink-3">Paste a PayPal checkout link (<code>paypal.com/ncp/payment/...</code>) or a PayPal.me link or name. A PayPal.me link fills in the amount for parents; a checkout link has them type it on PayPal.</p>
         </div>
     </div>
 
@@ -395,7 +389,7 @@ async function loadSettings() {
         document.getElementById('cashapp-enabled').checked = s.payments_cashapp_enabled === '1';
         document.getElementById('cashapp-tag').value = (s.payments_cashapp_tag || '').replace(/^\$/, '');
         document.getElementById('paypal-enabled').checked = s.payments_paypal_enabled === '1';
-        document.getElementById('paypal-name').value = s.payments_paypal_username || '';
+        document.getElementById('paypal-name').value = s.payments_paypal_link || s.payments_paypal_username || '';
         document.getElementById('square-enabled').checked = s.payments_square_enabled === '1';
         document.getElementById('square-link').value = s.payments_square_link || '';
         // Company / Foundation destinations
@@ -405,7 +399,7 @@ async function loadSettings() {
         document.getElementById('co-cashapp-enabled').checked = s.company_payments_cashapp_enabled === '1';
         document.getElementById('co-cashapp-tag').value = (s.company_payments_cashapp_tag || '').replace(/^\$/, '');
         document.getElementById('co-paypal-enabled').checked = s.company_payments_paypal_enabled === '1';
-        document.getElementById('co-paypal-name').value = s.company_payments_paypal_username || '';
+        document.getElementById('co-paypal-name').value = s.company_payments_paypal_link || s.company_payments_paypal_username || '';
         document.getElementById('co-square-enabled').checked = s.company_payments_square_enabled === '1';
         document.getElementById('co-square-link').value = s.company_payments_square_link || '';
         renderQR('company', s.company_zelle_qr || '');
@@ -451,21 +445,33 @@ async function loadSettings() {
     }
 }
 
-// Accept a pasted link (paypal.me/Name/25 or paypal.com/paypalme/Name) or
-// just the name. A PayPal.me name is letters and digits, at most 20.
-function paypalName(id) {
+// One box takes either kind of PayPal link. A checkout link
+// (paypal.com/ncp/payment/...) is sent as the link and checked by the server;
+// otherwise a PayPal.me link (paypal.me/Name/25, paypal.com/paypalme/Name)
+// or a bare name (letters and digits, at most 20). Setting one clears the
+// other so the portal never shows a stale one. Anything else (a Donate
+// button link, a typo) returns null and the save stops: squashing it into a
+// name could send parents to a stranger's PayPal.me.
+function paypalFields(id) {
     const raw = document.getElementById(id).value.trim();
-    const link = raw.match(/paypal\.(?:me|com\/paypalme)\/([^/?#\s]+)/i);
-    const name = (link ? link[1] : raw).replace(/[^A-Za-z0-9]/g, '').slice(0, 20);
-    if (raw && (!name || (!link && /[^A-Za-z0-9]/.test(raw)))) {
-        toast("That PayPal.me name doesn't look right. Use just the name after paypal.me/.", false);
+    if (/paypal\.com\/ncp\/payment\//i.test(raw)) {
+        return { link: /^https?:\/\//i.test(raw) ? raw : 'https://' + raw, username: '' };
     }
-    return name;
+    const link = raw.match(/paypal\.(?:me|com\/paypalme)\/([A-Za-z0-9]{1,20})(?:[/?#]|$)/i);
+    const name = link ? link[1] : raw;
+    if (raw && !/^[A-Za-z0-9]{1,20}$/.test(name)) {
+        toast("That PayPal link isn't one we can use. Paste a paypal.com/ncp/payment/... checkout link or your PayPal.me name.", false);
+        return null;
+    }
+    return { link: '', username: name };
 }
 
 async function saveSettings() {
     const tag = document.getElementById('cashapp-tag').value.trim();
     const coTag = document.getElementById('co-cashapp-tag').value.trim();
+    const paypal = paypalFields('paypal-name');
+    const coPaypal = paypalFields('co-paypal-name');
+    if (!paypal || !coPaypal) return;
     const body = {
         company_payments_zelle_enabled: document.getElementById('co-zelle-enabled').checked ? '1' : '0',
         company_payments_zelle_name: document.getElementById('co-zelle-name').value.trim(),
@@ -473,7 +479,8 @@ async function saveSettings() {
         company_payments_cashapp_enabled: document.getElementById('co-cashapp-enabled').checked ? '1' : '0',
         company_payments_cashapp_tag: coTag.replace(/^\$/, ''),
         company_payments_paypal_enabled: document.getElementById('co-paypal-enabled').checked ? '1' : '0',
-        company_payments_paypal_username: paypalName('co-paypal-name'),
+        company_payments_paypal_username: coPaypal.username,
+        company_payments_paypal_link: coPaypal.link,
         company_payments_square_enabled: document.getElementById('co-square-enabled').checked ? '1' : '0',
         company_payments_square_link: document.getElementById('co-square-link').value.trim(),
         payments_zelle_enabled: document.getElementById('zelle-enabled').checked ? '1' : '0',
@@ -482,7 +489,8 @@ async function saveSettings() {
         payments_cashapp_enabled: document.getElementById('cashapp-enabled').checked ? '1' : '0',
         payments_cashapp_tag: tag.replace(/^\$/, ''),
         payments_paypal_enabled: document.getElementById('paypal-enabled').checked ? '1' : '0',
-        payments_paypal_username: paypalName('paypal-name'),
+        payments_paypal_username: paypal.username,
+        payments_paypal_link: paypal.link,
         payments_square_enabled: document.getElementById('square-enabled').checked ? '1' : '0',
         payments_square_link: document.getElementById('square-link').value.trim(),
         payments_square_location_id: document.getElementById('square-location').value.trim(),

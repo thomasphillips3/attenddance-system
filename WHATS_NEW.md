@@ -1,5 +1,11 @@
 # What's New in AttenDANCE
 
+## PayPal checkout links (October 2026)
+
+- **Use your PayPal checkout link.** Paste a PayPal checkout link (https://www.paypal.com/ncp/payment/...) into Payment Methods, for the studio or the Company. Parents get a "Pay with PayPal" button and are told the amount to enter. PayPal.me links still work too.
+
+---
+
 ## Billing fixes (October 2026)
 
 - **One payment, several charges.** Check every charge a payment covers. Change an amount to pay part of a charge, like $100 toward a $200 costume.
