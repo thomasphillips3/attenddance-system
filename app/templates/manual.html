@@ -75,7 +75,8 @@ Search narrows the page; Print includes the full manual and can save a PDF.</p>
         <li class="pl-3"><a href="#tap-in" class="hover:text-primary-700">Tap-In setup &amp; troubleshooting</a></li>
         <li class="pl-3"><a href="#tap-how" class="hover:text-primary-700">Tapping a card or fob</a></li>
         <li><a href="#money" class="hover:text-primary-700">7. Money</a></li>
-        <li class="pl-3"><a href="#applied-payments" class="hover:text-primary-700">Apply a payment to a charge</a></li>
+        <li class="pl-3"><a href="#applied-payments" class="hover:text-primary-700">Apply a payment to charges</a></li>
+        <li class="pl-3"><a href="#edit-transactions" class="hover:text-primary-700">Fix a payment or charge</a></li>
         <li><a href="#messages" class="hover:text-primary-700">8. Messages &amp; reminders</a></li>
         <li><a href="#paperwork" class="hover:text-primary-700">9. Forms, waivers &amp; rules</a></li>
         <li><a href="#recital" class="hover:text-primary-700">10. Recital &amp; costumes</a></li>
@@ -677,7 +678,7 @@ Search narrows the page; Print includes the full manual and can save a PDF.</p>
     <h3 class="{{ h3 }}">Studio and Company are separate</h3>
     <p class="{{ p }}">Every dancer has two accounts. Studio covers tuition, costumes, shoes,
     registration, and other studio fees. Company covers competition, convention,
-    transportation, lodging, observer fees, costume rental, company dues, and company tickets.
+    transportation, lodging, observer fees, costume rental, company dues, company tickets, and other Company costs.
     A charge's category selects its fund. When recording a payment, choose which balance it pays.</p>
     <p class="{{ p }}">A Studio credit never pays a Company debt automatically. Student ledgers, family
     ledgers, statements, parent payment options, and reports keep the funds separate. The Company
@@ -690,39 +691,47 @@ Search narrows the page; Print includes the full manual and can save a PDF.</p>
       <li><strong>Add Payment</strong> - choose the dancer, positive amount, date, category, method, and description, then save. Record only money actually received. For an explicit fund choice, use <strong>Record Payment</strong> on the dancer's ledger.</li>
     </ul>
 
-    <h3 id="applied-payments" class="{{ h3 }}">Apply a payment to a specific charge</h3>
-    <p class="{{ p }}">Use this when a payment is for a particular item, such as a costume deposit,
-    rather than the oldest outstanding bill. This is available to admins when recording a payment directly.</p>
+    <h3 id="applied-payments" class="{{ h3 }}">Apply a payment to specific charges</h3>
+    <p class="{{ p }}">Use this when a payment is for particular items, such as a costume deposit and
+    this month's tuition, rather than the oldest outstanding bill.</p>
     <ol class="{{ ol }}">
       <li>Open <strong>Payments → Add Payment</strong> and choose the dancer. Or open that dancer's
       ledger and choose <strong>Record Payment</strong>.</li>
-      <li>In <strong>Apply to charge</strong>, select the unpaid item. Each option shows its date,
-      description or category, remaining amount, and fund. Only charges with an unpaid remainder
-      for that dancer appear.</li>
-      <li>The form fills the charge's category, fund, and remaining amount. For a partial payment,
-      reduce the amount to what you received. Keep the category and fund matched to the charge.</li>
-      <li>Check the payment date and method, add a note or description if helpful, then save.
-      The transaction list and dancer's ledger show <strong>Applied to #</strong> followed by the
-      charge number and description. Check this line to confirm the intended item was paid.</li>
+      <li>Under <strong>Apply to charges</strong>, check every charge the payment covers. Each row shows
+      the date, description, what's left on it, and the fund. Only charges with money still owed appear.</li>
+      <li>A checked charge fills in what's left on it. For a partial payment, change that charge's amount,
+      for example $100 toward a $200 costume. If you typed the payment amount first, a newly checked
+      charge takes no more than what's still unassigned.</li>
+      <li>Check the payment amount, date, and method, add a note if helpful, then save. The line under
+      the list says how much is going to which charges.</li>
     </ol>
-    <p class="{{ p }}">A partial payment reduces that item's remaining amount. A fully settled item
-    drops out of the picker. Each payment entry can target one charge; if one received payment
-    covers several items, record its portions separately and make sure they add up to the actual
-    amount received.</p>
-    {% call tip("No specific charge keeps automatic allocation") %}
-      Leave <strong>No specific charge</strong> selected to apply the payment to the oldest unpaid
-      charges in the same fund for aging and the open-charge list. Choosing a category alone does
-      not link a payment to an item. Existing unlinked payments keep this behavior.
+    <p class="{{ p }}">One payment can only pay charges in one fund. Once you check a Studio charge,
+    Company charges grey out, and the other way round. If the checked amounts add up to less than the
+    payment, the rest pays the oldest unpaid charges in that fund.</p>
+    {% call tip("Nothing checked keeps automatic allocation") %}
+      With nothing checked, the payment pays the oldest unpaid charges in the same fund. Choosing a
+      category alone does not link a payment to an item.
     {% endcall %}
-    <p class="{{ p }}">For example, a dancer owes $100 in older tuition and $60 for a costume.
-    Apply a $30 payment to the costume charge: it leaves $30 on that costume and the $100 tuition
-    charge unpaid. Studio and Company balances still stay separate.</p>
-    {% call warn("A linked payment cannot exceed the charge's remainder") %}
-      If another payment settled part of the item while the form was open, reopen the form to
-      refresh its remaining amount. If you see a fund/category mismatch, reselect the charge and
-      keep those filled values. Do not switch to another dancer's charge or record the payment
-      twice to get past an error.
+    <p class="{{ p }}">On the ledger, a charge row's <strong>Payment</strong> column shows
+    <strong>Paid</strong> with a check when nothing is owed on it, or <strong>$X left</strong> when it is
+    partly paid. A linked payment shows a check by its amount and a <strong>Linked:</strong> line naming
+    each charge and how much went to it. The Billing list shows the same under each description.</p>
+    {% call warn("A linked amount cannot be more than what's left on the charge") %}
+      If another payment settled part of the item while the form was open, close and reopen the form to
+      refresh what's left. Do not switch to another dancer's charge or record the payment twice to get
+      past an error.
     {% endcall %}
+
+    <h3 id="edit-transactions" class="{{ h3 }}">Fix a payment or charge</h3>
+    <p class="{{ p }}">Click the pencil on any row of the Billing list or a dancer's ledger to fix it in
+    place: amount, date, category, method, note, and which charges a payment is linked to. Every edit is
+    saved to the Audit Log with the old and new values.</p>
+    <ul class="{{ ul }}">
+      <li>The dancer and whether it's a charge or a payment can't be changed. Delete it and add it again.</li>
+      <li>A charge can't be lowered below what payments already cover on it, and can't move to the other
+      fund while payments are linked to it. Unlink or lower those payments first.</li>
+      <li>Fund transfers have no pencil: they're two matched entries. Delete and move the money again.</li>
+    </ul>
 
     <h3 id="autobilling" class="{{ h3 }}">Auto-billing (monthly tuition)</h3>
     <p class="{{ p }}">On the <strong>Payments</strong> page, <strong>Auto-Billing Rules</strong> is
@@ -746,12 +755,13 @@ Search narrows the page; Print includes the full manual and can save a PDF.</p>
     <ul class="{{ ul }}">
       <li><strong>Zelle</strong> - turn it on, set the display name, upload your QR code, and set the memo instruction telling parents to put their dancer's name in.</li>
       <li><strong>Cash App</strong> - turn it on and enter the cashtag. Parents get a link with the amount already filled in.</li>
+      <li><strong>PayPal</strong> - turn it on and enter your PayPal.me name (the part after <code>paypal.me/</code>). Parents get a link with the amount already filled in.</li>
       <li><strong>Square (card)</strong> - paste your Square payment link and parents get a "Pay by card" button. That's all that's required. The <strong>Advanced</strong> section is only if you also want to email Square invoices from inside the app.</li>
     </ul>
-    <p class="{{ p }}">Zelle and Cash App payments don't tell the system anything on their own, so
+    <p class="{{ p }}">Zelle, Cash App, and PayPal payments don't tell the system anything on their own, so
     there's a confirmation step - see below.</p>
     <p class="{{ p }}">Configure <strong>Company</strong> payment details separately on
-    the same settings page: its own Zelle name and QR code, Cash App tag, and card payment link.
+    the same settings page: its own Zelle name and QR code, Cash App tag, PayPal.me name, and card payment link.
     The portal uses the chosen fund's destinations. Save with <strong>Save Settings</strong>.</p>
 
     <h3 class="{{ h3 }}">Square invoices and connection settings</h3>
@@ -813,8 +823,8 @@ Search narrows the page; Print includes the full manual and can save a PDF.</p>
     </ol>
     <p class="{{ p }}">Transfers preserve the original payment. Check both ledger entries after saving.
     A suggested <strong>Move credit</strong> banner can fill in a sibling transfer for you.</p>
-    <p class="{{ p }}">To correct which charge a payment was applied to, delete the mistaken payment
-    entry and record it again with the correct <strong>Apply to charge</strong> selection.
+    <p class="{{ p }}">To correct which charges a payment was applied to, click its pencil and change the
+    checked charges. See <a href="#edit-transactions" class="text-primary-600 hover:underline">Fix a payment or charge</a>.
     Deleting a charge removes its payment links but keeps the payments; those payments then use
     the normal oldest-charge allocation. Review the remaining items and Aging after a correction.</p>
 
@@ -1079,10 +1089,10 @@ Search narrows the page; Print includes the full manual and can save a PDF.</p>
       Revenue's "Outstanding" counts only active dancers. Aging also includes withdrawn dancers who
       still owe, marked "Withdrawn." If you're chasing money, trust Aging.
     {% endcall %}
-    <p class="{{ p }}">On Aging, linked payments settle their selected charge first. Payments recorded
-    with <strong>No specific charge</strong> settle the oldest unpaid charges in the same fund.
+    <p class="{{ p }}">On Aging, linked payments settle their checked charges first. Payments with
+    nothing checked, and any part of a payment left over, settle the oldest unpaid charges in the same fund.
     Paying a newer item can leave an older one in the 90+ column. See
-    <a href="#applied-payments" class="text-primary-600 hover:underline">Apply a payment to a specific charge</a>.</p>
+    <a href="#applied-payments" class="text-primary-600 hover:underline">Apply a payment to specific charges</a>.</p>
     <p class="{{ p }}">Review the Studio and Company totals and fund labels in each report. Revenue's collection totals
     exclude internal transfer entries, so moving credit does not count as new money collected.
     Aging keeps each fund's debt separate. Use its CSV export when following up on unpaid accounts.</p>

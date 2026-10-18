@@ -82,8 +82,8 @@
 <div id="ledger-pay-modal" class="fixed inset-0 z-50 hidden overflow-y-auto">
     <div class="flex items-center justify-center min-h-screen px-4">
         <div class="fixed inset-0 bg-ink/40" onclick="closeLedgerPay()"></div>
-        <div class="relative bg-surface rounded-2xl shadow-pop max-w-md w-full p-6">
-            <h3 class="font-display text-2xl text-ink mb-1">Record Payment</h3>
+        <div class="relative bg-surface rounded-2xl shadow-pop max-w-lg w-full p-6">
+            <h3 id="lp-title" class="font-display text-2xl text-ink mb-1">Record Payment</h3>
             <p class="text-sm text-ink-3 mb-4">For {{ student.full_name }}</p>
             <form id="ledger-pay-form" onsubmit="saveLedgerPay(event)">
                 <div class="grid grid-cols-2 gap-4">
@@ -95,20 +95,24 @@
                         <label class="{{ lpl }}">Date *</label>
                         <input id="lp-date" type="date" required class="{{ lpi }}">
                     </div>
-                    <div class="col-span-2">
+                    <div id="lp-fund-field" class="col-span-2">
                         <label class="{{ lpl }}">Which balance is this paying? *</label>
                         <select id="lp-fund" required class="{{ lpi }}">
                             {% for fund in FUNDS %}<option value="{{ fund }}">{{ FUND_LABELS[fund] }}</option>{% endfor %}
                         </select>
                     </div>
-                    <div>
+                    <div id="lp-method-field">
                         <label class="{{ lpl }}">Method *</label>
                         <select id="lp-method" required class="{{ lpi }}">
                             <option value="cash">Cash</option>
                             <option value="zelle">Zelle</option>
                             <option value="cashapp">Cash App</option>
+                            <option value="paypal">PayPal</option>
                             <option value="venmo">Venmo</option>
                             <option value="card">Card</option>
+                            <option value="square">Square</option>
+                            <option value="tap">Tap at Desk</option>
+                            <option value="other">Other</option>
                         </select>
                     </div>
                     <div>
@@ -117,11 +121,11 @@
                             {{ category_options(selected='tuition') }}
                         </select>
                     </div>
-                    <div class="col-span-2">
-                        <label class="{{ lpl }}" for="lp-charge">Apply to charge</label>
-                        <select id="lp-charge" class="{{ lpi }}" onchange="selectLedgerCharge()">
-                            <option value="">No specific charge</option>
-                        </select>
+                    <div id="lp-charges-field" class="col-span-2">
+                        <p class="{{ lpl }}">Apply to charges</p>
+                        <p class="text-xs text-ink-3">Check every charge this payment covers. Change an amount to pay part of a charge.</p>
+                        <div id="lp-charge-list" class="mt-2 max-h-60 overflow-y-auto border border-line-2 rounded-xl"></div>
+                        <p id="lp-charge-summary" class="mt-2 text-xs text-ink-2" aria-live="polite"></p>
                     </div>
                     <div class="col-span-2">
                         <label class="{{ lpl }}">Note</label>
@@ -130,7 +134,7 @@
                 </div>
                 <div class="mt-5 flex justify-end gap-2">
                     <button type="button" onclick="closeLedgerPay()" class="px-4 py-2 rounded-xl border border-line-2 text-sm font-bold text-ink-2 hover:bg-surface-2">Cancel</button>
-                    <button type="submit" class="px-4 py-2 rounded-xl bg-ok text-white text-sm font-bold hover:opacity-90 shadow-sm">Record Payment</button>
+                    <button type="submit" id="lp-submit" class="px-4 py-2 rounded-xl bg-ok text-white text-sm font-bold hover:opacity-90 shadow-sm">Record Payment</button>
                 </div>
             </form>
         </div>
@@ -179,18 +183,22 @@
 {% endblock %}
 
 {% block extra_js %}
+<script src="{{ url_for('static', filename='js/charge-picker.js') }}"></script>
 <script>
 function esc(str) { const d = document.createElement('div'); d.textContent = str; return d.innerHTML; }
 // value -> fund, from the one map in app/funds.py. Studio categories keep
 // their own colours; every Company category shares the gold pill.
 const CATEGORY_FUND = Object.fromEntries({{ FUND_CATEGORIES | tojson }}.map(c => [c[0], c[2]]));
+// Show 'Other', not the stored value 'company_other'; unmapped values show as stored.
+const CATEGORY_LABEL = Object.fromEntries({{ FUND_CATEGORIES | tojson }}.map(c => [c[0], c[1]]));
+const catLabel = c => CATEGORY_LABEL[c] || c;
 const FUND_LABELS = {{ FUND_LABELS | tojson }};
 const studioColors = { tuition: 'bg-info/10 text-info', costumes: 'bg-primary-50 text-primary-700', shoes: 'bg-warn/10 text-warn', registration: 'bg-ok/10 text-ok' };
 function pillClass(category) {
     if (CATEGORY_FUND[category] === 'company') return 'bg-gold-300 text-gold-ink';
     return studioColors[category] || 'bg-surface-2 text-ink-2';
 }
-const methodLabels = { cash: 'Cash', zelle: 'Zelle', venmo: 'Venmo', cashapp: 'Cash App', card: 'Card', tap: 'Tap', transfer: 'Fund transfer' };
+const methodLabels = { cash: 'Cash', zelle: 'Zelle', venmo: 'Venmo', cashapp: 'Cash App', paypal: 'PayPal', card: 'Card', tap: 'Tap', transfer: 'Fund transfer' };
 const FUNDS = {{ FUNDS | list | tojson }};
 
 async function loadLedger() {
@@ -227,7 +235,8 @@ async function loadLedger() {
         // only one with a balance due, otherwise Studio.
         const studioDue = parseFloat(data.funds.studio.balance) > 0;
         const companyDue = parseFloat(data.funds.company.balance) > 0;
-        document.getElementById('lp-fund').value = (companyDue && !studioDue) ? 'company' : 'studio';
+        ledgerDefaultFund = (companyDue && !studioDue) ? 'company' : 'studio';
+        document.getElementById('lp-fund').value = ledgerDefaultFund;
 
         renderLedger(data.ledger);
         renderCategoryBreakdown(data.by_category || {});
@@ -240,7 +249,23 @@ async function loadLedger() {
 
 const isAdmin = {{ 'true' if current_user.is_admin else 'false' }};
 
+let ledgerRows = {};
+// A charge row's Payment column says whether it's cleared: Paid (with a check)
+// or how much is left. Partly paid charges show what's left.
+function chargeStatus(r) {
+    if (r.remaining === undefined) return '';
+    const left = parseFloat(r.remaining);
+    if (left <= 0) return '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-ok/10 text-ok"><i class="fas fa-check mr-1"></i>Paid</span>';
+    if (left < parseFloat(r.amount)) return `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-warn/10 text-warn">$${left.toFixed(2)} left</span>`;
+    return '<span class="text-xs text-ink-3">Unpaid</span>';
+}
+// A payment row lists the charges it was linked to and how much went to each.
+function linkedNote(r) {
+    if (r.type !== 'payment' || !r.allocations || !r.allocations.length) return '';
+    return `<div class="text-xs text-ok"><i class="fas fa-link mr-1"></i>Linked: ${r.allocations.map(a => `${esc(a.charge_description || 'charge')} ($${parseFloat(a.amount).toFixed(2)})`).join(', ')}</div>`;
+}
 function renderLedger(rows) {
+    ledgerRows = Object.fromEntries(rows.map(r => [r.id, r]));
     FUNDS.forEach(fund => {
         const fundRows = rows.filter(r => r.fund === fund);
         const tbody = document.getElementById('ledger-table-' + fund);
@@ -254,15 +279,17 @@ function renderLedger(rows) {
             const balClass = runBal > 0 ? 'text-danger font-semibold' : runBal < 0 ? 'text-info' : 'text-ink';
             const desc = r.description || r.category;
             const method = r.payment_method ? ' (' + (methodLabels[r.payment_method] || r.payment_method) + ')' : '';
+            const editBtn = r.category === 'transfer' ? ''
+                : `<button aria-label="Edit this ${esc(r.type)}" onclick="openLedgerEdit(${r.id})" class="text-ink-3 hover:text-primary-600 text-sm mr-3"><i class="fas fa-pen"></i></button>`;
             const actionCell = isAdmin
-                ? `<td class="px-3 py-3.5 whitespace-nowrap text-right"><button aria-label="Delete this transaction" onclick="deleteTxn(${r.id}, '${esc(r.type)}', '${parseFloat(r.amount).toFixed(2)}')" class="text-ink-3 hover:text-danger text-sm"><i class="fas fa-trash"></i></button></td>`
+                ? `<td class="px-3 py-3.5 whitespace-nowrap text-right">${editBtn}<button aria-label="Delete this transaction" onclick="deleteTxn(${r.id}, '${esc(r.type)}', '${parseFloat(r.amount).toFixed(2)}')" class="text-ink-3 hover:text-danger text-sm"><i class="fas fa-trash"></i></button></td>`
                 : '';
             return `<tr class="border-b border-line last:border-0">
                 <td class="px-5 py-3.5 whitespace-nowrap text-sm text-ink tabular-nums">${esc(r.transaction_date)}</td>
-                <td class="px-5 py-3.5 text-sm text-ink-2">${esc(desc)}${isCharge ? '' : '<span class="text-ink-3 text-xs">' + esc(method) + '</span>'}${r.applied_charge_id ? `<div class="text-xs text-primary-600">Applied to #${r.applied_charge_id}: ${esc(r.applied_charge_description || 'charge')}</div>` : ''}</td>
-                <td class="px-5 py-3.5 whitespace-nowrap"><span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold ${pillClass(r.category)}">${esc(r.category)}</span></td>
+                <td class="px-5 py-3.5 text-sm text-ink-2">${esc(desc)}${isCharge ? '' : '<span class="text-ink-3 text-xs">' + esc(method) + '</span>'}${linkedNote(r)}</td>
+                <td class="px-5 py-3.5 whitespace-nowrap"><span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold ${pillClass(r.category)}">${esc(catLabel(r.category))}</span></td>
                 <td class="px-5 py-3.5 whitespace-nowrap text-sm text-right tabular-nums ${isCharge ? 'text-danger' : ''}">${isCharge ? '$' + parseFloat(r.amount).toFixed(2) : ''}</td>
-                <td class="px-5 py-3.5 whitespace-nowrap text-sm text-right tabular-nums ${!isCharge ? 'text-ok' : ''}">${!isCharge ? '$' + parseFloat(r.amount).toFixed(2) : ''}</td>
+                <td class="px-5 py-3.5 whitespace-nowrap text-sm text-right tabular-nums ${!isCharge ? 'text-ok' : ''}">${isCharge ? chargeStatus(r) : (r.allocations.length ? '<i class="fas fa-check mr-1 text-xs" title="Linked to a charge"></i>' : '') + '$' + parseFloat(r.amount).toFixed(2)}</td>
                 <td class="px-5 py-3.5 whitespace-nowrap text-sm text-right tabular-nums ${balClass}">$${runBal.toFixed(2)}</td>
                 ${actionCell}
             </tr>`;
@@ -291,7 +318,7 @@ function renderCategoryBreakdown(cats) {
         const balText = bal > 0 ? '$' + bal.toFixed(2) + ' due' : bal < 0 ? '$' + Math.abs(bal).toFixed(2) + ' credit' : 'Paid';
         const edge = c.fund === 'company' ? 'border-gold-400' : (colors[cat] || colors.other);
         return `<div class="bg-surface border border-line rounded-2xl shadow-soft p-3 border-l-4 ${edge}">
-            <p class="text-xs font-medium text-ink-3 uppercase">${esc(cat)}</p>
+            <p class="text-xs font-medium text-ink-3 uppercase">${esc(catLabel(cat))}</p>
             <p class="text-lg font-bold tabular-nums ${balClass}">${balText}</p>
             <p class="text-xs text-ink-3 tabular-nums">$${parseFloat(c.charges).toFixed(2)} charged &middot; $${parseFloat(c.payments).toFixed(2)} paid</p>
         </div>`;
@@ -355,42 +382,67 @@ async function sendInvoice() {
     }
 }
 
-let ledgerOpenCharges = [];
-async function loadLedgerOpenCharges() {
-    const select = document.getElementById('lp-charge');
-    select.innerHTML = '<option value="">No specific charge</option>';
-    ledgerOpenCharges = [];
-    try {
-        const res = await fetch('/api/students/{{ student.id }}/open-charges');
-        if (!res.ok) throw new Error('Could not load charges');
-        ledgerOpenCharges = (await res.json()).charges;
-        for (const c of ledgerOpenCharges) {
-            const option = new Option(`${c.date} · ${c.description || c.category} · $${c.remaining.toFixed(2)} due (${c.fund})`, c.id);
-            select.add(option);
-        }
-    } catch (err) { toast('Could not load open charges', false); }
-}
-function selectLedgerCharge() {
-    const charge = ledgerOpenCharges.find(c => c.id === Number(document.getElementById('lp-charge').value));
-    if (!charge) return;
-    document.getElementById('lp-amount').value = charge.remaining.toFixed(2);
-    document.getElementById('lp-fund').value = charge.fund;
+const ledgerPicker = ChargePicker({
+    list: document.getElementById('lp-charge-list'),
+    amount: document.getElementById('lp-amount'),
+    summary: document.getElementById('lp-charge-summary'),
+    onChange: picker => {
+        const cat = picker.category();
+        if (cat) setLedgerCategory(cat);
+    },
+});
+let ledgerEditing = null;
+// The fund Record Payment starts on (set by loadLedger). Kept apart from the
+// select because an edit overwrites the select with that row's fund.
+let ledgerDefaultFund = 'studio';
+document.getElementById('lp-fund').addEventListener('change', e => ledgerPicker.setFund(e.target.value));
+
+function setLedgerCategory(value) {
     const category = document.getElementById('lp-category');
-    if (!Array.from(category.options).some(option => option.value === charge.category)) {
-        const option = new Option(charge.category, charge.category);
+    if (!Array.from(category.options).some(option => option.value === value)) {
+        const option = new Option(value, value);
         option.dataset.chargeOnly = 'true';
         category.add(option);
     }
-    category.value = charge.category;
+    category.value = value;
 }
-function openLedgerPay() {
-    const fund = document.getElementById('lp-fund').value;  // preselected by loadLedger
+// One modal for recording a payment and for editing a payment or a charge.
+function resetLedgerForm(type, editing) {
+    ledgerEditing = editing || null;
+    const fund = editing ? editing.fund : ledgerDefaultFund;
     document.getElementById('ledger-pay-form').reset();
     document.querySelectorAll('#lp-category option[data-charge-only]').forEach(option => option.remove());
     document.getElementById('lp-fund').value = fund;
     document.getElementById('lp-date').value = new Date().toISOString().split('T')[0];
+    const isPayment = type === 'payment';
+    document.getElementById('lp-title').textContent = editing ? (isPayment ? 'Edit Payment' : 'Edit Charge') : 'Record Payment';
+    const submit = document.getElementById('lp-submit');
+    submit.textContent = editing ? 'Save Changes' : 'Record Payment';
+    submit.className = 'px-4 py-2 rounded-xl text-white text-sm font-bold hover:opacity-90 shadow-sm ' + (isPayment ? 'bg-ok' : 'bg-danger');
+    ['lp-fund-field', 'lp-method-field', 'lp-charges-field'].forEach(id =>
+        document.getElementById(id).classList.toggle('hidden', !isPayment));
+    document.getElementById('lp-method').required = isPayment;
+    ledgerPicker.clear();
+    ledgerPicker.setFund(fund);
+}
+function openLedgerPay() {
+    resetLedgerForm('payment');
     document.getElementById('ledger-pay-modal').classList.remove('hidden');
-    loadLedgerOpenCharges();
+    ledgerPicker.load({{ student.id }});
+}
+function openLedgerEdit(id) {
+    const r = ledgerRows[id];
+    if (!r) return;
+    resetLedgerForm(r.type, r);
+    document.getElementById('lp-amount').value = parseFloat(r.amount).toFixed(2);
+    document.getElementById('lp-date').value = r.transaction_date;
+    setLedgerCategory(r.category);
+    document.getElementById('lp-desc').value = r.description || '';
+    if (r.type === 'payment') {
+        document.getElementById('lp-method').value = r.payment_method || 'cash';
+        ledgerPicker.load({{ student.id }}, { excludePayment: r.id, preset: r.allocations, keepAmount: true });
+    }
+    document.getElementById('ledger-pay-modal').classList.remove('hidden');
 }
 function closeLedgerPay() { document.getElementById('ledger-pay-modal').classList.add('hidden'); }
 async function saveLedgerPay(e) {
@@ -398,27 +450,34 @@ async function saveLedgerPay(e) {
     // Guard against a double-click posting two payments (no natural idempotency key).
     const btn = e.target.querySelector('button[type="submit"]');
     if (btn.disabled) return;
+    const isPayment = !ledgerEditing || ledgerEditing.type === 'payment';
+    if (isPayment && ledgerPicker.loading()) { toast('Charges are still loading. Try again in a second.', false); return; }
+    if (isPayment && ledgerPicker.error()) { toast(ledgerPicker.error(), false); return; }
     btn.disabled = true;
     const body = {
-        type: 'payment',
-        student_id: {{ student.id }},
         amount: document.getElementById('lp-amount').value,
         transaction_date: document.getElementById('lp-date').value,
-        payment_method: document.getElementById('lp-method').value,
-        fund: document.getElementById('lp-fund').value,
         category: document.getElementById('lp-category').value,
         description: document.getElementById('lp-desc').value,
     };
-    const charge = ledgerOpenCharges.find(c => c.id === Number(document.getElementById('lp-charge').value));
-    if (charge) body.applied_charge_id = charge.id;
+    if (isPayment) {
+        body.payment_method = document.getElementById('lp-method').value;
+        body.fund = document.getElementById('lp-fund').value;
+        // Leaving the split out of an edit keeps the links it already has.
+        if (ledgerPicker.ready()) body.allocations = ledgerPicker.allocations();
+    }
+    if (!ledgerEditing) {
+        body.type = 'payment';
+        body.student_id = {{ student.id }};
+    }
+    const url = ledgerEditing ? `/api/transactions/${ledgerEditing.id}` : '/api/transactions';
     try {
-        const res = await fetch('/api/transactions', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
-        if (res.ok) { closeLedgerPay(); loadLedger(); toast('Payment recorded', true); }
-        else { const d = await res.json(); toast(d.error || 'Error', false); }
+        const res = await fetch(url, { method: ledgerEditing ? 'PUT' : 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
+        if (res.ok) { closeLedgerPay(); loadLedger(); toast(ledgerEditing ? 'Saved' : 'Payment recorded', true); }
+        else { const d = await res.json().catch(() => ({})); toast(d.error || 'Error', false); }
     } catch (err) { toast('Network error', false); }
     finally { btn.disabled = false; }
 }
-
 {% if current_user.is_admin %}
 function openTransfer() {
     document.getElementById('transfer-form').reset();

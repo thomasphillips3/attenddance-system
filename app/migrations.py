@@ -38,7 +38,6 @@ USER_COLUMNS = [
 TRANSACTION_COLUMNS = [
     ('type', "VARCHAR(10) DEFAULT 'payment'"),
     ('recurring_charge_id', 'INTEGER'),
-    ('applied_charge_id', 'INTEGER REFERENCES transactions(id)'),
     ('fund', "VARCHAR(10) DEFAULT 'studio'"),
 ]
 
@@ -205,6 +204,31 @@ def _backfill_nfc_tags(conn):
             {'u': uid})
 
 
+def _move_applied_charges_to_allocations(conn, inspector):
+    """Carry the old one-payment-one-charge links into payment_allocations.
+
+    Before allocations, a payment named a single charge in
+    transactions.applied_charge_id and paid it in full (the API refused an
+    amount over the charge's remainder). Each link becomes one allocation for
+    the payment's whole amount, then the old column is cleared so this never
+    runs twice for the same payment and nothing reads two sources of truth.
+    The allocation is capped at the charge amount in case old data ever
+    linked a payment bigger than its charge; the rest stays unapplied.
+    The column stays in the table (SQLite can't drop it cheaply); fresh
+    databases never get it, hence the column check."""
+    columns = {c['name'] for c in inspector.get_columns('transactions')}
+    if 'applied_charge_id' not in columns:
+        return
+    conn.execute(sqlalchemy.text(
+        "INSERT INTO payment_allocations (payment_id, charge_id, amount, created_at) "
+        "SELECT p.id, p.applied_charge_id, MIN(p.amount, c.amount), CURRENT_TIMESTAMP "
+        "FROM transactions p JOIN transactions c ON c.id = p.applied_charge_id "
+        "WHERE p.type = 'payment' AND c.type = 'charge' AND c.student_id = p.student_id "
+        "AND NOT EXISTS (SELECT 1 FROM payment_allocations a WHERE a.payment_id = p.id)"))
+    conn.execute(sqlalchemy.text(
+        'UPDATE transactions SET applied_charge_id = NULL WHERE applied_charge_id IS NOT NULL'))
+
+
 def run_migrations(db):
     with db.engine.connect() as conn:
         inspector = sqlalchemy.inspect(db.engine)
@@ -214,10 +238,9 @@ def run_migrations(db):
             _reconcile_admin_role(conn)
         if 'transactions' in inspector.get_table_names():
             _add_missing_columns(conn, inspector, 'transactions', TRANSACTION_COLUMNS)
-            conn.execute(sqlalchemy.text(
-                'CREATE INDEX IF NOT EXISTS ix_transactions_applied_charge_id '
-                'ON transactions(applied_charge_id)'))
             _backfill_transaction_fund(conn)
+            if 'payment_allocations' in inspector.get_table_names():
+                _move_applied_charges_to_allocations(conn, inspector)
         if 'pending_payments' in inspector.get_table_names():
             _add_missing_columns(conn, inspector, 'pending_payments', PENDING_PAYMENT_COLUMNS)
         if 'classes' in inspector.get_table_names():

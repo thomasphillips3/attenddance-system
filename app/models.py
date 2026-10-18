@@ -482,7 +482,6 @@ class Transaction(db.Model):
     description = db.Column(db.Text)
     transaction_date = db.Column(db.Date, default=date.today, nullable=False)
     recurring_charge_id = db.Column(db.Integer, db.ForeignKey('recurring_charges.id'))
-    applied_charge_id = db.Column(db.Integer, db.ForeignKey('transactions.id'), index=True)
 
     created_by = db.Column(db.Integer, db.ForeignKey('users.id'))
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
@@ -490,10 +489,41 @@ class Transaction(db.Model):
     creator = db.relationship('User', backref='created_transactions')
 
     recurring_charge = db.relationship('RecurringCharge', backref='transactions')
-    applied_charge = db.relationship('Transaction', remote_side=[id], backref='applied_payments')
+    # A payment's split across the charges it pays. selectin so a ledger or an
+    # aging run loads every allocation in one extra query, not one per payment.
+    allocations = db.relationship('PaymentAllocation', foreign_keys='PaymentAllocation.payment_id',
+                                  back_populates='payment', lazy='selectin',
+                                  cascade='all, delete-orphan')
 
     def __repr__(self):
         return f'<Transaction ${self.amount} {self.category} for student {self.student_id}>'
+
+
+class PaymentAllocation(db.Model):
+    """How much of one payment went to one charge.
+
+    A payment can be split across several charges, and a charge can be paid
+    by several payments, so this is the join with the dollar amount on it.
+    The allocated amounts on a payment never exceed the payment; whatever is
+    left over is unapplied and pays the oldest open charges in its fund (see
+    helpers.charge_remainders). Both rows always belong to the same student
+    and fund; the API enforces that on write.
+    """
+    __tablename__ = 'payment_allocations'
+
+    id = db.Column(db.Integer, primary_key=True)
+    payment_id = db.Column(db.Integer, db.ForeignKey('transactions.id'), nullable=False, index=True)
+    charge_id = db.Column(db.Integer, db.ForeignKey('transactions.id'), nullable=False, index=True)
+    amount = db.Column(db.Numeric(10, 2), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    payment = db.relationship('Transaction', foreign_keys=[payment_id], back_populates='allocations')
+    # joined: the ledger and billing list name every linked charge, so load it
+    # with the allocation instead of one SELECT per row.
+    charge = db.relationship('Transaction', foreign_keys=[charge_id], lazy='joined')
+
+    def __repr__(self):
+        return f'<PaymentAllocation ${self.amount} of payment {self.payment_id} to charge {self.charge_id}>'
 
 class RecurringCharge(db.Model):
     """Automatic monthly charge rule"""

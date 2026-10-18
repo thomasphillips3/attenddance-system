@@ -310,6 +310,7 @@
             <select id="donate-method" class="mt-1 mb-5 block w-full bg-surface border border-line-2 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary-200 focus:border-primary-400">
                 <option value="zelle">Zelle</option>
                 <option value="cashapp">Cash App</option>
+                <option value="paypal">PayPal</option>
                 <option value="cash">Cash</option>
                 <option value="check">Check</option>
                 <option value="other">Other</option>
@@ -355,7 +356,7 @@ const FUND_LABELS = {{ FUND_LABELS | tojson }};
 // the claim so the admin records the payment in the right fund.
 let payTarget = {type: 'student', id: null, name: '', amount: 0, fund: 'studio'};
 
-const METHOD_LABELS = {zelle: 'Zelle', cashapp: 'Cash App', square: 'Square'};
+const METHOD_LABELS = {zelle: 'Zelle', cashapp: 'Cash App', paypal: 'PayPal', square: 'Square'};
 function fundPill(fund) {
     return fund === 'company'
         ? ` <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-gold-300 text-gold-ink">${esc(FUND_LABELS.company)}</span>`
@@ -407,6 +408,17 @@ function renderMethods() {
                     </a>
                 </div>`;
             cHtml += `<button onclick="submitClaim('cashapp')" class="px-3 py-2 bg-ok text-white rounded-xl text-sm font-bold hover:opacity-90">I sent it with Cash App</button>`;
+        }
+        if (opt.type === 'paypal' && opt.username) {
+            const url = `https://paypal.me/${encodeURIComponent(opt.username)}${amt ? '/' + amt.toFixed(2) : ''}`;
+            mHtml += `
+                <div class="border border-info/30 rounded-xl p-3 bg-info/10">
+                    <div class="font-bold text-info text-sm mb-2"><i class="fab fa-paypal mr-1"></i>PayPal - ${esc(opt.username)}</div>
+                    <a href="${url}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center px-3 py-2 bg-info text-white rounded-xl text-sm font-bold hover:opacity-90">
+                        Open PayPal${amt ? ' for $' + amt.toFixed(2) : ''}
+                    </a>
+                </div>`;
+            cHtml += `<button onclick="submitClaim('paypal')" class="px-3 py-2 bg-info text-white rounded-xl text-sm font-bold hover:opacity-90">I sent it with PayPal</button>`;
         }
         if (opt.type === 'square' && (opt.link || opt.configured)) {
             // The hosted checkout link can't carry an amount, so the parent types

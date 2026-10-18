@@ -150,7 +150,7 @@
 {% block extra_js %}
 <script>
 const FUND_LABELS = {{ FUND_LABELS | tojson }};
-const METHOD_LABELS = {zelle: 'Zelle', cashapp: 'Cash App', square: 'Square', cash: 'Cash', venmo: 'Venmo', other: 'Other'};
+const METHOD_LABELS = {zelle: 'Zelle', cashapp: 'Cash App', paypal: 'PayPal', square: 'Square', cash: 'Cash', venmo: 'Venmo', other: 'Other'};
 
 function showMsg(text, ok) {
     const m = document.getElementById('status-msg');

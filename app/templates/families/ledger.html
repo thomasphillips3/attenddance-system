@@ -112,7 +112,7 @@
 function esc(str) { const d = document.createElement('div'); d.textContent = str; return d.innerHTML; }
 const FUNDS = {{ FUNDS | list | tojson }};
 const FUND_LABELS = {{ FUND_LABELS | tojson }};
-const methodLabels = { cash: 'Cash', zelle: 'Zelle', venmo: 'Venmo', cashapp: 'Cash App', card: 'Card', tap: 'Tap', transfer: 'Fund transfer' };
+const methodLabels = { cash: 'Cash', zelle: 'Zelle', venmo: 'Venmo', cashapp: 'Cash App', paypal: 'PayPal', card: 'Card', tap: 'Tap', transfer: 'Fund transfer' };
 
 let familyStudents = [];
 

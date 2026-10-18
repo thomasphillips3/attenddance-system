@@ -100,10 +100,11 @@
                     <th class="{{ thl }}">Description</th>
                     <th class="{{ thl }}">Method</th>
                     <th class="{{ thr }}">Amount</th>
+                    <th class="{{ thr }}"><span class="sr-only">Edit</span></th>
                 </tr>
             </thead>
             <tbody id="transactions-table">
-                <tr><td colspan="7" class="px-5 py-4 text-center text-ink-3">Loading…</td></tr>
+                <tr><td colspan="8" class="px-5 py-4 text-center text-ink-3">Loading…</td></tr>
             </tbody>
         </table>
         <div id="txn-pagination" class="flex items-center justify-between gap-3 px-5 py-3 border-t border-line"></div>
@@ -156,16 +157,18 @@
                             <option value="zelle">Zelle</option>
                             <option value="venmo">Venmo</option>
                             <option value="cashapp">Cash App</option>
+                            <option value="paypal">PayPal</option>
                             <option value="card">Credit/Debit Card</option>
+                            <option value="square">Square</option>
                             <option value="tap">Tap at Desk</option>
+                            <option value="other">Other</option>
                         </select>
                     </div>
                     <div id="apply-charge-field" class="col-span-2 hidden">
-                        <label class="{{ lbl }}" for="txn-applied-charge">Apply to charge</label>
-                        <select id="txn-applied-charge" class="{{ inp }}" onchange="selectAppliedCharge()">
-                            <option value="">No specific charge</option>
-                        </select>
-                        <p class="mt-1 text-xs text-ink-3">Choose an unpaid itemized charge for this student.</p>
+                        <p class="{{ lbl }}">Apply to charges</p>
+                        <p class="text-xs text-ink-3">Check every charge this payment covers. Change an amount to pay part of a charge.</p>
+                        <div id="txn-charge-list" class="mt-2 max-h-60 overflow-y-auto border border-line-2 rounded-xl"></div>
+                        <p id="txn-charge-summary" class="mt-2 text-xs text-ink-2" aria-live="polite"></p>
                     </div>
                     <div class="col-span-2">
                         <label class="{{ lbl }}">Description</label>
@@ -283,13 +286,17 @@
 {% endblock %}
 
 {% block extra_js %}
+<script src="{{ url_for('static', filename='js/charge-picker.js') }}"></script>
 <script>
 function esc(str) { const d = document.createElement('div'); d.textContent = str; return d.innerHTML; }
-const methodLabels = { cash: 'Cash', zelle: 'Zelle', venmo: 'Venmo', cashapp: 'Cash App', card: 'Card', tap: 'Tap' };
+const methodLabels = { cash: 'Cash', zelle: 'Zelle', venmo: 'Venmo', cashapp: 'Cash App', paypal: 'PayPal', card: 'Card', tap: 'Tap', transfer: 'Fund transfer' };
 // value -> fund, from the one map in app/funds.py. Studio categories keep
 // their own colours; every Company category shares the gold pill so Company
 // money is recognisable at a glance.
 const CATEGORY_FUND = Object.fromEntries({{ FUND_CATEGORIES | tojson }}.map(c => [c[0], c[2]]));
+// Show 'Other', not the stored value 'company_other'; unmapped values show as stored.
+const CATEGORY_LABEL = Object.fromEntries({{ FUND_CATEGORIES | tojson }}.map(c => [c[0], c[1]]));
+const catLabel = c => CATEGORY_LABEL[c] || c;
 const FUND_LABELS = {{ FUND_LABELS | tojson }};
 const FUNDS = {{ FUNDS | list | tojson }};
 let allBalances = [];
@@ -319,7 +326,8 @@ function applyFundFilter() {
     for (const selectId of ['filter-category', 'txn-category', 'bulk-category', 'rc-category']) {
         filterCategories(document.getElementById(selectId));
     }
-    if (!document.getElementById('txn-modal').classList.contains('hidden')) loadOpenCharges();
+    // var-declared below; undefined if this runs before the picker exists.
+    if (txnPicker) txnPicker.setFund(fund);
     renderBalances(allBalances);
     renderRecurring(allRecurring);
     loadTransactions(1);
@@ -398,7 +406,7 @@ async function loadTransactions(page) {
         renderTxnPagination(data.pagination);
     } catch (err) {
         if (request !== txnRequest) return;
-        document.getElementById('transactions-table').innerHTML = '<tr><td colspan="7" class="px-5 py-4 text-center text-danger">Failed to load</td></tr>';
+        document.getElementById('transactions-table').innerHTML = '<tr><td colspan="8" class="px-5 py-4 text-center text-danger">Failed to load</td></tr>';
     }
 }
 function renderTxnPagination(p) {
@@ -415,12 +423,29 @@ function renderTxnPagination(p) {
             <button class="${btn}" ${p.page >= p.pages ? 'disabled' : ''} onclick="loadTransactions(${p.page + 1})">Next</button>
         </div>`;
 }
+let txnById = {};
+// Under the description: a charge says Paid or what's left; a payment lists
+// the charges it was linked to.
+function paymentStatus(t) {
+    if (t.type === 'charge') {
+        if (t.remaining === undefined) return '';
+        const left = parseFloat(t.remaining);
+        return left <= 0
+            ? '<div class="text-xs font-bold text-ok"><i class="fas fa-check mr-1"></i>Paid</div>'
+            : left < parseFloat(t.amount)
+                ? `<div class="text-xs font-bold text-warn">$${left.toFixed(2)} left</div>`
+                : '';
+    }
+    if (!t.allocations || !t.allocations.length) return '';
+    return `<div class="text-xs text-ok"><i class="fas fa-link mr-1"></i>Linked: ${t.allocations.map(a => `${esc(a.charge_description || 'charge')} ($${parseFloat(a.amount).toFixed(2)})`).join(', ')}</div>`;
+}
 function renderTransactions(txns) {
     const tbody = document.getElementById('transactions-table');
     if (!txns.length) {
-        tbody.innerHTML = '<tr><td colspan="7" class="px-5 py-4 text-center text-ink-3">No transactions found.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" class="px-5 py-4 text-center text-ink-3">No transactions found.</td></tr>';
         return;
     }
+    txnById = Object.fromEntries(txns.map(t => [t.id, t]));
     tbody.innerHTML = txns.map(t => {
         const isCharge = t.type === 'charge';
         const typeTag = isCharge
@@ -431,83 +456,88 @@ function renderTransactions(txns) {
             <td class="px-5 py-3 whitespace-nowrap text-sm text-ink-2 tabular-nums">${esc(t.transaction_date)}</td>
             <td class="px-5 py-3 whitespace-nowrap text-sm text-ink">${esc(t.student_name)}</td>
             <td class="px-5 py-3 whitespace-nowrap">${typeTag}</td>
-            <td class="px-5 py-3 whitespace-nowrap"><span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-bold ${pillClass(t.category)}">${esc(t.category)}</span>${fundPill(t.fund)}</td>
-            <td class="px-5 py-3 text-sm text-ink-2">${esc(t.description || '-')}${t.applied_charge_id ? `<div class="text-xs text-primary-600">Applied to #${t.applied_charge_id}: ${esc(t.applied_charge_description || 'charge')}</div>` : ''}</td>
+            <td class="px-5 py-3 whitespace-nowrap"><span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-bold ${pillClass(t.category)}">${esc(catLabel(t.category))}</span>${fundPill(t.fund)}</td>
+            <td class="px-5 py-3 text-sm text-ink-2">${esc(t.description || '-')}${paymentStatus(t)}</td>
             <td class="px-5 py-3 whitespace-nowrap text-sm text-ink-2">${t.payment_method ? esc(methodLabels[t.payment_method] || t.payment_method) : '—'}</td>
             <td class="px-5 py-3 whitespace-nowrap text-sm font-bold text-right tabular-nums ${amtClass}">$${parseFloat(t.amount).toFixed(2)}</td>
+            <td class="px-3 py-3 whitespace-nowrap text-right">${t.category === 'transfer' ? '' : `<button aria-label="Edit this ${esc(t.type)}" onclick="openEditTxn(${t.id})" class="text-ink-3 hover:text-primary-600 text-sm"><i class="fas fa-pen"></i></button>`}</td>
         </tr>`;
     }).join('');
 }
 
-function openChargeModal() {
+var txnPicker = ChargePicker({
+    list: document.getElementById('txn-charge-list'),
+    amount: document.getElementById('txn-amount'),
+    summary: document.getElementById('txn-charge-summary'),
+    onChange: picker => {
+        // Every checked charge in one category: file the payment under it too.
+        const cat = picker.category();
+        if (cat) setCategory(cat);
+    },
+});
+let editingTxn = null;
+
+// Select a category, adding it for this form when it's one the dropdown
+// doesn't offer (late fee, or a legacy value) so an edit never drops it.
+function setCategory(value) {
+    const category = document.getElementById('txn-category');
+    if (!Array.from(category.options).some(option => option.value === value)) {
+        const option = new Option(value, value);
+        option.dataset.chargeOnly = 'true';
+        category.add(option);
+    }
+    category.value = value;
+}
+function resetTxnForm(type, editing) {
+    editingTxn = editing || null;
     document.getElementById('txn-form').reset();
-    resetOpenCharges();
+    document.querySelectorAll('#txn-category option[data-charge-only]').forEach(option => option.remove());
+    txnPicker.clear();
+    txnPicker.setFund(selectedFund());
     filterCategories(document.getElementById('txn-category'));
-    document.getElementById('txn-type').value = 'charge';
-    document.getElementById('txn-modal-title').textContent = 'Add Charge';
-    document.getElementById('txn-submit-btn').textContent = 'Add Charge';
-    document.getElementById('txn-submit-btn').className = 'px-4 py-2 rounded-xl bg-danger text-white text-sm font-bold hover:opacity-90 shadow-sm';
-    document.getElementById('method-field').style.display = 'none';
-    document.getElementById('apply-charge-field').classList.add('hidden');
-    document.getElementById('txn-method').removeAttribute('required');
+    const isPayment = type === 'payment';
+    document.getElementById('txn-type').value = type;
+    const noun = isPayment ? 'Payment' : 'Charge';
+    document.getElementById('txn-modal-title').textContent = (editing ? 'Edit ' : 'Add ') + noun;
+    document.getElementById('txn-submit-btn').textContent = editing ? 'Save Changes' : 'Add ' + noun;
+    document.getElementById('txn-submit-btn').className = 'px-4 py-2 rounded-xl text-white text-sm font-bold hover:opacity-90 shadow-sm ' + (isPayment ? 'bg-ok' : 'bg-danger');
+    document.getElementById('method-field').style.display = isPayment ? '' : 'none';
+    document.getElementById('apply-charge-field').classList.toggle('hidden', !isPayment);
+    if (isPayment) document.getElementById('txn-method').setAttribute('required', '');
+    else document.getElementById('txn-method').removeAttribute('required');
+    document.getElementById('txn-student').disabled = !!editing;
     document.getElementById('txn-date').value = new Date().toISOString().split('T')[0];
+}
+function openChargeModal() {
+    resetTxnForm('charge');
     document.getElementById('txn-modal').classList.remove('hidden');
 }
 function openPaymentModal() {
-    document.getElementById('txn-form').reset();
-    resetOpenCharges();
-    filterCategories(document.getElementById('txn-category'));
-    document.getElementById('txn-type').value = 'payment';
-    document.getElementById('txn-modal-title').textContent = 'Add Payment';
-    document.getElementById('txn-submit-btn').textContent = 'Add Payment';
-    document.getElementById('txn-submit-btn').className = 'px-4 py-2 rounded-xl bg-ok text-white text-sm font-bold hover:opacity-90 shadow-sm';
-    document.getElementById('method-field').style.display = '';
-    document.getElementById('apply-charge-field').classList.remove('hidden');
-    document.getElementById('txn-method').setAttribute('required', '');
-    document.getElementById('txn-date').value = new Date().toISOString().split('T')[0];
+    resetTxnForm('payment');
+    txnPicker.load(null);
+    document.getElementById('txn-modal').classList.remove('hidden');
+}
+function openEditTxn(id) {
+    const t = txnById[id];
+    if (!t) return;
+    resetTxnForm(t.type, t);
+    document.getElementById('txn-student').value = t.student_id;
+    document.getElementById('txn-amount').value = parseFloat(t.amount).toFixed(2);
+    document.getElementById('txn-date').value = t.transaction_date;
+    setCategory(t.category);
+    document.getElementById('txn-description').value = t.description || '';
+    if (t.type === 'payment') {
+        document.getElementById('txn-method').value = t.payment_method || '';
+        txnPicker.load(t.student_id, { excludePayment: t.id, preset: t.allocations, keepAmount: true });
+    }
     document.getElementById('txn-modal').classList.remove('hidden');
 }
 function closeTxnModal() { document.getElementById('txn-modal').classList.add('hidden'); }
 
-let openChargeRows = [];
-function resetOpenCharges() {
-    openChargeRows = [];
-    document.getElementById('txn-applied-charge').innerHTML = '<option value="">No specific charge</option>';
-    document.querySelectorAll('#txn-category option[data-charge-only]').forEach(option => option.remove());
-}
-document.getElementById('txn-student').addEventListener('change', loadOpenCharges);
-async function loadOpenCharges() {
-    const studentId = document.getElementById('txn-student').value;
-    const select = document.getElementById('txn-applied-charge');
-    resetOpenCharges();
-    if (!studentId || document.getElementById('txn-type').value !== 'payment') return;
-    try {
-        const res = await fetch(`/api/students/${studentId}/open-charges`);
-        if (!res.ok) throw new Error('Could not load charges');
-        const data = await res.json();
-        if (document.getElementById('txn-student').value !== studentId) return;
-        openChargeRows = data.charges.filter(charge => !selectedFund() || charge.fund === selectedFund());
-        for (const c of openChargeRows) {
-            const option = document.createElement('option');
-            option.value = c.id;
-            option.textContent = `${c.date} · ${c.description || c.category} · $${c.remaining.toFixed(2)} due (${c.fund})`;
-            select.appendChild(option);
-        }
-    } catch (err) { toast('Could not load open charges', false); }
-}
-function selectAppliedCharge() {
-    const id = Number(document.getElementById('txn-applied-charge').value);
-    const charge = openChargeRows.find(c => c.id === id);
-    if (!charge) return;
-    const category = document.getElementById('txn-category');
-    if (!Array.from(category.options).some(option => option.value === charge.category)) {
-        const option = new Option(charge.category, charge.category);
-        option.dataset.chargeOnly = 'true';
-        category.add(option);
-    }
-    category.value = charge.category;
-    document.getElementById('txn-amount').value = charge.remaining.toFixed(2);
-}
+document.getElementById('txn-student').addEventListener('change', () => {
+    if (document.getElementById('txn-type').value !== 'payment') return;
+    txnPicker.load(document.getElementById('txn-student').value);
+});
 
 async function saveTransaction(e) {
     e.preventDefault();
@@ -516,27 +546,38 @@ async function saveTransaction(e) {
     // charges (double-billing) or two payments (double-credit).
     const btn = e.target.querySelector('button[type="submit"]');
     if (btn.disabled) return;
-    btn.disabled = true;
     const txnType = document.getElementById('txn-type').value;
+    if (txnType === 'payment' && txnPicker.loading()) { toast('Charges are still loading. Try again in a second.', false); return; }
+    if (txnType === 'payment' && txnPicker.error()) { toast(txnPicker.error(), false); return; }
+    btn.disabled = true;
     const body = {
-        type: txnType,
-        student_id: parseInt(document.getElementById('txn-student').value),
         amount: document.getElementById('txn-amount').value,
         transaction_date: document.getElementById('txn-date').value,
         category: document.getElementById('txn-category').value,
-        payment_method: txnType === 'payment' ? document.getElementById('txn-method').value : null,
         description: document.getElementById('txn-description').value,
     };
-    if (txnType === 'payment') {
-        const charge = openChargeRows.find(c => c.id === Number(document.getElementById('txn-applied-charge').value));
-        if (charge) {
-            body.applied_charge_id = charge.id;
-            body.fund = charge.fund;
-        }
+    if (!editingTxn) {
+        body.type = txnType;
+        body.student_id = parseInt(document.getElementById('txn-student').value);
     }
+    if (txnType === 'payment') {
+        body.payment_method = document.getElementById('txn-method').value;
+        // Only send the split when the list really loaded. Leaving it out of
+        // an edit keeps the links the payment already has.
+        if (txnPicker.ready()) body.allocations = txnPicker.allocations();
+        // The checked charges decide the fund. With none checked, an edit
+        // keeps the payment's own fund (a Company payment filed as tuition
+        // must not drift to Studio) and a new payment follows its category.
+        const fund = txnPicker.fund() || (editingTxn ? editingTxn.fund : CATEGORY_FUND[body.category]);
+        if (fund) body.fund = fund;
+    }
+    const url = editingTxn ? `/api/transactions/${editingTxn.id}` : '/api/transactions';
     try {
-        const res = await fetch('/api/transactions', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
-        if (res.ok) { closeTxnModal(); loadBalances(); loadTransactions(); } else { const d = await res.json(); toast(d.error || 'Error', false); }
+        const res = await fetch(url, { method: editingTxn ? 'PUT' : 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
+        if (res.ok) {
+            closeTxnModal(); loadBalances(); loadTransactions();
+            if (editingTxn) toast('Saved', true);
+        } else { const d = await res.json().catch(() => ({})); toast(d.error || 'Error', false); }
     } catch (err) { toast('Network error', false); }
     finally { btn.disabled = false; }
 }
@@ -592,7 +633,7 @@ function renderRecurring(rules) {
     const ordinal = d => { const s = ['th','st','nd','rd']; const v = d % 100; return d + (s[(v-20)%10]||s[v]||s[0]); };
     tbody.innerHTML = active.map(r => `<tr class="border-b border-line last:border-0 hover:bg-surface-2">
         <td class="px-5 py-3 text-sm font-bold text-ink">${esc(r.class_name)}</td>
-        <td class="px-5 py-3 whitespace-nowrap"><span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-bold ${pillClass(r.category)}">${esc(r.category)}</span></td>
+        <td class="px-5 py-3 whitespace-nowrap"><span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-bold ${pillClass(r.category)}">${esc(catLabel(r.category))}</span></td>
         <td class="px-5 py-3 text-sm font-bold text-ink text-right tabular-nums">$${parseFloat(r.amount).toFixed(2)}</td>
         <td class="px-5 py-3 text-sm text-ink-2">${ordinal(r.day_of_month)} of every month</td>
         <td class="px-5 py-3"><span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-bold bg-ok/10 text-ok">Active</span></td>

@@ -37,6 +37,9 @@ CATEGORIES = [
     ('costume_rental', 'Costume Rental', COMPANY),
     ('company_dues', 'Company Dues', COMPANY),
     ('company_tickets', 'Company Tickets', COMPANY),
+    # Its own value, not 'other': 'other' is already a studio category and a
+    # category maps to exactly one fund.
+    ('company_other', 'Other', COMPANY),
 ]
 
 # Posted by the app, never picked from a form, and they exist in BOTH funds
