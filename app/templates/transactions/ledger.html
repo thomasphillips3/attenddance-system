@@ -110,7 +110,9 @@
                             <option value="paypal">PayPal</option>
                             <option value="venmo">Venmo</option>
                             <option value="card">Card</option>
+                            <option value="square">Square</option>
                             <option value="tap">Tap at Desk</option>
+                            <option value="other">Other</option>
                         </select>
                     </div>
                     <div>
@@ -233,7 +235,8 @@ async function loadLedger() {
         // only one with a balance due, otherwise Studio.
         const studioDue = parseFloat(data.funds.studio.balance) > 0;
         const companyDue = parseFloat(data.funds.company.balance) > 0;
-        document.getElementById('lp-fund').value = (companyDue && !studioDue) ? 'company' : 'studio';
+        ledgerDefaultFund = (companyDue && !studioDue) ? 'company' : 'studio';
+        document.getElementById('lp-fund').value = ledgerDefaultFund;
 
         renderLedger(data.ledger);
         renderCategoryBreakdown(data.by_category || {});
@@ -389,6 +392,9 @@ const ledgerPicker = ChargePicker({
     },
 });
 let ledgerEditing = null;
+// The fund Record Payment starts on (set by loadLedger). Kept apart from the
+// select because an edit overwrites the select with that row's fund.
+let ledgerDefaultFund = 'studio';
 document.getElementById('lp-fund').addEventListener('change', e => ledgerPicker.setFund(e.target.value));
 
 function setLedgerCategory(value) {
@@ -403,7 +409,7 @@ function setLedgerCategory(value) {
 // One modal for recording a payment and for editing a payment or a charge.
 function resetLedgerForm(type, editing) {
     ledgerEditing = editing || null;
-    const fund = editing ? editing.fund : document.getElementById('lp-fund').value;  // preselected by loadLedger
+    const fund = editing ? editing.fund : ledgerDefaultFund;
     document.getElementById('ledger-pay-form').reset();
     document.querySelectorAll('#lp-category option[data-charge-only]').forEach(option => option.remove());
     document.getElementById('lp-fund').value = fund;
@@ -445,6 +451,7 @@ async function saveLedgerPay(e) {
     const btn = e.target.querySelector('button[type="submit"]');
     if (btn.disabled) return;
     const isPayment = !ledgerEditing || ledgerEditing.type === 'payment';
+    if (isPayment && ledgerPicker.loading()) { toast('Charges are still loading. Try again in a second.', false); return; }
     if (isPayment && ledgerPicker.error()) { toast(ledgerPicker.error(), false); return; }
     btn.disabled = true;
     const body = {
@@ -456,7 +463,8 @@ async function saveLedgerPay(e) {
     if (isPayment) {
         body.payment_method = document.getElementById('lp-method').value;
         body.fund = document.getElementById('lp-fund').value;
-        body.allocations = ledgerPicker.allocations();
+        // Leaving the split out of an edit keeps the links it already has.
+        if (ledgerPicker.ready()) body.allocations = ledgerPicker.allocations();
     }
     if (!ledgerEditing) {
         body.type = 'payment';

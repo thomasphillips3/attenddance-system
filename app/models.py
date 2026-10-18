@@ -518,7 +518,9 @@ class PaymentAllocation(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
     payment = db.relationship('Transaction', foreign_keys=[payment_id], back_populates='allocations')
-    charge = db.relationship('Transaction', foreign_keys=[charge_id])
+    # joined: the ledger and billing list name every linked charge, so load it
+    # with the allocation instead of one SELECT per row.
+    charge = db.relationship('Transaction', foreign_keys=[charge_id], lazy='joined')
 
     def __repr__(self):
         return f'<PaymentAllocation ${self.amount} of payment {self.payment_id} to charge {self.charge_id}>'

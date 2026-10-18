@@ -12,7 +12,14 @@
     const FUND_NAMES = { studio: 'Studio', company: 'Company' };
     const money = n => '$' + Number(n).toFixed(2);
     const cents = v => Math.round((parseFloat(v) || 0) * 100);
-    function esc(str) { const d = document.createElement('div'); d.textContent = str == null ? '' : str; return d.innerHTML; }
+    // Escapes quotes too: descriptions land in attribute values (aria-label).
+    function esc(str) {
+        return String(str == null ? '' : str).replace(/[&<>"']/g, c =>
+            ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+    // The most that can be linked to a charge. Links outrank oldest-first
+    // money, so this can be more than what's left (see charge_remainders).
+    const room = c => (c.link_room === undefined ? c.remaining : c.link_room);
 
     // opts.list: element the rows render into
     // opts.amount: the payment amount <input>
@@ -24,6 +31,11 @@
         // While true the payment amount follows the sum of the checked parts.
         // Typing in the amount box switches that off.
         let autoAmount = true;
+        // 'idle' | 'loading' | 'ready' | 'failed'. Saving waits for 'ready' so
+        // an unfinished list never sends an empty split that unlinks charges.
+        let state = 'idle';
+        // Bumped by every load and clear; a response for an older load is dropped.
+        let loadSeq = 0;
 
         opts.amount.addEventListener('input', () => { autoAmount = false; refresh(); });
 
@@ -43,14 +55,14 @@
                 const pre = presetBy[c.id];
                 const fundTag = fundFilter ? '' : ` &middot; <span class="${c.fund === 'company' ? 'text-gold-ink font-bold' : ''}">${esc(FUND_NAMES[c.fund] || c.fund)}</span>`;
                 return `<div data-charge-row="${c.id}" class="flex items-center gap-3 px-3 py-2 border-b border-line last:border-0">
-                    <input type="checkbox" id="cp-${c.id}" class="h-4 w-4 accent-primary-500" ${pre !== undefined ? 'checked' : ''}>
+                    <input type="checkbox" id="cp-${c.id}" class="h-4 w-4 accent-primary-500" aria-label="Apply to ${esc(c.description || c.category)}" ${pre !== undefined ? 'checked' : ''}>
                     <label for="cp-${c.id}" class="flex-1 min-w-0 cursor-pointer">
                         <span class="block text-sm text-ink truncate">${esc(c.description || c.category)}</span>
-                        <span class="block text-xs text-ink-3 tabular-nums">${esc(c.date)} &middot; ${money(c.remaining)} left of ${money(c.amount)}${fundTag}</span>
+                        <span class="block text-xs text-ink-3 tabular-nums">${esc(c.date)} &middot; ${money(Math.max(c.remaining, 0))} left of ${money(c.amount)}${fundTag}</span>
                     </label>
                     <div class="relative w-28 shrink-0">
                         <span class="absolute inset-y-0 left-0 pl-2 flex items-center text-ink-3 text-sm pointer-events-none">$</span>
-                        <input type="number" step="0.01" min="0.01" max="${c.remaining.toFixed(2)}" aria-label="Amount toward ${esc(c.description || c.category)}"
+                        <input type="number" step="0.01" min="0.01" max="${room(c).toFixed(2)}" aria-label="Amount toward ${esc(c.description || c.category)}"
                             value="${pre !== undefined ? Number(pre).toFixed(2) : ''}" ${pre !== undefined ? '' : 'disabled'}
                             class="block w-full pl-5 pr-2 py-1.5 bg-surface border border-line-2 rounded-lg text-sm text-right tabular-nums disabled:bg-surface-2 disabled:text-ink-3 focus:outline-none focus:ring-2 focus:ring-primary-200">
                     </div>
@@ -66,8 +78,9 @@
                         // A typed payment amount caps what a newly checked charge
                         // takes, so $100 against a $200 charge fills in $100.
                         const free = autoAmount ? Infinity : (cents(opts.amount.value) - allocatedCents()) / 100;
-                        part.value = Math.max(0, Math.min(c.remaining, free)).toFixed(2);
-                        if (cents(part.value) === 0) part.value = c.remaining.toFixed(2);
+                        const owed = c.remaining > 0 ? c.remaining : room(c);
+                        part.value = Math.max(0, Math.min(owed, free)).toFixed(2);
+                        if (cents(part.value) === 0) part.value = owed.toFixed(2);
                     } else {
                         part.value = '';
                     }
@@ -100,7 +113,7 @@
             const err = picker.error();
             rows().forEach(row => {
                 const part = row.querySelector('input[type=number]');
-                const over = !part.disabled && cents(part.value) > Math.round(chargeFor(row).remaining * 100);
+                const over = !part.disabled && cents(part.value) > Math.round(room(chargeFor(row)) * 100);
                 part.classList.toggle('border-danger', over);
             });
             const total = cents(opts.amount.value);
@@ -122,23 +135,43 @@
         const picker = {
             // Fetch the open charges. excludePayment lists what each charge owed
             // before that payment, for editing it; preset re-checks its split.
+            // keepAmount: the amount box already holds a real amount (an edit),
+            // so don't let checked charges overwrite it. Switching dancers
+            // keeps whatever the person already typed.
             async load(studentId, { excludePayment = null, preset = [], keepAmount = false } = {}) {
+                const seq = ++loadSeq;
                 charges = [];
-                autoAmount = !keepAmount;
+                if (keepAmount) autoAmount = false;
+                if (!studentId) {
+                    state = 'idle';
+                    opts.list.innerHTML = '<p class="px-3 py-3 text-sm text-ink-3">Pick a dancer to see their charges.</p>';
+                    refresh();
+                    return;
+                }
+                state = 'loading';
                 opts.list.innerHTML = '<p class="px-3 py-3 text-sm text-ink-3">Loading charges...</p>';
-                if (!studentId) { opts.list.innerHTML = '<p class="px-3 py-3 text-sm text-ink-3">Pick a dancer to see their charges.</p>'; refresh(); return; }
-                const url = `/api/students/${studentId}/open-charges` + (excludePayment ? `?exclude_payment=${excludePayment}` : '');
+                const url = `/api/students/${encodeURIComponent(studentId)}/open-charges` + (excludePayment ? `?exclude_payment=${encodeURIComponent(excludePayment)}` : '');
+                let loaded;
                 try {
                     const res = await fetch(url);
                     if (!res.ok) throw new Error('Could not load charges');
-                    charges = (await res.json()).charges;
+                    loaded = (await res.json()).charges;
                 } catch (err) {
-                    opts.list.innerHTML = '<p class="px-3 py-3 text-sm text-danger">Could not load charges.</p>';
+                    if (seq !== loadSeq) return;
+                    state = 'failed';
+                    opts.list.innerHTML = '<p class="px-3 py-3 text-sm text-danger">Could not load charges. Close and reopen the form to try again.</p>';
                     return;
                 }
+                if (seq !== loadSeq) return;  // a newer load or a clear() won
+                charges = loaded;
+                state = 'ready';
                 render(preset);
             },
-            clear() { charges = []; autoAmount = true; opts.list.innerHTML = ''; opts.summary.innerHTML = ''; },
+            clear() { loadSeq++; state = 'idle'; charges = []; autoAmount = true; opts.list.innerHTML = ''; opts.summary.innerHTML = ''; },
+            // True once the charge list has loaded, so allocations() is the
+            // person's real choice and safe to send.
+            ready() { return state === 'ready'; },
+            loading() { return state === 'loading'; },
             setFund(fund) {
                 if (fund === fundFilter) return;
                 fundFilter = fund || '';
@@ -165,7 +198,7 @@
                     const c = chargeFor(row);
                     const part = cents(row.querySelector('input[type=number]').value);
                     if (part <= 0) return `Enter an amount for ${c.description || c.category}.`;
-                    if (part > Math.round(c.remaining * 100)) return `${c.description || c.category} has only ${money(c.remaining)} left.`;
+                    if (part > Math.round(room(c) * 100)) return `${c.description || c.category} has only ${money(room(c))} left.`;
                 }
                 const applied = allocatedCents();
                 const total = cents(opts.amount.value);

@@ -17,7 +17,7 @@ from werkzeug.utils import secure_filename
 
 from app import db, square_service
 from app.api import bp
-from app.funds import FUNDS, FUND_LABELS, fund_for_category, is_fund
+from app.funds import CATEGORY_FUND, FUNDS, FUND_LABELS, SYSTEM_CATEGORIES, fund_for_category, is_fund
 from app.helpers import (
     active_season,
     allocate_family_payment,
@@ -1427,16 +1427,19 @@ def _check_allocations(requested, student, fund, amount, exclude_payment_id=None
 
     Returns ([(charge, amount)], None) or (None, (json, status)). Every
     charge must be this student's, a charge, and in the payment's fund; no
-    charge twice; each part no more than what the charge still owes (not
-    counting the payment being edited); and the parts together no more than
-    the payment. Any amount left over stays unapplied and pays the oldest
-    open charges, which is the same as an unlinked payment."""
+    charge twice; and the parts together no more than the payment. Each
+    part is capped by the charge's link_room: its amount minus what OTHER
+    payments link to it. Oldest-first money doesn't count against that,
+    because a link takes priority and that money just moves on to the next
+    charge. That is what lets an old unlinked payment be edited to link the
+    charge it was already paying. Any amount left over stays unapplied and
+    pays the oldest open charges, the same as an unlinked payment."""
     if requested == 'invalid':
         return None, (jsonify({'error': 'allocations must be a list'}), 400)
     if not requested:
         return [], None
     rows = Transaction.query.filter_by(student_id=student.id, fund=fund).all()
-    owed = {c['id']: c['remaining']
+    room = {c['id']: c['link_room']
             for c in charge_remainders(rows, exclude_payment_id=exclude_payment_id)}
     picked, seen, total = [], set(), 0.0
     for item in requested:
@@ -1457,7 +1460,7 @@ def _check_allocations(requested, student, fund, amount, exclude_payment_id=None
         if charge.fund != fund:
             return None, (jsonify({'error': f'That charge is in the {FUND_LABELS[charge.fund]} account, '
                                             f'not {FUND_LABELS[fund]}'}), 400)
-        left = round(max(owed.get(charge_id, 0.0), 0.0), 2)
+        left = round(max(room.get(charge_id, 0.0), 0.0), 2)
         if part > left:
             label = charge.description or charge.category
             return None, (jsonify({'error': f'{label} has only ${left:.2f} left to pay'}), 400)
@@ -1469,13 +1472,16 @@ def _check_allocations(requested, student, fund, amount, exclude_payment_id=None
     return picked, None
 
 
-def _payment_fund(data, requested):
+def _payment_fund(data, requested, current=None):
     """Which fund a payment settles: an explicit fund wins, then the fund of
-    the charges it pays, then its category. (None, err) on a bad value."""
+    the charges it pays, then (on an edit) the fund it already has, then its
+    category. (None, err) on a bad value."""
     if data.get('fund') is not None:
         if not is_fund(data.get('fund')):
             return None, (jsonify({'error': 'fund must be studio or company'}), 400)
         return data['fund'], None
+    if current is not None and not (isinstance(requested, list) and requested):
+        return current, None
     if isinstance(requested, list) and requested:
         first = requested[0] if isinstance(requested[0], dict) else {}
         charge_id, err = _valid_id(first.get('charge_id'))
@@ -1604,11 +1610,25 @@ def _update_transaction_locked(tid):
         txn_date, err = _parse_txn_date(data.get('transaction_date'))
         if err:
             return err
+        # Auto-billing knows it billed a month by finding a charge dated in
+        # that month; moving one out would bill the family again on restart.
+        if t.recurring_charge_id and (txn_date.year, txn_date.month) != (
+                t.transaction_date.year, t.transaction_date.month):
+            return jsonify({'error': 'This charge came from auto-billing. Keep its date in '
+                                     f'{t.transaction_date:%B %Y}, or delete it and add a new charge.'}), 400
     category = t.category
     if 'category' in data:
         category = _clean_str(data.get('category'), 50)
         if not category:
             return jsonify({'error': 'category is required'}), 400
+        # A changed category must be a real one: an unknown string would
+        # quietly move the row to the studio fund. 'transfer' is only ever
+        # posted by a fund transfer, never picked. An unchanged legacy value
+        # is left alone.
+        if category != t.category and (category not in CATEGORY_FUND
+                                       and category not in SYSTEM_CATEGORIES
+                                       or category == 'transfer'):
+            return jsonify({'error': f'Unknown category: {category}'}), 400
     before = (f'{t.type} ${float(t.amount):.2f} {t.category} ({t.fund}) on {t.transaction_date}'
               + (f' via {t.payment_method}' if t.type == 'payment' else ''))
 
@@ -1633,13 +1653,14 @@ def _update_transaction_locked(tid):
             return jsonify({'error': 'payment_method is required for payments'}), 400
         requested = _requested_allocations(data, amount)
         if requested is None:
-            requested = [{'charge_id': a.charge_id, 'amount': float(a.amount)} for a in t.allocations]
-        if 'fund' in data:
-            fund, err = _payment_fund(data, requested)
-            if err:
-                return err
-        else:
-            fund = t.fund
+            # Keep the current split. Skip a link whose charge is gone so an
+            # orphan row can't make the payment uneditable.
+            requested = [{'charge_id': a.charge_id, 'amount': float(a.amount)}
+                         for a in t.allocations if a.charge is not None]
+        # A null or missing fund keeps the payment where it is.
+        fund, err = _payment_fund(data, requested, current=t.fund)
+        if err:
+            return err
         picked, err = _check_allocations(requested, t.student, fund, amount, exclude_payment_id=t.id)
         if err:
             return err
@@ -1674,14 +1695,19 @@ def _update_transaction_locked(tid):
 def open_charges(student_id):
     """Charges with money still owed. `exclude_payment=<id>` leaves that
     payment out, so the edit form lists what each charge owed before it -
-    including charges that payment fully paid."""
+    including charges that payment fully paid. Each charge also carries
+    link_room, the most that can be linked to it."""
     err = _admin_only()
     if err:
         return err
     Student.query.get_or_404(student_id)
     exclude = request.args.get('exclude_payment', type=int)
     rows = Transaction.query.filter_by(student_id=student_id).all()
-    charges = [c for c in charge_remainders(rows, exclude_payment_id=exclude) if c['remaining'] > 0]
+    # When editing, keep the charges that payment already links even if
+    # other money now covers them, so the form can show (and keep) its split.
+    linked = {a.charge_id for a in PaymentAllocation.query.filter_by(payment_id=exclude)} if exclude else set()
+    charges = [c for c in charge_remainders(rows, exclude_payment_id=exclude)
+               if (c['remaining'] > 0 or c['id'] in linked) and c['link_room'] > 0]
     return jsonify({'charges': [{**c, 'date': c['date'].isoformat()} for c in charges]})
 
 
@@ -2327,6 +2353,13 @@ def bulk_charge():
 @bp.route('/transactions/<int:tid>', methods=['DELETE'])
 @login_required
 def delete_transaction(tid):
+    # Same lock as create/update: a charge deleted between another request's
+    # allocation check and its commit would leave that allocation orphaned.
+    with _APPLIED_PAYMENT_LOCK:
+        return _delete_transaction_locked(tid)
+
+
+def _delete_transaction_locked(tid):
     """Delete a posted charge or payment (admin only) — the studio needs to fix
     a fat-fingered amount, wrong student, or duplicate entry. Hard delete, but
     audit-logged (the accountability trail) and any back-references from a

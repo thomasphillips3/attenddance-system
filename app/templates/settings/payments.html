@@ -451,10 +451,16 @@ async function loadSettings() {
     }
 }
 
-// Accept a pasted link ("https://paypal.me/Name/25") or just the name.
+// Accept a pasted link (paypal.me/Name/25 or paypal.com/paypalme/Name) or
+// just the name. A PayPal.me name is letters and digits, at most 20.
 function paypalName(id) {
-    return document.getElementById(id).value.trim()
-        .replace(/^(https?:\/\/)?(www\.)?paypal\.me\//i, '').split(/[/?#]/)[0];
+    const raw = document.getElementById(id).value.trim();
+    const link = raw.match(/paypal\.(?:me|com\/paypalme)\/([^/?#\s]+)/i);
+    const name = (link ? link[1] : raw).replace(/[^A-Za-z0-9]/g, '').slice(0, 20);
+    if (raw && (!name || (!link && /[^A-Za-z0-9]/.test(raw)))) {
+        toast("That PayPal.me name doesn't look right. Use just the name after paypal.me/.", false);
+    }
+    return name;
 }
 
 async function saveSettings() {

@@ -212,6 +212,8 @@ def _move_applied_charges_to_allocations(conn, inspector):
     amount over the charge's remainder). Each link becomes one allocation for
     the payment's whole amount, then the old column is cleared so this never
     runs twice for the same payment and nothing reads two sources of truth.
+    The allocation is capped at the charge amount in case old data ever
+    linked a payment bigger than its charge; the rest stays unapplied.
     The column stays in the table (SQLite can't drop it cheaply); fresh
     databases never get it, hence the column check."""
     columns = {c['name'] for c in inspector.get_columns('transactions')}
@@ -219,7 +221,7 @@ def _move_applied_charges_to_allocations(conn, inspector):
         return
     conn.execute(sqlalchemy.text(
         "INSERT INTO payment_allocations (payment_id, charge_id, amount, created_at) "
-        "SELECT p.id, p.applied_charge_id, p.amount, CURRENT_TIMESTAMP "
+        "SELECT p.id, p.applied_charge_id, MIN(p.amount, c.amount), CURRENT_TIMESTAMP "
         "FROM transactions p JOIN transactions c ON c.id = p.applied_charge_id "
         "WHERE p.type = 'payment' AND c.type = 'charge' AND c.student_id = p.student_id "
         "AND NOT EXISTS (SELECT 1 FROM payment_allocations a WHERE a.payment_id = p.id)"))

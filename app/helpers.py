@@ -55,8 +55,10 @@ def charge_remainders(txns: list, exclude_payment_id: int | None = None) -> list
     what a charge would owe without the payment being edited.
 
     Each dict: id, date, amount, remaining, linked_paid (paid through
-    allocations), category, description, fund. `remaining` can go negative
-    only if bad data over-allocates a charge; callers clamp for display.
+    allocations), link_room, category, description, fund. `remaining` can go
+    negative only if bad data over-allocates a charge; callers clamp for
+    display. `link_room` is how much more can be linked to the charge:
+    links take priority over oldest-first money, so it ignores FIFO.
     """
     ordered = sorted(txns, key=lambda t: (t.transaction_date, t.created_at or t.transaction_date))
     charges = [{'id': getattr(t, 'id', None), 'date': t.transaction_date,
@@ -90,6 +92,8 @@ def charge_remainders(txns: list, exclude_payment_id: int | None = None) -> list
         paid = min(max(c['remaining'], 0), unlinked[fund])
         c['remaining'] = round(c['remaining'] - paid, 2)
         unlinked[fund] = round(unlinked[fund] - paid, 2)
+    for c in charges:
+        c['link_room'] = round(c['amount'] - c['linked_paid'], 2)
     return charges
 
 
@@ -209,8 +213,13 @@ def build_ledger(txns: list) -> dict:
     totals = {fund: {'charges': 0.0, 'payments': 0.0} for fund in FUNDS}
     ledger = []
     cat_totals: dict[str, dict] = {}
-    # Per-charge payoff, so every charge row can say Paid / $X left.
-    remainders = {c['id']: c for c in charge_remainders(txns)}
+    # Per-charge payoff, so every charge row can say Paid / $X left. Worked
+    # out per dancer: a family ledger passes every sibling's rows, and one
+    # child's unlinked payment must not mark a sibling's charge paid.
+    by_student: dict = {}
+    for t in txns:
+        by_student.setdefault(t.student_id, []).append(t)
+    remainders = {c['id']: c for rows in by_student.values() for c in charge_remainders(rows)}
 
     for t in txns:
         amt = float(t.amount)

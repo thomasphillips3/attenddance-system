@@ -266,11 +266,77 @@ def test_company_other_and_paypal():
         assert b'paypal-name' in client.get('/settings').data
 
 
+def test_review_regressions():
+    """Holes the adversarial review found, each pinned."""
+    from app.models import ClassEnrollment, DanceClass, Family, RecurringCharge  # noqa: F401
+    with app.app_context():
+        fam = Family(name='Review family')
+        db.session.add(fam)
+        db.session.flush()
+        a = Student(first_name='Sib', last_name='A', family_id=fam.id)
+        b = Student(first_name='Sib', last_name='B', family_id=fam.id)
+        c = Student(first_name='Solo', last_name='C')
+        db.session.add_all([a, b, c])
+        db.session.flush()
+        b_charge = _charge(b.id, '100.00', 'tuition', 'studio', 'B tuition')
+        db.session.add(Transaction(student_id=a.id, type='payment', amount='100.00', category='tuition',
+                                   fund='studio', payment_method='cash', transaction_date=date(2026, 9, 2)))
+        # C: an old unlinked payment already paying a charge oldest-first.
+        c_charge = _charge(c.id, '80.00', 'tuition', 'studio', 'C tuition', date(2026, 8, 1))
+        c_pay = Transaction(student_id=c.id, type='payment', amount='80.00', category='tuition',
+                            fund='studio', payment_method='zelle', transaction_date=date(2026, 8, 5))
+        co_pay = Transaction(student_id=c.id, type='payment', amount='25.00', category='tuition',
+                             fund='company', payment_method='cash', transaction_date=date(2026, 8, 6))
+        dues = _charge(c.id, '30.00', 'company_dues', 'company', 'Dues')
+        rc_charge = _charge(c.id, '50.00', 'tuition', 'studio', 'Auto tuition', date(2026, 10, 1))
+        db.session.add_all([c_pay, co_pay])
+        db.session.flush()
+        rc_charge.recurring_charge_id = 999
+        db.session.commit()
+        ids = dict(fam=fam.id, b_charge=b_charge.id, c=c.id, c_charge=c_charge.id, c_pay=c_pay.id,
+                   co_pay=co_pay.id, dues=dues.id, rc=rc_charge.id)
+
+    with app.test_client() as client:
+        _login(client)
+        # 1. A sibling's unlinked payment must not mark B's charge paid.
+        rows = client.get(f"/api/families/{ids['fam']}/ledger").get_json()['ledger']
+        assert {r['id']: r.get('remaining') for r in rows}[ids['b_charge']] == '100.00', rows
+
+        # Editing an old unlinked payment to link the charge it already pays.
+        listed = client.get(f"/api/students/{ids['c']}/open-charges?exclude_payment={ids['c_pay']}").get_json()['charges']
+        assert ids['c_charge'] in {x['id'] for x in listed}
+        r = client.put(f"/api/transactions/{ids['c_pay']}",
+                       json={'allocations': [{'charge_id': ids['c_charge'], 'amount': '80.00'}]})
+        assert r.status_code == 200, r.get_json()
+        # ...and editing it again keeps that link listed even though it's paid.
+        listed = client.get(f"/api/students/{ids['c']}/open-charges?exclude_payment={ids['c_pay']}").get_json()['charges']
+        assert ids['c_charge'] in {x['id'] for x in listed}
+        r = client.put(f"/api/transactions/{ids['c_pay']}", json={'description': 'still linked'})
+        assert r.status_code == 200 and len(r.get_json()['allocations']) == 1
+
+        # 2. A changed category must be real; transfer can't be picked.
+        for bad in ('Company Dues', 'typo', 'transfer'):
+            assert client.put(f"/api/transactions/{ids['dues']}", json={'category': bad}).status_code == 400, bad
+        r = client.put(f"/api/transactions/{ids['dues']}", json={'category': 'company_other'})
+        assert r.status_code == 200 and r.get_json()['fund'] == 'company'
+
+        # 4. A null fund keeps a Company payment in the Company fund.
+        r = client.put(f"/api/transactions/{ids['co_pay']}", json={'fund': None, 'amount': '20.00'})
+        assert r.status_code == 200 and r.get_json()['fund'] == 'company', r.get_json()
+
+        # 5. An auto-billed charge can't leave its month.
+        assert client.put(f"/api/transactions/{ids['rc']}",
+                          json={'transaction_date': '2026-09-30'}).status_code == 400
+        assert client.put(f"/api/transactions/{ids['rc']}",
+                          json={'transaction_date': '2026-10-20'}).status_code == 200
+
+
 if __name__ == '__main__':
     try:
         test_allocations_and_edits()
         test_legacy_links_migrate()
         test_company_other_and_paypal()
+        test_review_regressions()
         print('Applied payment tests passed')
     finally:
         os.unlink(db_file.name)

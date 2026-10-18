@@ -159,7 +159,9 @@
                             <option value="cashapp">Cash App</option>
                             <option value="paypal">PayPal</option>
                             <option value="card">Credit/Debit Card</option>
+                            <option value="square">Square</option>
                             <option value="tap">Tap at Desk</option>
+                            <option value="other">Other</option>
                         </select>
                     </div>
                     <div id="apply-charge-field" class="col-span-2 hidden">
@@ -545,6 +547,7 @@ async function saveTransaction(e) {
     const btn = e.target.querySelector('button[type="submit"]');
     if (btn.disabled) return;
     const txnType = document.getElementById('txn-type').value;
+    if (txnType === 'payment' && txnPicker.loading()) { toast('Charges are still loading. Try again in a second.', false); return; }
     if (txnType === 'payment' && txnPicker.error()) { toast(txnPicker.error(), false); return; }
     btn.disabled = true;
     const body = {
@@ -559,9 +562,13 @@ async function saveTransaction(e) {
     }
     if (txnType === 'payment') {
         body.payment_method = document.getElementById('txn-method').value;
-        body.allocations = txnPicker.allocations();
-        // The checked charges decide the fund; with none checked the category does.
-        const fund = txnPicker.fund() || CATEGORY_FUND[body.category];
+        // Only send the split when the list really loaded. Leaving it out of
+        // an edit keeps the links the payment already has.
+        if (txnPicker.ready()) body.allocations = txnPicker.allocations();
+        // The checked charges decide the fund. With none checked, an edit
+        // keeps the payment's own fund (a Company payment filed as tuition
+        // must not drift to Studio) and a new payment follows its category.
+        const fund = txnPicker.fund() || (editingTxn ? editingTxn.fund : CATEGORY_FUND[body.category]);
         if (fund) body.fund = fund;
     }
     const url = editingTxn ? `/api/transactions/${editingTxn.id}` : '/api/transactions';
