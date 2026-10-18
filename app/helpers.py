@@ -42,11 +42,25 @@ def build_aging(txns: list, as_of: date | None = None) -> dict:
     return buckets
 
 
-def charge_remainders(txns: list) -> list[dict]:
-    """Apply linked payments to their charge, then unlinked payments FIFO."""
+def charge_remainders(txns: list, exclude_payment_id: int | None = None) -> list[dict]:
+    """What is still owed on each charge, oldest first.
+
+    Each payment first pays the charges its allocations name, by the amount
+    on each allocation. Whatever part of a payment is not allocated (an
+    unlinked payment, or the change left over from a linked one) pays the
+    oldest open charges in the payment's own fund (FIFO, the standard AR
+    method), so the funds never cross.
+
+    `exclude_payment_id` leaves one payment out, so the edit form can show
+    what a charge would owe without the payment being edited.
+
+    Each dict: id, date, amount, remaining, linked_paid (paid through
+    allocations), category, description, fund. `remaining` can go negative
+    only if bad data over-allocates a charge; callers clamp for display.
+    """
     ordered = sorted(txns, key=lambda t: (t.transaction_date, t.created_at or t.transaction_date))
     charges = [{'id': getattr(t, 'id', None), 'date': t.transaction_date,
-                'amount': float(t.amount), 'remaining': float(t.amount),
+                'amount': float(t.amount), 'remaining': float(t.amount), 'linked_paid': 0.0,
                 'category': getattr(t, 'category', None),
                 'description': getattr(t, 'description', None),
                 'fund': getattr(t, 'fund', None)} for t in ordered if t.type == 'charge']
@@ -55,12 +69,20 @@ def charge_remainders(txns: list) -> list[dict]:
     for t in ordered:
         if t.type != 'payment':
             continue
-        target = by_id.get(getattr(t, 'applied_charge_id', None))
-        if target is not None:
-            target['remaining'] = round(target['remaining'] - float(t.amount), 2)
-        else:
+        if exclude_payment_id is not None and getattr(t, 'id', None) == exclude_payment_id:
+            continue
+        leftover = float(t.amount)
+        for a in getattr(t, 'allocations', None) or []:
+            target = by_id.get(a.charge_id)
+            if target is None:
+                continue
+            amt = float(a.amount)
+            target['remaining'] = round(target['remaining'] - amt, 2)
+            target['linked_paid'] = round(target['linked_paid'] + amt, 2)
+            leftover -= amt
+        if leftover > 0.004:
             fund = getattr(t, 'fund', None)
-            unlinked[fund] = unlinked.get(fund, 0.0) + float(t.amount)
+            unlinked[fund] = round(unlinked.get(fund, 0.0) + leftover, 2)
     for c in charges:
         fund = c['fund']
         if unlinked.get(fund, 0) <= 0:
@@ -187,6 +209,8 @@ def build_ledger(txns: list) -> dict:
     totals = {fund: {'charges': 0.0, 'payments': 0.0} for fund in FUNDS}
     ledger = []
     cat_totals: dict[str, dict] = {}
+    # Per-charge payoff, so every charge row can say Paid / $X left.
+    remainders = {c['id']: c for c in charge_remainders(txns)}
 
     for t in txns:
         amt = float(t.amount)
@@ -200,19 +224,25 @@ def build_ledger(txns: list) -> dict:
             totals[fund]['payments'] += amt
 
         # Per-category tracking; a category is filed under the fund its rows
-        # carry (the map decides that on write, so the two agree).
-        cat = t.category
-        if cat not in cat_totals:
-            cat_totals[cat] = {'charges': 0.0, 'payments': 0.0, 'fund': fund}
-        if is_charge:
-            cat_totals[cat]['charges'] += amt
-        else:
-            cat_totals[cat]['payments'] += amt
+        # carry (the map decides that on write, so the two agree). A linked
+        # payment counts toward the categories of the charges it paid, so a
+        # tuition-coded payment that also paid registration clears
+        # registration; only its unlinked rest counts under its own category.
+        parts = [(t.category, amt)]
+        if not is_charge and t.allocations:
+            parts = [(a.charge.category, float(a.amount)) for a in t.allocations if a.charge]
+            rest = round(amt - sum(p for _, p in parts), 2)
+            if rest > 0:
+                parts.append((t.category, rest))
+        for cat, part in parts:
+            if cat not in cat_totals:
+                cat_totals[cat] = {'charges': 0.0, 'payments': 0.0, 'fund': fund}
+            cat_totals[cat]['charges' if is_charge else 'payments'] += part
 
-        ledger.append({
-            **transaction_to_dict(t),
-            'running_balance': f'{running[fund]:.2f}',
-        })
+        row = {**transaction_to_dict(t), 'running_balance': f'{running[fund]:.2f}'}
+        if is_charge and t.id in remainders:
+            row['remaining'] = f"{max(remainders[t.id]['remaining'], 0):.2f}"
+        ledger.append(row)
 
     by_category = {}
     for cat in sorted(cat_totals):
@@ -612,9 +642,14 @@ def transaction_to_dict(t) -> dict:
         'category': t.category,
         'fund': t.fund,
         'payment_method': t.payment_method if t.payment_method != 'n/a' else None,
-        'applied_charge_id': t.applied_charge_id,
-        'applied_charge_description': (t.applied_charge.description or t.applied_charge.category)
-                                      if t.applied_charge else None,
+        # Which charges a payment was split across. Empty for charges and for
+        # payments that just pay the oldest charges first.
+        'allocations': [{
+            'charge_id': a.charge_id,
+            'amount': f'{float(a.amount):.2f}',
+            'charge_description': (a.charge.description or a.charge.category) if a.charge else None,
+            'charge_date': a.charge.transaction_date.isoformat() if a.charge else None,
+        } for a in t.allocations] if t.type == 'payment' else [],
         'description': t.description,
         'transaction_date': t.transaction_date.isoformat(),
         'created_by': t.creator.full_name if t.creator else None,

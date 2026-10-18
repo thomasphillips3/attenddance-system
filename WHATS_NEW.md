@@ -1,5 +1,15 @@
 # What's New in AttenDANCE
 
+## Billing fixes (October 2026)
+
+- **One payment, several charges.** Check every charge a payment covers. Change an amount to pay part of a charge, like $100 toward a $200 costume.
+- **See what's cleared.** On the ledger, each charge shows Paid with a check, or what's left. Linked payments show a check and list the charges they paid.
+- **Edit instead of delete.** Click the pencil on a payment or charge to fix the amount, date, method, or linked charges. Every edit is in the Audit Log.
+- **Other** is now a Company charge category.
+- **PayPal.** Turn on PayPal in Payment Methods for the studio, the Company, or both. Parents get a PayPal.me link with the amount filled in.
+
+---
+
 ## Tap-In: tag check-in (October 2026)
 
 Dancers can tap a key fob or card on a staff phone to check in and out. No more calling roll at the door.

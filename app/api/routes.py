@@ -59,6 +59,7 @@ from app.models import (
     Message,
     MessageAttachment,
     ParentStudent,
+    PaymentAllocation,
     PaymentPlan,
     PaymentPlanInstallment,
     PendingPayment,
@@ -1375,8 +1376,22 @@ def get_transactions():
     query = query.order_by(desc(Transaction.transaction_date), desc(Transaction.created_at))
     pagination = query.paginate(page=page, per_page=per_page, error_out=False)
 
+    # Paid / $X left for each charge on this page. A charge's payoff depends on
+    # all of that student's rows, not just the ones on this page.
+    rows = [transaction_to_dict(t) for t in pagination.items]
+    charge_students = {t.student_id for t in pagination.items if t.type == 'charge'}
+    if charge_students:
+        by_student = {}
+        for t in Transaction.query.filter(Transaction.student_id.in_(charge_students)).all():
+            by_student.setdefault(t.student_id, []).append(t)
+        remaining = {c['id']: max(c['remaining'], 0)
+                     for txns in by_student.values() for c in charge_remainders(txns)}
+        for row in rows:
+            if row['type'] == 'charge' and row['id'] in remaining:
+                row['remaining'] = f"{remaining[row['id']]:.2f}"
+
     return jsonify({
-        'transactions': [transaction_to_dict(t) for t in pagination.items],
+        'transactions': rows,
         'pagination': {
             'page': page,
             'pages': pagination.pages,
@@ -1386,15 +1401,97 @@ def get_transactions():
     })
 
 
+# One Gunicorn worker serves requests in several threads. Every write that
+# checks what a charge still owes and then allocates against it holds this
+# lock, so two requests can't both spend the same remainder.
 _APPLIED_PAYMENT_LOCK = threading.Lock()
+
+
+def _requested_allocations(data, amount):
+    """The [{'charge_id', 'amount'}] the client asked for, or None when the
+    payload doesn't mention allocations at all (so an edit that leaves them
+    out keeps the existing split). `applied_charge_id` is the older
+    single-charge shape: it allocates the whole payment to that one charge."""
+    if 'allocations' in data:
+        raw = data.get('allocations')
+        return raw if isinstance(raw, list) else 'invalid'
+    if 'applied_charge_id' in data:
+        if data['applied_charge_id'] in (None, ''):
+            return []
+        return [{'charge_id': data['applied_charge_id'], 'amount': amount}]
+    return None
+
+
+def _check_allocations(requested, student, fund, amount, exclude_payment_id=None):
+    """Validate a payment's split across charges.
+
+    Returns ([(charge, amount)], None) or (None, (json, status)). Every
+    charge must be this student's, a charge, and in the payment's fund; no
+    charge twice; each part no more than what the charge still owes (not
+    counting the payment being edited); and the parts together no more than
+    the payment. Any amount left over stays unapplied and pays the oldest
+    open charges, which is the same as an unlinked payment."""
+    if requested == 'invalid':
+        return None, (jsonify({'error': 'allocations must be a list'}), 400)
+    if not requested:
+        return [], None
+    rows = Transaction.query.filter_by(student_id=student.id, fund=fund).all()
+    owed = {c['id']: c['remaining']
+            for c in charge_remainders(rows, exclude_payment_id=exclude_payment_id)}
+    picked, seen, total = [], set(), 0.0
+    for item in requested:
+        if not isinstance(item, dict):
+            return None, (jsonify({'error': 'Each allocation needs a charge_id and an amount'}), 400)
+        charge_id, err = _valid_id(item.get('charge_id'))
+        if err:
+            return None, err
+        part, err = _valid_amount(item.get('amount'))
+        if err:
+            return None, err
+        if charge_id in seen:
+            return None, (jsonify({'error': 'A charge is listed twice'}), 400)
+        seen.add(charge_id)
+        charge = db.session.get(Transaction, charge_id)
+        if not charge or charge.type != 'charge' or charge.student_id != student.id:
+            return None, (jsonify({'error': 'Charge not found for this student'}), 400)
+        if charge.fund != fund:
+            return None, (jsonify({'error': f'That charge is in the {FUND_LABELS[charge.fund]} account, '
+                                            f'not {FUND_LABELS[fund]}'}), 400)
+        left = round(max(owed.get(charge_id, 0.0), 0.0), 2)
+        if part > left:
+            label = charge.description or charge.category
+            return None, (jsonify({'error': f'{label} has only ${left:.2f} left to pay'}), 400)
+        picked.append((charge, part))
+        total = round(total + part, 2)
+    if total > amount:
+        return None, (jsonify({'error': f'The charges add up to ${total:.2f}, more than the '
+                                        f'${amount:.2f} payment'}), 400)
+    return picked, None
+
+
+def _payment_fund(data, requested):
+    """Which fund a payment settles: an explicit fund wins, then the fund of
+    the charges it pays, then its category. (None, err) on a bad value."""
+    if data.get('fund') is not None:
+        if not is_fund(data.get('fund')):
+            return None, (jsonify({'error': 'fund must be studio or company'}), 400)
+        return data['fund'], None
+    if isinstance(requested, list) and requested:
+        first = requested[0] if isinstance(requested[0], dict) else {}
+        charge_id, err = _valid_id(first.get('charge_id'))
+        charge = db.session.get(Transaction, charge_id) if not err else None
+        if charge is not None and charge.type == 'charge':
+            return charge.fund, None
+    return fund_for_category(data.get('category')), None
+
+
+def _allocation_note(picked):
+    return ', '.join(f'${part:.2f} to charge #{charge.id}' for charge, part in picked)
 
 
 @bp.route('/transactions', methods=['POST'])
 @login_required
 def create_transaction():
-    # One Gunicorn worker serves requests in multiple threads. Keep the
-    # remaining-charge check and payment insert together so two requests cannot
-    # both claim the same remainder.
     with _APPLIED_PAYMENT_LOCK:
         return _create_transaction_locked()
 
@@ -1421,34 +1518,28 @@ def _create_transaction_locked():
     txn_date, err = _parse_txn_date(data.get('transaction_date'))
     if err:
         return err
-    # A charge's fund follows its category; a payment names the balance it
-    # settles. An explicit fund wins either way, anything else is rejected so a
-    # typo can't quietly file Company money as studio money.
-    if data.get('fund') is not None and not is_fund(data.get('fund')):
-        return jsonify({'error': 'fund must be studio or company'}), 400
-    fund = fund_for_category(data['category'], data.get('fund'))
 
     student = Student.query.get(data['student_id'])
     if not student:
         return jsonify({'error': 'Student not found'}), 404
 
-    applied_charge_id = None
-    if data.get('applied_charge_id') not in (None, ''):
-        if txn_type != 'payment':
-            return jsonify({'error': 'Only payments can be applied to a charge'}), 400
-        applied_charge_id, err = _valid_id(data['applied_charge_id'])
+    requested = _requested_allocations(data, amount) if txn_type == 'payment' else None
+    if txn_type == 'charge' and (data.get('allocations') or data.get('applied_charge_id')):
+        return jsonify({'error': 'Only payments can be applied to a charge'}), 400
+    # A charge's fund follows its category; a payment names the balance it
+    # settles. An explicit fund wins either way, anything else is rejected so a
+    # typo can't quietly file Company money as studio money.
+    if txn_type == 'payment':
+        fund, err = _payment_fund(data, requested)
         if err:
             return err
-        charge = Transaction.query.get(applied_charge_id)
-        if not charge or charge.type != 'charge' or charge.student_id != student.id:
-            return jsonify({'error': 'Charge not found for this student'}), 400
-        if charge.fund != fund or charge.category != data['category']:
-            return jsonify({'error': 'Payment fund and category must match the charge'}), 400
-        rows = Transaction.query.filter_by(student_id=student.id, fund=fund).all()
-        remainder = next((c['remaining'] for c in charge_remainders(rows)
-                          if c['id'] == charge.id), 0)
-        if float(amount) > round(remainder, 2):
-            return jsonify({'error': f'Charge has only ${max(remainder, 0):.2f} remaining'}), 400
+    else:
+        if data.get('fund') is not None and not is_fund(data.get('fund')):
+            return jsonify({'error': 'fund must be studio or company'}), 400
+        fund = fund_for_category(data['category'], data.get('fund'))
+    picked, err = _check_allocations(requested, student, fund, amount)
+    if err:
+        return err
 
     try:
         t = Transaction(
@@ -1460,16 +1551,16 @@ def _create_transaction_locked():
             payment_method=data.get('payment_method') or 'n/a',
             description=_clean_str(data.get('description')) or None,
             transaction_date=txn_date,
-            applied_charge_id=applied_charge_id,
             created_by=current_user.id,
         )
+        t.allocations = [PaymentAllocation(charge_id=charge.id, amount=part) for charge, part in picked]
         db.session.add(t)
         # Log money creation to the audit trail, same as deletion/confirmation -
         # otherwise the trail shows who *removed* a charge but not who *posted* one
         # (matters since staff, not only admins, can post charges).
         AuditLog.record(current_user.id, 'transaction.create',
                         f'{txn_type} ${float(amount):.2f} {data["category"]} ({fund}) for {student.full_name}'
-                        + (f' applied to charge #{applied_charge_id}' if applied_charge_id else ''))
+                        + (f' applied {_allocation_note(picked)}' if picked else ''))
         db.session.commit()
         return jsonify(transaction_to_dict(t)), 201
     except Exception:
@@ -1478,15 +1569,119 @@ def _create_transaction_locked():
         return jsonify({'error': 'An internal error occurred'}), 500
 
 
+@bp.route('/transactions/<int:tid>', methods=['PUT'])
+@login_required
+def update_transaction(tid):
+    """Fix a posted charge or payment in place (admin only), instead of
+    deleting it and typing it in again. Type and student never change; fund
+    transfer legs are a matched pair and are not editable one side at a time.
+    The old and new values go to the audit log."""
+    with _APPLIED_PAYMENT_LOCK:
+        return _update_transaction_locked(tid)
+
+
+def _update_transaction_locked(tid):
+    err = _admin_only()
+    if err:
+        return err
+    t = Transaction.query.get_or_404(tid)
+    data = request.get_json()
+    if not data:
+        return jsonify({'error': 'No data provided'}), 400
+    if t.category == 'transfer':
+        return jsonify({'error': 'A fund transfer is two matched entries. Delete it and move the money again.'}), 400
+    for field in ('type', 'student_id'):
+        if field in data and str(data[field]) != str(getattr(t, field)):
+            return jsonify({'error': f'{field} can\'t be changed. Delete this entry and add a new one.'}), 400
+
+    amount = float(t.amount)
+    if 'amount' in data:
+        amount, err = _valid_amount(data.get('amount'))
+        if err:
+            return err
+    txn_date = t.transaction_date
+    if 'transaction_date' in data:
+        txn_date, err = _parse_txn_date(data.get('transaction_date'))
+        if err:
+            return err
+    category = t.category
+    if 'category' in data:
+        category = _clean_str(data.get('category'), 50)
+        if not category:
+            return jsonify({'error': 'category is required'}), 400
+    before = (f'{t.type} ${float(t.amount):.2f} {t.category} ({t.fund}) on {t.transaction_date}'
+              + (f' via {t.payment_method}' if t.type == 'payment' else ''))
+
+    if t.type == 'charge':
+        if data.get('allocations') or data.get('applied_charge_id'):
+            return jsonify({'error': 'Only payments can be applied to a charge'}), 400
+        if data.get('fund') is not None and not is_fund(data.get('fund')):
+            return jsonify({'error': 'fund must be studio or company'}), 400
+        fund = fund_for_category(category, data.get('fund') if 'fund' in data else
+                                 (t.fund if category == t.category else None))
+        linked = PaymentAllocation.query.filter_by(charge_id=t.id).all()
+        linked_total = round(sum(float(a.amount) for a in linked), 2)
+        if linked and fund != t.fund:
+            return jsonify({'error': 'Payments are linked to this charge, so it can\'t move to the '
+                                     f'{FUND_LABELS[fund]} account. Unlink them first.'}), 400
+        if amount < linked_total:
+            return jsonify({'error': f'Linked payments already cover ${linked_total:.2f} of this charge. '
+                                     'Lower or unlink those first.'}), 400
+        picked = None
+    else:
+        if 'payment_method' in data and not data.get('payment_method'):
+            return jsonify({'error': 'payment_method is required for payments'}), 400
+        requested = _requested_allocations(data, amount)
+        if requested is None:
+            requested = [{'charge_id': a.charge_id, 'amount': float(a.amount)} for a in t.allocations]
+        if 'fund' in data:
+            fund, err = _payment_fund(data, requested)
+            if err:
+                return err
+        else:
+            fund = t.fund
+        picked, err = _check_allocations(requested, t.student, fund, amount, exclude_payment_id=t.id)
+        if err:
+            return err
+
+    try:
+        t.amount = amount
+        t.transaction_date = txn_date
+        t.category = category
+        t.fund = fund
+        if 'description' in data:
+            t.description = _clean_str(data.get('description')) or None
+        if t.type == 'payment':
+            if 'payment_method' in data:
+                t.payment_method = _clean_str(data.get('payment_method'), 50)
+            t.allocations = [PaymentAllocation(charge_id=charge.id, amount=part) for charge, part in picked]
+        after = (f'{t.type} ${float(amount):.2f} {t.category} ({t.fund}) on {t.transaction_date}'
+                 + (f' via {t.payment_method}' if t.type == 'payment' else '')
+                 + (f' applied {_allocation_note(picked)}' if picked else ''))
+        AuditLog.record(current_user.id, 'transaction.update',
+                        f'#{t.id} for {t.student.full_name if t.student else t.student_id}: '
+                        f'{before} -> {after}')
+        db.session.commit()
+        return jsonify(transaction_to_dict(t))
+    except Exception:
+        db.session.rollback()
+        logger.exception("Failed to update transaction")
+        return jsonify({'error': 'An internal error occurred'}), 500
+
+
 @bp.route('/students/<int:student_id>/open-charges', methods=['GET'])
 @login_required
 def open_charges(student_id):
+    """Charges with money still owed. `exclude_payment=<id>` leaves that
+    payment out, so the edit form lists what each charge owed before it -
+    including charges that payment fully paid."""
     err = _admin_only()
     if err:
         return err
     Student.query.get_or_404(student_id)
+    exclude = request.args.get('exclude_payment', type=int)
     rows = Transaction.query.filter_by(student_id=student_id).all()
-    charges = [c for c in charge_remainders(rows) if c['remaining'] > 0]
+    charges = [c for c in charge_remainders(rows, exclude_payment_id=exclude) if c['remaining'] > 0]
     return jsonify({'charges': [{**c, 'date': c['date'].isoformat()} for c in charges]})
 
 
@@ -2148,9 +2343,10 @@ def delete_transaction(tid):
         {'transaction_id': None}, synchronize_session=False)
     CostumeAssignment.query.filter_by(transaction_id=t.id).update(
         {'transaction_id': None}, synchronize_session=False)
-    if t.type == 'charge':
-        Transaction.query.filter_by(applied_charge_id=t.id).update(
-            {'applied_charge_id': None}, synchronize_session=False)
+    # A deleted charge frees whatever payments were split onto it: that money
+    # becomes unapplied and pays the oldest open charges, like any payment.
+    # A deleted payment's own allocations go with it (relationship cascade).
+    PaymentAllocation.query.filter_by(charge_id=t.id).delete(synchronize_session=False)
     db.session.delete(t)
     AuditLog.record(current_user.id, 'transaction.delete', detail)
     db.session.commit()
@@ -3347,6 +3543,7 @@ def deactivate_location(location_id):
 PAYMENT_SETTINGS_KEYS = [
     'payments_zelle_enabled', 'payments_zelle_name', 'payments_zelle_memo',
     'payments_cashapp_enabled', 'payments_cashapp_tag',
+    'payments_paypal_enabled', 'payments_paypal_username',
     'payments_square_enabled', 'payments_square_access_token',
     'payments_square_location_id', 'payments_square_environment',
     'payments_square_webhook_signature_key', 'payments_square_link',
@@ -3355,6 +3552,7 @@ PAYMENT_SETTINGS_KEYS = [
     # keys under a company_ prefix; no Square API token for this fund.
     'company_payments_zelle_enabled', 'company_payments_zelle_name', 'company_payments_zelle_memo',
     'company_payments_cashapp_enabled', 'company_payments_cashapp_tag',
+    'company_payments_paypal_enabled', 'company_payments_paypal_username',
     'company_payments_square_enabled', 'company_payments_square_link',
     # SMS / Twilio
     'sms_enabled', 'sms_twilio_sid', 'sms_twilio_token', 'sms_from_number',
@@ -3645,6 +3843,15 @@ def _options_for_fund(fund):
             'cashtag': tag,
             'url': f'https://cash.app/${tag}' if tag else '',
         })
+    if Setting.get_bool(prefix + 'paypal_enabled'):
+        # A PayPal.me name is letters and digits; strip anything else for the
+        # same reason as the cashtag above.
+        name = re.sub(r'[^A-Za-z0-9]', '', Setting.get(prefix + 'paypal_username', ''))[:20]
+        options.append({
+            'type': 'paypal',
+            'username': name,
+            'url': f'https://paypal.me/{name}' if name else '',
+        })
     if Setting.get_bool(prefix + 'square_enabled'):
         # Re-validate on the way out, not just on write: this URL goes straight
         # into an href on the parent portal, and a value that bypassed the PUT
@@ -3688,7 +3895,7 @@ def get_audit_log():
 
 # ── Pending payment (reconciliation) endpoints ──────────────────────
 
-VALID_PAYMENT_METHODS = {'zelle', 'cashapp', 'square', 'cash', 'venmo', 'other'}
+VALID_PAYMENT_METHODS = {'zelle', 'cashapp', 'paypal', 'square', 'cash', 'venmo', 'other'}
 STUDIO_NAME = "LaShelle's School of Dance"
 
 
@@ -3737,8 +3944,8 @@ def _send_receipt(parent_email, who, amount, method, fund='studio'):
     from app import email as email_service
     if not email_service.is_configured():
         return
-    method_label = {'zelle': 'Zelle', 'cashapp': 'Cash App', 'square': 'Square',
-                    'cash': 'cash', 'venmo': 'Venmo'}.get(method, method)
+    method_label = {'zelle': 'Zelle', 'cashapp': 'Cash App', 'paypal': 'PayPal',
+                    'square': 'Square', 'cash': 'cash', 'venmo': 'Venmo'}.get(method, method)
     body = (
         f"Hi,\n\n"
         f"This confirms we've received and recorded your payment of ${amount:.2f} "

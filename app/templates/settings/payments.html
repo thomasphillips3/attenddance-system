@@ -82,6 +82,30 @@
     </div>
 </div>
 
+<!-- PayPal -->
+<div class="bg-surface border border-line rounded-2xl shadow-soft mb-6 overflow-hidden">
+    <div class="px-6 py-4 border-b border-line flex items-center justify-between">
+        <div class="flex items-center">
+            <span class="font-display text-xl text-ink mr-3">PayPal</span>
+            <span class="text-xs text-ink-3">Link parents to your PayPal.me page</span>
+        </div>
+        <label class="relative inline-flex items-center cursor-pointer">
+            <input type="checkbox" id="paypal-enabled" class="sr-only peer" onchange="saveSettings()">
+            <div class="w-11 h-6 bg-line-2 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-line after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary-600"></div>
+        </label>
+    </div>
+    <div class="px-6 py-4">
+        <div>
+            <label class="{{ lbl }}" for="paypal-name">PayPal.me name</label>
+            <div class="mt-1 flex rounded-xl shadow-sm">
+                <span class="inline-flex items-center px-3 rounded-l-xl border border-r-0 border-line-2 bg-surface-2 text-ink-3 text-sm">paypal.me/</span>
+                <input type="text" id="paypal-name" placeholder="LaShellesDance" class="flex-1 block w-full bg-surface border border-line-2 rounded-none rounded-r-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-200 focus:border-primary-400">
+            </div>
+            <p class="mt-1 text-xs text-ink-3">The name after <code>paypal.me/</code> on your PayPal.me link. Parents open it with the amount filled in.</p>
+        </div>
+    </div>
+</div>
+
 <!-- Square -->
 <div class="bg-surface border border-line rounded-2xl shadow-soft mb-6 overflow-hidden">
     <div class="px-6 py-4 border-b border-line flex items-center justify-between">
@@ -212,6 +236,27 @@
                 <span class="inline-flex items-center px-3 rounded-l-xl border border-r-0 border-line-2 bg-surface-2 text-ink-3 text-sm">$</span>
                 <input type="text" id="co-cashapp-tag" placeholder="LSODF" class="flex-1 block w-full bg-surface border border-line-2 rounded-none rounded-r-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-200 focus:border-primary-400">
             </div>
+        </div>
+    </div>
+
+    <div class="px-6 py-4 border-b border-[#e4cd8e]">
+        <div class="flex items-center justify-between mb-3">
+            <div class="flex items-center">
+                <span class="font-bold text-ink mr-3">PayPal</span>
+                <span class="text-xs text-ink-3">The Foundation's PayPal.me page</span>
+            </div>
+            <label class="relative inline-flex items-center cursor-pointer">
+                <input type="checkbox" id="co-paypal-enabled" class="sr-only peer" onchange="saveSettings()">
+            <div class="w-11 h-6 bg-line-2 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-line after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary-600"></div>
+            </label>
+        </div>
+        <div>
+            <label class="{{ lbl }}" for="co-paypal-name">PayPal.me name</label>
+            <div class="mt-1 flex rounded-xl shadow-sm">
+                <span class="inline-flex items-center px-3 rounded-l-xl border border-r-0 border-line-2 bg-surface-2 text-ink-3 text-sm">paypal.me/</span>
+                <input type="text" id="co-paypal-name" placeholder="LSODanceFoundation" class="flex-1 block w-full bg-surface border border-line-2 rounded-none rounded-r-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-200 focus:border-primary-400">
+            </div>
+            <p class="mt-1 text-xs text-ink-3">The name after <code>paypal.me/</code> on your PayPal.me link. Parents open it with the amount filled in.</p>
         </div>
     </div>
 
@@ -349,6 +394,8 @@ async function loadSettings() {
         document.getElementById('zelle-memo').value = s.payments_zelle_memo || '';
         document.getElementById('cashapp-enabled').checked = s.payments_cashapp_enabled === '1';
         document.getElementById('cashapp-tag').value = (s.payments_cashapp_tag || '').replace(/^\$/, '');
+        document.getElementById('paypal-enabled').checked = s.payments_paypal_enabled === '1';
+        document.getElementById('paypal-name').value = s.payments_paypal_username || '';
         document.getElementById('square-enabled').checked = s.payments_square_enabled === '1';
         document.getElementById('square-link').value = s.payments_square_link || '';
         // Company / Foundation destinations
@@ -357,6 +404,8 @@ async function loadSettings() {
         document.getElementById('co-zelle-memo').value = s.company_payments_zelle_memo || '';
         document.getElementById('co-cashapp-enabled').checked = s.company_payments_cashapp_enabled === '1';
         document.getElementById('co-cashapp-tag').value = (s.company_payments_cashapp_tag || '').replace(/^\$/, '');
+        document.getElementById('co-paypal-enabled').checked = s.company_payments_paypal_enabled === '1';
+        document.getElementById('co-paypal-name').value = s.company_payments_paypal_username || '';
         document.getElementById('co-square-enabled').checked = s.company_payments_square_enabled === '1';
         document.getElementById('co-square-link').value = s.company_payments_square_link || '';
         renderQR('company', s.company_zelle_qr || '');
@@ -402,6 +451,12 @@ async function loadSettings() {
     }
 }
 
+// Accept a pasted link ("https://paypal.me/Name/25") or just the name.
+function paypalName(id) {
+    return document.getElementById(id).value.trim()
+        .replace(/^(https?:\/\/)?(www\.)?paypal\.me\//i, '').split(/[/?#]/)[0];
+}
+
 async function saveSettings() {
     const tag = document.getElementById('cashapp-tag').value.trim();
     const coTag = document.getElementById('co-cashapp-tag').value.trim();
@@ -411,6 +466,8 @@ async function saveSettings() {
         company_payments_zelle_memo: document.getElementById('co-zelle-memo').value.trim(),
         company_payments_cashapp_enabled: document.getElementById('co-cashapp-enabled').checked ? '1' : '0',
         company_payments_cashapp_tag: coTag.replace(/^\$/, ''),
+        company_payments_paypal_enabled: document.getElementById('co-paypal-enabled').checked ? '1' : '0',
+        company_payments_paypal_username: paypalName('co-paypal-name'),
         company_payments_square_enabled: document.getElementById('co-square-enabled').checked ? '1' : '0',
         company_payments_square_link: document.getElementById('co-square-link').value.trim(),
         payments_zelle_enabled: document.getElementById('zelle-enabled').checked ? '1' : '0',
@@ -418,6 +475,8 @@ async function saveSettings() {
         payments_zelle_memo: document.getElementById('zelle-memo').value.trim(),
         payments_cashapp_enabled: document.getElementById('cashapp-enabled').checked ? '1' : '0',
         payments_cashapp_tag: tag.replace(/^\$/, ''),
+        payments_paypal_enabled: document.getElementById('paypal-enabled').checked ? '1' : '0',
+        payments_paypal_username: paypalName('paypal-name'),
         payments_square_enabled: document.getElementById('square-enabled').checked ? '1' : '0',
         payments_square_link: document.getElementById('square-link').value.trim(),
         payments_square_location_id: document.getElementById('square-location').value.trim(),
