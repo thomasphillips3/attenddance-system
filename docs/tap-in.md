@@ -19,13 +19,13 @@ What a tap does:
 - **First tap** during a class window (by default 30 minutes before start until the end) checks the dancer in. Several classes today resolve to one, the same way every time.
 - **A repeat read** within 10 seconds (the default) is ignored.
 - **A tap 5+ minutes later** (the default) checks them out of that same class.
-
-The window, the repeat-read delay and the check-out delay are settings an admin can change under **Tap-In > Settings**. The numbers above are the defaults, so check Settings for the current values if taps behave differently than described.
 - **Back-to-back classes**: a dancer who taps in for ballet and out after jazz is marked present for both.
 - **A tap outside any class window** shows a class picker and records nothing until staff pick.
 - **Undo** and **Put back in class** are on every result screen.
 - **Staff badges**: "Forms needed" for an unsigned waiver, and "Check account" (admins only) when the household owes money. Never a dollar amount, and neither ever blocks a check-in.
 - **Parent notices**: an email when the dancer checks in and out. Texts are opt-in from the portal and need a code texted to the parent's phone first.
+
+The class window, the repeat-read delay and the check-out delay are settings an admin can change under **Tap-In > Settings**. The numbers above are the defaults, so check Settings for the current values if taps behave differently than described.
 
 A tag link opened by anyone who isn't signed-in staff shows a generic "this is a studio tag, please return it" page. That page is the same for a real, unknown or revoked tag.
 
