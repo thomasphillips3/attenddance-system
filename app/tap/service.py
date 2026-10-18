@@ -72,7 +72,13 @@ ALREADY_OUT_WINDOW = timedelta(minutes=60)
 
 
 class TapError(ValueError):
-    """A tap request the service refuses outright (bad class pick, bad undo)."""
+    """A tap request the service refuses (bad class pick, bad undo). With
+    `retryable` set it was a transient conflict, and the same request (same
+    event_key) can safely be sent again."""
+
+    def __init__(self, message='', retryable=False):
+        super().__init__(message)
+        self.retryable = retryable
 
 
 def setting_int(key: str) -> int:
@@ -487,7 +493,7 @@ def _retry_once(req, retried):
     is an error, not unbounded recursion."""
     db.session.rollback()
     if retried:
-        raise TapError('Attendance changed at the same time. Tap again.')
+        raise TapError('Attendance changed at the same time. Tap again.', retryable=True)
     return process_tap(req, _retried=True)
 
 

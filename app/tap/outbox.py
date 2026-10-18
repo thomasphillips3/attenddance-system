@@ -221,6 +221,16 @@ def drain_once(now=None) -> int:
 
 
 def _recipients(n, channel):
+    """Who a notice about this dancer may go to.
+
+    Email uses helpers.student_emails(): the dancer's own parent addresses
+    plus the household's (Family.primary_email / secondary_email). The
+    household addresses are, by the studio's contact model, guardians of
+    every child in that household: balance reminders, receipts and blasts
+    already go to them for each sibling. A guardian who is a contact for only
+    one child belongs on that child's parent_email / parent_email_2, not on
+    the family row. SMS goes only to the number that opted in for this
+    dancer."""
     if channel == 'email':
         from app.helpers import student_emails
         return student_emails(n.student)

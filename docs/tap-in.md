@@ -115,6 +115,7 @@ If a phone shows **NOT RECORDED**, the tap didn't count. Tap again once it's bac
 
 ## Parent notices
 
+- **Who gets an email:** each dancer's own parent addresses, plus the household's addresses on the family record. Household addresses count as guardians of every child in the family (the same rule balance reminders use), so they hear about all siblings. A guardian who should only hear about one child belongs on that child's parent email, not on the family. Each address gets one message naming only the children it's a contact for.
 - **Email** is on by default, sent about 45 seconds after the tap so siblings who tap together get one email. A household can turn it off in the portal, or staff can switch it off on the dancer's page.
 - **Texts** stay off until an admin turns them on in Tap-In settings. Only do that after the studio's Twilio number is registered for 10DLC, or carriers will block the messages. After that, a parent turns texts on in the portal by entering their mobile number and the code texted to it. Texts go only to that number, and replying STOP turns them off for good.
 - Notices are skipped for adult dancers, for undone taps, and for anything that would arrive more than 20 minutes late (for example, taps replayed from an offline station). Settings has a pause switch and a daily limit. Keep the limit under the studio Gmail's daily send cap (about 500), or receipts stop for the day.

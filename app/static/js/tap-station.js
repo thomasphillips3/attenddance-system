@@ -154,7 +154,7 @@
     }
     function showQueued() {
         TapScreen.message(screen, 'amber', 'SAVED', '',
-            'No connection. This tap is saved on the station and will send when it is back online.');
+            "This tap didn't go through yet. It's saved on the station and will send automatically.");
         tone('queued');
         updateQueueChip();
         later(3500);
@@ -219,6 +219,14 @@
         }
         if (out.res.status === 401) { signedOut = true; await qAdd(item); showSignedOut(); updateQueueChip(); return; }
         setNet('online');
+        if (out.res.status >= 500 || out.data.retry === true) {
+            // The server hit a problem or a conflict, not a verdict on the
+            // tag: keep the tap (same event_key, so it can't double) and
+            // replay it with the queue.
+            await qAdd(item);
+            showQueued();
+            return;
+        }
         if (!out.res.ok) { showError(out.data.error || ('Error ' + out.res.status)); return; }
         showResult(out.data);
     }

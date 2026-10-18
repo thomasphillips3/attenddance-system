@@ -353,7 +353,7 @@ _real = _tr.process_tap
 
 
 def _flaky(req):
-    raise _TE("Attendance changed at the same time. Tap again.")
+    raise _TE("Attendance changed at the same time. Tap again.", retryable=True)
 
 
 _tr.process_tap = _flaky
@@ -364,7 +364,17 @@ _tr.process_tap = _real
 x = r.get_json()["results"][0]
 record("a transient failure tells the station to keep the tap and retry",
        x["ok"] is False and x["retry"] is True)
+_tr.process_tap = lambda req: (_ for _ in ()).throw(_TE("Attendance changed at the same time. Tap again.", retryable=True))
+r = teach.post("/api/tap", json={"event_key": key("live"), "token": tok_ben})
+_tr.process_tap = _real
+record("a live tap that hits a conflict is a 409 with retry, not a dead end",
+       r.status_code == 409 and r.get_json()["retry"] is True)
+r = teach.post("/api/tap", json={"event_key": key("live"), "token": tok_ben, "class_id": 999999})
+record("a tap refused for good (class not running) is a 400 with retry false",
+       r.status_code == 400 and r.get_json()["retry"] is False)
 js = open("app/static/js/tap-station.js").read()
+record("the live station queues a tap on a server error or a retryable answer",
+       "out.res.status >= 500 || out.data.retry === true" in js)
 record("the station only drops taps that were recorded or settled",
        "x.ok || x.retry === false" in js and "chunk.map(c => c.event_key)" not in js)
 n_before = None

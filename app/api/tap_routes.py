@@ -70,7 +70,11 @@ def record_tap():
     try:
         result = process_tap(req)
     except TapError as e:
-        return jsonify({'error': str(e)}), 400
+        # 409 + retry: a transient conflict; the station keeps the tap and
+        # sends the same event_key again. 400: refused for good.
+        if e.retryable:
+            return jsonify({'error': str(e), 'retry': True}), 409
+        return jsonify({'error': str(e), 'retry': False}), 400
     return tap_response(result, 200 if result.replayed else 201)
 
 
@@ -736,7 +740,7 @@ def record_tap_batch():
                                             occurred_at=when, source=source,
                                             actor_id=current_user.id))
         except TapError as e:
-            out.append({'event_key': key, 'ok': False, 'retry': True, 'error': str(e)})
+            out.append({'event_key': key, 'ok': False, 'retry': e.retryable, 'error': str(e)})
             continue
         except Exception:  # noqa: BLE001 - one bad tap must not lose the rest
             from app import db

@@ -373,6 +373,28 @@ with app.app_context():
            "Kim" in by_to["kims.dad@example.test"][2] and "Lou" not in by_to["kims.dad@example.test"][2]
            and "Lou" in by_to["lous.mom@example.test"][2] and "Kim" not in by_to["lous.mom@example.test"][2])
 
+    # With a household address on the family row too: the household hears
+    # about both (it is every child's guardian by the contact model), while
+    # each child-only address still hears only about its own child.
+    fam2.primary_email = "split.home@example.test"
+    db.session.commit()
+    DP2 = DAY + timedelta(days=112)
+    tap(t_kim, at(16, 55, DP2))
+    tap(t_lou, at(16, 55, DP2))
+    for n in pending():
+        n.event.occurred_at = datetime.now()
+    db.session.commit()
+    emails.clear()
+    outbox.drain_once(now=datetime.now() + timedelta(minutes=1))
+    by_to = {e[0]: e for e in emails}
+    record("mixed contacts: the household address gets one message about both",
+           "Kim" in by_to.get("split.home@example.test", ("", "", ""))[2]
+           and "Lou" in by_to["split.home@example.test"][2] and len(emails) == 3,
+           f"got {[e[0] for e in emails]}")
+    record("mixed contacts: child-only addresses still hear only about their own child",
+           "Lou" not in by_to["kims.dad@example.test"][2]
+           and "Kim" not in by_to["lous.mom@example.test"][2])
+
     # One address fails: it alone is retried, the other is never re-sent.
     DQ = DAY + timedelta(days=98)
     r = tap(t_ava, at(16, 55, DQ))
