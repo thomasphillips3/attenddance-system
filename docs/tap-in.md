@@ -16,9 +16,11 @@ There are three ways to read a tag:
 
 What a tap does:
 
-- **First tap** during a class window (30 minutes before start until the end) checks the dancer in. Several classes today resolve to one, the same way every time.
-- **A repeat read** within 10 seconds is ignored.
-- **A tap 5+ minutes later** checks them out of that same class.
+- **First tap** during a class window (by default 30 minutes before start until the end) checks the dancer in. Several classes today resolve to one, the same way every time.
+- **A repeat read** within 10 seconds (the default) is ignored.
+- **A tap 5+ minutes later** (the default) checks them out of that same class.
+
+The window, the repeat-read delay and the check-out delay are settings an admin can change under **Tap-In > Settings**. The numbers above are the defaults, so check Settings for the current values if taps behave differently than described.
 - **Back-to-back classes**: a dancer who taps in for ballet and out after jazz is marked present for both.
 - **A tap outside any class window** shows a class picker and records nothing until staff pick.
 - **Undo** and **Put back in class** are on every result screen.
@@ -111,7 +113,7 @@ Cheap no-name keyboard-wedge readers often only output 4 bytes as 10 decimal dig
 2. In Chrome: Tap-In > Start a tap station > Start. Keep the page open; the screen stays on by itself.
 3. Dancers hold the tag to the middle of the back of the phone.
 
-If a phone shows **NOT RECORDED**, it couldn't confirm the tap, so the tap may or may not have saved (the request can reach the server and the reply get lost). Open **Today's taps** and compare the dancer's In and Out times with the tap you just made. Tap again, or mark the attendance card, only if the expected time is missing. Tapping again blindly can undo a check-in that did save: a second tap 5 or more minutes later checks the dancer out.
+If a phone shows **NOT RECORDED**, it couldn't confirm the tap, so the tap may or may not have saved (the request can reach the server and the reply get lost). Open **Today's taps** and compare the dancer's In and Out times with the tap you just made. Tap again, or mark the attendance card, only if the expected time is missing. Tapping again blindly can undo a check-in that did save: a second tap after the check-out delay (5 minutes by default, see Tap-In > Settings) checks the dancer out.
 
 ## Parent notices
 
