@@ -773,10 +773,16 @@ def tap_today():
             g['missing'] += 1
     groups = sorted(by_class.values(), key=lambda g: (g['cls'].start_time, g['cls'].name))
     missed = [r for g in groups for r in g['rows'] if r['missing']]
+    from sqlalchemy import and_, or_
     refused = (TapEvent.query
-               .filter(func.date(TapEvent.occurred_at) == day,
-                       TapEvent.outcome.in_(('unknown_tag', 'inactive_tag', 'unassigned_tag',
-                                             'inactive_student', 'needs_class')))
+               .filter(or_(
+                   and_(func.date(TapEvent.occurred_at) == day,
+                        TapEvent.outcome.in_(('unknown_tag', 'inactive_tag', 'unassigned_tag',
+                                              'inactive_student', 'needs_class'))),
+                   # Offline taps too old to record: shown on the day they
+                   # reached the server, which is when staff can act on them.
+                   and_(func.date(TapEvent.recorded_at) == day,
+                        TapEvent.outcome == 'replay_refused')))
                .order_by(desc(TapEvent.occurred_at)).limit(50).all())
     return render_template('tap/today.html', title='Today\'s taps', day=day, groups=groups,
                            missed=missed, refused=refused,
