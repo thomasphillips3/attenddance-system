@@ -88,6 +88,10 @@ class ManualTests(unittest.TestCase):
                        'may or may not have saved', 'USB-only'):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, html)
+        # A USB-only tag still reads on the Android station (it sends the serial).
+        self.assertNotIn('nowhere else', html)
+        self.assertNotIn('works only on the USB', html)
+        self.assertIn('compare the', html)
         # NOT RECORDED is uncertain, never "nothing saved".
         self.assertNotIn('so nothing saved', html)
         self.assertNotIn('attendance has not saved', html)

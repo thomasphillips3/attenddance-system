@@ -135,7 +135,7 @@
                         </button>
                         <button @click="setup.step = 'usb'; $nextTick(() => $refs.usbInput && $refs.usbInput.focus())" class="w-full text-left p-3 rounded-xl border border-line-2 hover:border-primary-300">
                             <p class="text-sm font-bold text-ink"><i class="fas fa-keyboard mr-1 text-primary-500"></i>Scan on the USB reader</p>
-                            <p class="text-xs text-ink-3">For the tablet or laptop station. The tag will work on the USB reader only.</p>
+                            <p class="text-xs text-ink-3">For the tablet or laptop station. The tag holds no link, so it won't work on an iPhone.</p>
                         </button>
                     </div>
                     <div x-show="setup.step === 'link'" class="space-y-3">
@@ -383,7 +383,7 @@ window.tagCard = function (studentId, name, active) {
                     await this.api(`/api/tags/${this.setup.replaceOf}/status`, { method: 'POST', body: JSON.stringify({ status: 'lost' }) });
                 }
                 this.setup.step = 'done'; this.setup.error = false;
-                this.say(d.label + ' is ready for ' + this.name, 'It works on the USB reader station.');
+                this.say(d.label + ' is ready for ' + this.name, 'It works on the USB reader and the Android station, not on an iPhone.');
             } catch (e) { this.setup.error = true; this.setup.detail = e.message; }
         },
     };
