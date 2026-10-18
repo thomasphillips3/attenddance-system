@@ -19,7 +19,7 @@ without an application context.
 STUDIO = 'studio'
 COMPANY = 'company'
 FUNDS = (STUDIO, COMPANY)
-FUND_LABELS = {STUDIO: 'Studio', COMPANY: 'Company / Foundation'}
+FUND_LABELS = {STUDIO: 'Studio', COMPANY: 'Company'}
 
 # (value, label, fund). Order is dropdown order. These are the user-pickable
 # charge categories; a charge's fund is derived from its category.

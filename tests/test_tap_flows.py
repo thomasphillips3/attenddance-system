@@ -21,6 +21,7 @@ Run:  RFID_ENABLED=false python3 tests/test_tap_flows.py
 Exit 0 = all green, 1 = failures.
 """
 import os
+import re
 import sys
 import tempfile
 import time as _time
@@ -336,6 +337,60 @@ with app.app_context():
 bad = [x for x in r.get_json()["results"] if not x["ok"]]
 record("a tap older than a day, a missing time and a bad key are refused, not recorded",
        len(bad) == 3 and any("older than a day" in (x.get("error") or "") for x in bad))
+record("refused replays are settled (retry false) so the station can drop them",
+       all(x.get("retry") is False for x in bad))
+with app.app_context():
+    old_ev = TapEvent.query.filter(TapEvent.outcome == "replay_refused",
+                                   TapEvent.detail.like("older than a day%")).first()
+    record("a too-old replay is logged for staff at the time it happened, with the dancer",
+           old_ev is not None and old_ev.student_id == kids["Ben"]
+           and old_ev.occurred_at.date() < date.today(),
+           f"got {old_ev and (old_ev.student_id, old_ev.occurred_at, old_ev.tag_id)} ben={kids['Ben']}")
+html = teach.get("/tap-in/today").get_data(as_text=True)
+record("and it shows under Taps that need a look today", "too old to record" in html)
+with app.app_context():
+    for i in range(60):
+        db.session.add(TapEvent(event_key=f"bulk-refused-{i:03d}", outcome="replay_refused",
+                                occurred_at=datetime.now() - timedelta(days=3),
+                                source="kiosk", detail="older than a day"))
+    db.session.commit()
+    total_refused = TapEvent.query.filter_by(outcome="replay_refused").count()
+html = teach.get("/tap-in/today").get_data(as_text=True)
+record("every refused replay is listed, with a count (no 50-row cutoff)",
+       html.count("too old to record") == total_refused
+       and re.search(r"Taps that need a look \((\d+)\)", html)
+       and int(re.search(r"Taps that need a look \((\d+)\)", html).group(1)) >= total_refused,
+       f"listed {html.count('too old to record')} of {total_refused}")
+import app.api.tap_routes as _tr  # noqa: E402
+from app.tap.service import TapError as _TE  # noqa: E402
+_real = _tr.process_tap
+
+
+def _flaky(req):
+    raise _TE("Attendance changed at the same time. Tap again.", retryable=True)
+
+
+_tr.process_tap = _flaky
+kf = key("kiosk")
+r = teach.post("/api/tap/batch", json={"taps": [{"event_key": kf, "token": tok_ben,
+                                                 "occurred_at": ms(datetime.now())}]})
+_tr.process_tap = _real
+x = r.get_json()["results"][0]
+record("a transient failure tells the station to keep the tap and retry",
+       x["ok"] is False and x["retry"] is True)
+_tr.process_tap = lambda req: (_ for _ in ()).throw(_TE("Attendance changed at the same time. Tap again.", retryable=True))
+r = teach.post("/api/tap", json={"event_key": key("live"), "token": tok_ben})
+_tr.process_tap = _real
+record("a live tap that hits a conflict is a 409 with retry, not a dead end",
+       r.status_code == 409 and r.get_json()["retry"] is True)
+r = teach.post("/api/tap", json={"event_key": key("live"), "token": tok_ben, "class_id": 999999})
+record("a tap refused for good (class not running) is a 400 with retry false",
+       r.status_code == 400 and r.get_json()["retry"] is False)
+js = open("app/static/js/tap-station.js").read()
+record("the live station queues a tap on a server error or a retryable answer",
+       "out.res.status >= 500 || out.data.retry === true" in js)
+record("the station only drops taps that were recorded or settled",
+       "x.ok || x.retry === false" in js and "chunk.map(c => c.event_key)" not in js)
 n_before = None
 with app.app_context():
     n_before = TapEvent.query.count()

@@ -56,13 +56,14 @@ sms_reply = {"code": None}
 
 
 def fake_email(to, subject, body, attachments=None):
-    if fake_email.fail:
+    if fake_email.fail or to in fake_email.fail_for:
         raise OSError("smtp down")
-    emails.append((sorted(to), subject, body))
-    return len(to)
+    emails.append((to, subject, body))
+    return 1
 
 
 fake_email.fail = False
+fake_email.fail_for = set()
 
 
 def fake_sms(to, body):
@@ -150,18 +151,24 @@ with app.app_context():
     outbox.drain_once(now=datetime.now())
     record("nothing goes out before the coalescing delay", emails == [])
     outbox.drain_once(now=datetime.now() + timedelta(minutes=1))
-    record("after it, siblings get ONE email", len(emails) == 1, f"got {len(emails)}")
-    to, subject, body = emails[0]
-    record("to every parent address on file, deduped",
-           to == ["home@example.test", "mom@example.test"], f"got {to}")
-    record("subject names both, first names only, with the time",
+    by_to = {e[0]: e for e in emails}
+    record("after it, each parent address gets ONE message",
+           sorted(by_to) == ["home@example.test", "mom@example.test"] and len(emails) == 2,
+           f"got {[e[0] for e in emails]}")
+    subject, body = by_to["home@example.test"][1], by_to["home@example.test"][2]
+    record("the household address hears about both siblings, first names only, with the time",
            subject.startswith("Ava and Zoe checked in at") and "Notice" not in subject, subject)
     record("body has the class and an opt-out line, no last names",
            "Ava checked in to Ballet at" in body and "Zoe checked in to Ballet at" in body
            and "turn these off" in body and "Notice" not in body)
-    record("both rows are marked sent with recipients",
-           all(n.status == "sent" and "mom@example.test" in n.recipients
-               for n in TapNotification.query.all()))
+    record("an address that's only Ava's contact hears only about Ava",
+           by_to["mom@example.test"][1].startswith("Ava checked in at")
+           and "Zoe" not in by_to["mom@example.test"][2])
+    record("both rows are marked sent with exactly their own recipients",
+           {n.student.first_name: (n.status, set(n.recipients.split(", ")))
+            for n in TapNotification.query.all()}
+           == {"Ava": ("sent", {"mom@example.test", "home@example.test"}),
+               "Zoe": ("sent", {"home@example.test"})})
 
 # ── B. Departure wording; adult; opt-out; undo; stale; pause; cap ───
 with app.app_context():
@@ -326,6 +333,120 @@ with app.app_context():
            and not db.session.get(Student, ids["zoe"]).tap_sms_opt_in)
     sms_reply["code"] = None
     Setting.set("tap_notify_email_enabled", "1")
+
+# ── D2. Privacy and per-address delivery ────────────────────────────
+with app.app_context():
+    Setting.set("tap_notify_email_enabled", "1")
+    Setting.set("tap_notify_sms_enabled", "0")
+    fam2 = Family(name="Split Family")
+    db.session.add(fam2)
+    db.session.flush()
+
+    def kid2(fn, email):
+        s_ = Student(first_name=fn, last_name="Split", family_id=fam2.id, parent_email=email)
+        db.session.add(s_)
+        db.session.flush()
+        db.session.add(ClassEnrollment(student_id=s_.id, class_id=db.session.query(DanceClass.id)
+                                       .filter_by(name="Ballet").scalar()))
+        tok = mint_token()
+        tg = NfcTag(student_id=s_.id, token_hash=hash_token(tok), status="active")
+        db.session.add(tg)
+        db.session.flush()
+        tg.label = label_for(tg.id)
+        return s_, tok
+
+    kim, t_kim = kid2("Kim", "kims.dad@example.test")
+    lou, t_lou = kid2("Lou", "lous.mom@example.test")
+    db.session.commit()
+    DP = DAY + timedelta(days=91)
+    tap(t_kim, at(16, 55, DP))
+    tap(t_lou, at(16, 55, DP))
+    for n in pending():
+        n.event.occurred_at = datetime.now()
+    db.session.commit()
+    emails.clear()
+    outbox.drain_once(now=datetime.now() + timedelta(minutes=1))
+    by_to = {e[0]: e for e in emails}
+    record("siblings with different contacts get separate notices",
+           set(by_to) == {"kims.dad@example.test", "lous.mom@example.test"}, f"got {list(by_to)}")
+    record("each contact only hears about their own dancer",
+           "Kim" in by_to["kims.dad@example.test"][2] and "Lou" not in by_to["kims.dad@example.test"][2]
+           and "Lou" in by_to["lous.mom@example.test"][2] and "Kim" not in by_to["lous.mom@example.test"][2])
+
+    # With a household address on the family row too: the household hears
+    # about both (it is every child's guardian by the contact model), while
+    # each child-only address still hears only about its own child.
+    fam2.primary_email = "split.home@example.test"
+    db.session.commit()
+    DP2 = DAY + timedelta(days=112)
+    tap(t_kim, at(16, 55, DP2))
+    tap(t_lou, at(16, 55, DP2))
+    for n in pending():
+        n.event.occurred_at = datetime.now()
+    db.session.commit()
+    emails.clear()
+    outbox.drain_once(now=datetime.now() + timedelta(minutes=1))
+    by_to = {e[0]: e for e in emails}
+    record("mixed contacts: the household address gets one message about both",
+           "Kim" in by_to.get("split.home@example.test", ("", "", ""))[2]
+           and "Lou" in by_to["split.home@example.test"][2] and len(emails) == 3,
+           f"got {[e[0] for e in emails]}")
+    record("mixed contacts: child-only addresses still hear only about their own child",
+           "Lou" not in by_to["kims.dad@example.test"][2]
+           and "Kim" not in by_to["lous.mom@example.test"][2])
+
+    # One address fails: it alone is retried, the other is never re-sent.
+    DQ = DAY + timedelta(days=98)
+    r = tap(t_ava, at(16, 55, DQ))
+    n = TapNotification.query.filter_by(tap_event_id=r.event.id, channel="email").one()
+    n.event.occurred_at = datetime.now()
+    db.session.commit()
+    emails.clear()
+    fake_email.fail_for = {"home@example.test"}
+    t1 = datetime.now() + timedelta(minutes=1)
+    outbox.drain_once(now=t1)
+    db.session.refresh(n)
+    record("a partial failure keeps the notice pending, remembering who already got it",
+           n.status == "pending" and n.attempts == 1 and n.recipients == "mom@example.test"
+           and [e[0] for e in emails] == ["mom@example.test"], f"{n.status} {n.recipients} {emails}")
+    fake_email.fail_for = set()
+    emails.clear()
+    outbox.drain_once(now=n.send_after)
+    db.session.refresh(n)
+    record("the retry goes only to the address that failed, then it's sent",
+           [e[0] for e in emails] == ["home@example.test"] and n.status == "sent"
+           and set(n.recipients.split(", ")) == {"mom@example.test", "home@example.test"},
+           f"{emails} {n.status} {n.recipients}")
+
+    # Texts: siblings opted in on different numbers each get their own text,
+    # and one failing number doesn't mark the other child's notice failed.
+    Setting.set("tap_notify_email_enabled", "0")
+    Setting.set("tap_notify_sms_enabled", "1")
+    a_, z_ = db.session.get(Student, ids["ava"]), db.session.get(Student, ids["zoe"])
+    a_.tap_sms_opt_in, a_.tap_sms_phone = True, "+12485550100"
+    z_.tap_sms_opt_in, z_.tap_sms_phone = True, "+15865550188"
+    db.session.commit()
+    DR = DAY + timedelta(days=105)
+    ra, rz = tap(t_ava, at(16, 55, DR)), tap(t_zoe, at(16, 55, DR))
+    na = TapNotification.query.filter_by(tap_event_id=ra.event.id, channel="sms").one()
+    nz = TapNotification.query.filter_by(tap_event_id=rz.event.id, channel="sms").one()
+    for x in (na, nz):
+        x.event.occurred_at = datetime.now()
+    db.session.commit()
+    texts.clear()
+    real_sms = outbox._send_sms
+    outbox._send_sms = lambda to, body: (texts.append((to, body)) or ((False, 30003) if to == "+15865550188" else (True, None)))
+    outbox.drain_once(now=datetime.now() + timedelta(minutes=1))
+    outbox._send_sms = real_sms
+    db.session.refresh(na)
+    db.session.refresh(nz)
+    record("each sibling's text goes only to their own opted-in number",
+           sorted(t[0] for t in texts) == ["+12485550100", "+15865550188"]
+           and all(("Ava" in b) != ("Zoe" in b) for _, b in texts))
+    record("a failed number is retried; the delivered one is marked sent",
+           na.status == "sent" and nz.status == "pending" and nz.attempts == 1,
+           f"{na.status} {nz.status}")
+    Setting.set("tap_notify_email_enabled", "1")   # section E expects texts still on
 
 # ── E. Portal and staff controls ────────────────────────────────────
 pc = app.test_client()

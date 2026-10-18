@@ -420,9 +420,9 @@ class Attendance(db.Model):
     
     # Lookup index for the per-(student, class, day) query. Uniqueness is NOT
     # declared here: app/migrations.py adds the functional UNIQUE index
-    # ix_attendance_unique_day on (student_id, class_id, date(check_in_time)) and
-    # de-dupes on every boot, keeping the earliest row. So a check-out must
-    # UPDATE the day's row (Tap-In does) - a second row is rejected or deleted.
+    # ix_attendance_unique_day on (student_id, class_id, date(check_in_time)),
+    # archiving any pre-existing duplicates the one time it creates it. So a
+    # check-out must UPDATE the day's row (Tap-In does): a second is rejected.
     __table_args__ = (
         db.Index('idx_attendance_date_student', 'student_id',
                 db.func.date('check_in_time'), 'class_id'),

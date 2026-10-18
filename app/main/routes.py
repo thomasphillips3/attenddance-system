@@ -160,7 +160,7 @@ def parent_dashboard():
             'recent_attendance': recent_att,
             'classes': child_classes,
         })
-        if child.family_id:
+        if child.family_id and child.is_active:
             g = family_groups.setdefault(child.family_id, {
                 'family_id': child.family_id,
                 'name': child.family.name if child.family else 'Family',
@@ -174,9 +174,14 @@ def parent_dashboard():
     # Only offer combined pay when a family has 2+ of this parent's children and
     # owes money in a fund; one banner per (family, fund) so a family owing only
     # Company money sees only the Foundation's destinations.
+    linked_child_ids = {child.id for child in children}
+    payable_groups = [
+        g for g in family_groups.values() if len(g['members']) > 1
+        and {s.id for s in Family.query.get(g['family_id']).students.filter_by(is_active=True).all()}.issubset(linked_child_ids)
+    ]
     families = [
         {**g, 'fund': fund, 'balance': g['funds'][fund]}
-        for g in family_groups.values() if len(g['members']) > 1
+        for g in payable_groups
         for fund in FUNDS if g['funds'][fund] > 0
     ]
     return render_template('parent/dashboard.html', children=child_data, families=families)
@@ -768,11 +773,17 @@ def tap_today():
             g['missing'] += 1
     groups = sorted(by_class.values(), key=lambda g: (g['cls'].start_time, g['cls'].name))
     missed = [r for g in groups for r in g['rows'] if r['missing']]
+    from sqlalchemy import and_, or_
     refused = (TapEvent.query
-               .filter(func.date(TapEvent.occurred_at) == day,
-                       TapEvent.outcome.in_(('unknown_tag', 'inactive_tag', 'unassigned_tag',
-                                             'inactive_student', 'needs_class')))
-               .order_by(desc(TapEvent.occurred_at)).limit(50).all())
+               .filter(or_(
+                   and_(func.date(TapEvent.occurred_at) == day,
+                        TapEvent.outcome.in_(('unknown_tag', 'inactive_tag', 'unassigned_tag',
+                                              'inactive_student', 'needs_class'))),
+                   # Offline taps too old to record: shown on the day they
+                   # reached the server, which is when staff can act on them.
+                   and_(func.date(TapEvent.recorded_at) == day,
+                        TapEvent.outcome == 'replay_refused')))
+               .order_by(desc(TapEvent.occurred_at)).all())
     return render_template('tap/today.html', title='Today\'s taps', day=day, groups=groups,
                            missed=missed, refused=refused,
                            prev_day=day - timedelta(days=1), next_day=day + timedelta(days=1),

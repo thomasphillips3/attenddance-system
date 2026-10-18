@@ -70,7 +70,11 @@ def record_tap():
     try:
         result = process_tap(req)
     except TapError as e:
-        return jsonify({'error': str(e)}), 400
+        # 409 + retry: a transient conflict; the station keeps the tap and
+        # sends the same event_key again. 400: refused for good.
+        if e.retryable:
+            return jsonify({'error': str(e), 'retry': True}), 409
+        return jsonify({'error': str(e), 'retry': False}), 400
     return tap_response(result, 200 if result.replayed else 201)
 
 
@@ -662,6 +666,34 @@ def replay_time(raw):
     return min(when, now), None
 
 
+def _log_unreplayable(key, token, uid, raw_time, why):
+    """Record a queued tap that can't be applied (too old, bad clock) as a
+    'replay_refused' tap event at the time it happened, so it is visible to
+    staff instead of silently lost. Idempotent on event_key."""
+    from datetime import datetime
+    from sqlalchemy.exc import IntegrityError
+    from app import db
+    from app.models import TapEvent
+    from app.tap.credentials import find_tag
+    if TapEvent.query.filter_by(event_key=key).first():
+        return True
+    try:
+        when = datetime.fromtimestamp(float(raw_time) / 1000.0).replace(microsecond=0)
+    except (TypeError, ValueError, OverflowError, OSError):
+        when = datetime.now().replace(microsecond=0)
+    tag = find_tag(token=token, uid=str(uid) if uid is not None else None)
+    db.session.add(TapEvent(event_key=key, occurred_at=when, source='kiosk',
+                            actor_id=current_user.id, outcome='replay_refused',
+                            tag_id=tag.id if tag else None,
+                            student_id=tag.student_id if tag else None,
+                            detail=(why or '')[:200]))
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+    return True
+
+
 @bp.route('/tap/batch', methods=['POST'])
 def record_tap_batch():
     """Replay taps a station queued while offline, in the order they happened.
@@ -677,21 +709,29 @@ def record_tap_batch():
         return jsonify({'error': f'Send at most {MAX_BATCH} taps at a time'}), 400
     items = [t for t in taps if isinstance(t, dict)]
     items.sort(key=lambda t: (t.get('occurred_at') if isinstance(t.get('occurred_at'), (int, float)) else 0))
+    # Every result says whether the station may drop the tap from its queue:
+    # `retry: true` means keep it and send it again later (a race, a server
+    # hiccup); `retry: false` means it is settled. A tap that is too old to
+    # record is not just dropped: it is logged as a tap event, so it shows
+    # under "Taps that need a look" and staff can fix the card by hand.
     out = []
     for t in items:
         key = t.get('event_key')
         if not isinstance(key, str) or not _EVENT_KEY_RE.match(key):
             out.append({'event_key': key if isinstance(key, str) else None, 'ok': False,
-                        'error': 'bad event_key'})
+                        'retry': False, 'error': 'bad event_key'})
             continue
         token = t.get('token') if isinstance(t.get('token'), str) else None
         uid = t.get('uid') if isinstance(t.get('uid'), (str, int)) else None
         if not token and uid is None:
-            out.append({'event_key': key, 'ok': False, 'error': 'token or uid is required'})
+            out.append({'event_key': key, 'ok': False, 'retry': False,
+                        'error': 'token or uid is required'})
             continue
         when, why = replay_time(t.get('occurred_at'))
         if when is None:
-            out.append({'event_key': key, 'ok': False, 'error': why})
+            logged = _log_unreplayable(key, token, uid, t.get('occurred_at'), why)
+            out.append({'event_key': key, 'ok': False, 'retry': False, 'logged': logged,
+                        'error': why})
             continue
         source = t.get('source') if t.get('source') in SOURCES else 'kiosk'
         try:
@@ -700,7 +740,14 @@ def record_tap_batch():
                                             occurred_at=when, source=source,
                                             actor_id=current_user.id))
         except TapError as e:
-            out.append({'event_key': key, 'ok': False, 'error': str(e)})
+            out.append({'event_key': key, 'ok': False, 'retry': e.retryable, 'error': str(e)})
+            continue
+        except Exception:  # noqa: BLE001 - one bad tap must not lose the rest
+            from app import db
+            db.session.rollback()
+            logger.exception('Replaying queued tap %s failed', key)
+            out.append({'event_key': key, 'ok': False, 'retry': True,
+                        'error': 'Server error; will retry'})
             continue
         body = result.to_dict()
         out.append({'event_key': key, 'ok': True, 'outcome': body['outcome'],

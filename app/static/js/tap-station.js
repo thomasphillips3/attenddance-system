@@ -154,7 +154,7 @@
     }
     function showQueued() {
         TapScreen.message(screen, 'amber', 'SAVED', '',
-            'No connection. This tap is saved on the station and will send when it is back online.');
+            "This tap didn't go through yet. It's saved on the station and will send automatically.");
         tone('queued');
         updateQueueChip();
         later(3500);
@@ -219,6 +219,14 @@
         }
         if (out.res.status === 401) { signedOut = true; await qAdd(item); showSignedOut(); updateQueueChip(); return; }
         setNet('online');
+        if (out.res.status >= 500 || out.data.retry === true) {
+            // The server hit a problem or a conflict, not a verdict on the
+            // tag: keep the tap (same event_key, so it can't double) and
+            // replay it with the queue.
+            await qAdd(item);
+            showQueued();
+            return;
+        }
         if (!out.res.ok) { showError(out.data.error || ('Error ' + out.res.status)); return; }
         showResult(out.data);
     }
@@ -227,22 +235,26 @@
         if (flushing) return;
         flushing = true;
         try {
-            let items = await qAll();
-            let dropped = 0;
-            while (items.length) {
-                const chunk = items.slice(0, 50);
+            // One pass over what is queued now. A tap is removed only when the
+            // server recorded it, or settled it for good (too old to record:
+            // the server logs those for staff). Anything retryable stays.
+            const items = await qAll();
+            let refused = 0;
+            for (let i = 0; i < items.length; i += 50) {
+                const chunk = items.slice(i, i + 50);
                 let out;
                 try { out = await call('/api/tap/batch', { taps: chunk }, 20000); }
                 catch (e) { setNet('offline'); return; }
                 if (out.res.status === 401) { signedOut = true; showSignedOut(); return; }
                 if (!out.res.ok) { setNet('online'); return; }
                 setNet('online');
-                const done = (out.data.results || []).map(x => x.event_key).filter(Boolean);
-                dropped += (out.data.results || []).filter(x => !x.ok).length;
-                await qDel(done.length ? done : chunk.map(c => c.event_key));
-                items = await qAll();
+                const results = out.data.results || [];
+                const settled = results.filter(x => x.event_key && (x.ok || x.retry === false));
+                refused += settled.filter(x => !x.ok).length;
+                if (settled.length) await qDel(settled.map(x => x.event_key));
+                if (settled.length < chunk.length) break;  // keep the rest; try again later
             }
-            if (dropped) showError(dropped + ' saved tap(s) could not be recorded (too old or not a known tag). Check the attendance card.');
+            if (refused) showError(refused + " saved tap(s) were too old to record. They're listed under Today's taps so staff can fix the card.");
         } finally {
             flushing = false;
             updateQueueChip();

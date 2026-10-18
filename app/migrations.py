@@ -127,16 +127,31 @@ def _reconcile_admin_role(conn):
 
 
 def _enforce_attendance_uniqueness(conn):
-    """One attendance row per (student, class, day). The Attendance model has no
-    UniqueConstraint, so a concurrent double-tap could create duplicate 'present'
-    rows (inflating counts + breaking the toggle). De-dupe any existing dupes
-    (keep the earliest row) then add a functional unique index so the DB rejects
-    duplicates. Idempotent: the DELETE is a no-op on clean data and the index is
-    IF NOT EXISTS."""
-    conn.execute(sqlalchemy.text(
-        'DELETE FROM attendance WHERE id NOT IN ('
-        ' SELECT MIN(id) FROM attendance'
-        ' GROUP BY student_id, class_id, date(check_in_time))'))
+    """One attendance row per (student, class, day), enforced by a functional
+    UNIQUE index. Once the index exists the DB rejects duplicates, so this does
+    nothing on every later boot.
+
+    The one time the index is created, any duplicate rows already present are
+    resolved first: the earliest row per (student, class, day) is kept and
+    every other row is COPIED to attendance_dupe_archive before it is deleted,
+    so a later staff correction on a duplicate is never lost for good. The
+    archive is plain rows, recoverable by hand."""
+    has_index = conn.execute(sqlalchemy.text(
+        "SELECT 1 FROM sqlite_master WHERE type='index' AND name='ix_attendance_unique_day'")).first()
+    if has_index:
+        return
+    extra = ('SELECT id FROM attendance WHERE id NOT IN ('
+             ' SELECT MIN(id) FROM attendance'
+             ' GROUP BY student_id, class_id, date(check_in_time))')
+    dupes = conn.execute(sqlalchemy.text(f'SELECT COUNT(*) FROM ({extra})')).scalar()
+    if dupes:
+        conn.execute(sqlalchemy.text(
+            'CREATE TABLE IF NOT EXISTS attendance_dupe_archive AS '
+            'SELECT *, CURRENT_TIMESTAMP AS archived_at FROM attendance WHERE 0'))
+        conn.execute(sqlalchemy.text(
+            'INSERT INTO attendance_dupe_archive '
+            f'SELECT *, CURRENT_TIMESTAMP FROM attendance WHERE id IN ({extra})'))
+        conn.execute(sqlalchemy.text(f'DELETE FROM attendance WHERE id IN ({extra})'))
     conn.execute(sqlalchemy.text(
         'CREATE UNIQUE INDEX IF NOT EXISTS ix_attendance_unique_day'
         ' ON attendance(student_id, class_id, date(check_in_time))'))

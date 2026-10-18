@@ -55,7 +55,7 @@
 
 {% if refused %}
 <div class="mt-6">
-{% call card('Taps that need a look', 'circle-question') %}
+{% call card('Taps that need a look (' ~ refused|length ~ ')', 'circle-question') %}
     <ul class="text-sm divide-y divide-line">
         {% for e in refused %}
         <li class="py-2 flex justify-between gap-3">
@@ -64,7 +64,8 @@
                 <span class="text-ink-3">&middot;
                 {{ {'unknown_tag': 'tag not recognized', 'inactive_tag': 'tag is ' ~ (e.detail or 'not active'),
                     'unassigned_tag': 'tag not assigned to a dancer', 'inactive_student': 'dancer is inactive',
-                    'needs_class': 'no class at that time'}[e.outcome] }}</span>
+                    'needs_class': 'no class at that time',
+                    'replay_refused': 'saved offline ' ~ e.occurred_at.strftime('%b %d') ~ ', too old to record; mark it on the card'}[e.outcome] }}</span>
                 {% if e.tag %}<span class="text-ink-3">&middot; {{ e.tag.label }}</span>{% endif %}
             </span>
             <span class="tabular-nums text-ink-3 shrink-0">{{ e.occurred_at.strftime('%I:%M %p').lstrip('0') }}</span>

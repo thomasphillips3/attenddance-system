@@ -181,8 +181,6 @@ def _retry(rows, now, reason):
 
 def drain_once(now=None) -> int:
     """Send every due notice. Returns how many messages went out."""
-    from app import email as email_service
-    from app import sms as sms_service
     now = (now or datetime.now()).replace(microsecond=0)
     send_email, send_sms = _senders()
     flags = setting_flags()
@@ -216,62 +214,102 @@ def drain_once(now=None) -> int:
             _skip(live, 'notices paused')
         elif not flags[channel]:
             _skip(live, f'{channel} notices off')
-        elif flags['cap'] and _sent_today() >= flags['cap']:
-            _skip(live, 'daily cap reached')
-        elif channel == 'email':
-            to = []
-            for n in live:
-                from app.helpers import student_emails
-                for addr in student_emails(n.student):
-                    if addr.lower() not in {a.lower() for a in to}:
-                        to.append(addr)
-            if not to:
-                _skip(live, 'no parent email')
-            elif not email_service.is_configured():
-                _skip(live, 'email not configured')
-            else:
-                subject, body = compose_email(live)
-                try:
-                    send_email(to, subject, body)
-                except Exception as e:  # noqa: BLE001 - SMTP raises many types
-                    logger.warning('Tap notice email failed: %s', e)
-                    _retry(live, now, f'email error: {e}')
-                else:
-                    for n in live:
-                        n.status, n.sent_at, n.recipients = 'sent', now, ', '.join(to)
-                    sent += 1
         else:
-            phones = []
-            for n in live:
-                for p in sms_numbers(n.student):
-                    if p not in phones:
-                        phones.append(p)
-            if not phones:
-                _skip(live, 'no opted-in number')
-            elif not sms_service.is_configured():
-                _skip(live, 'SMS not configured')
-            else:
-                body = compose_sms(live)
-                delivered, failed_codes = [], []
-                for p in phones:
-                    ok, code = send_sms(p, body)
-                    if ok:
-                        delivered.append(p)
-                    else:
-                        failed_codes.append((p, code))
-                for p, code in failed_codes:
-                    if code in sms_service.OPTED_OUT_CODES:
-                        _record_stop(p)
-                if delivered:
-                    for n in live:
-                        n.status, n.sent_at, n.recipients = 'sent', now, ', '.join(delivered)
-                    sent += 1
-                elif failed_codes and all(c in sms_service.OPTED_OUT_CODES for _, c in failed_codes):
-                    _skip(live, 'parent replied STOP')
-                else:
-                    _retry(live, now, f'SMS error {failed_codes[0][1] if failed_codes else ""}')
+            sent += _send_by_recipients(live, channel, now, flags, send_email, send_sms)
         db.session.commit()
     return sent
+
+
+def _recipients(n, channel):
+    """Who a notice about this dancer may go to.
+
+    Email uses helpers.student_emails(): the dancer's own parent addresses
+    plus the household's (Family.primary_email / secondary_email). The
+    household addresses are, by the studio's contact model, guardians of
+    every child in that household: balance reminders, receipts and blasts
+    already go to them for each sibling. A guardian who is a contact for only
+    one child belongs on that child's parent_email / parent_email_2, not on
+    the family row. SMS goes only to the number that opted in for this
+    dancer."""
+    if channel == 'email':
+        from app.helpers import student_emails
+        return student_emails(n.student)
+    return sms_numbers(n.student)
+
+
+def _delivered(n):
+    return {x.strip().lower() for x in (n.recipients or '').split(',') if x.strip()}
+
+
+def _send_by_recipients(live, channel, now, flags, send_email, send_sms):
+    """Send one household's due notices, one message per address, naming only
+    the children that address is a contact for. A parent on both siblings
+    gets one message about both; a guardian on only one dancer hears about
+    that dancer alone, so nobody learns about a child they aren't a contact
+    for.
+
+    Delivery is tracked per notice per address in `recipients`: an address
+    that already got a notice is never sent it again, a failed address is
+    retried on its own, and a notice counts as sent only once every one of
+    its addresses has it."""
+    from app import email as email_service
+    from app import sms as sms_service
+    if channel == 'email' and not email_service.is_configured():
+        _skip(live, 'email not configured')
+        return 0
+    if channel == 'sms' and not sms_service.is_configured():
+        _skip(live, 'SMS not configured')
+        return 0
+    if flags['cap'] and _sent_today() >= flags['cap']:
+        _skip(live, 'daily cap reached')
+        return 0
+    rows, wanted, done = [], {}, {}
+    order = OrderedDict()   # address (lower) -> address as written
+    for n in live:
+        addrs = _recipients(n, channel)
+        if not addrs:
+            _skip([n], 'no parent email' if channel == 'email' else 'no opted-in number')
+            continue
+        rows.append(n)
+        wanted[n.id] = {a.lower() for a in addrs}
+        done[n.id] = _delivered(n) & wanted[n.id]
+        for a in addrs:
+            order.setdefault(a.lower(), a)
+    failed, stopped, messages = set(), set(), 0
+    for key, addr in order.items():
+        about = [n for n in rows if key in wanted[n.id] and key not in done[n.id]]
+        if not about:
+            continue
+        if channel == 'email':
+            subject, body = compose_email(about)
+            try:
+                send_email(addr, subject, body)
+                ok, code = True, None
+            except Exception as e:  # noqa: BLE001 - SMTP raises many types
+                logger.warning('Tap notice email to one address failed: %s', e)
+                ok, code = False, None
+        else:
+            ok, code = send_sms(addr, compose_sms(about))
+        if ok:
+            messages += 1
+            for n in about:
+                done[n.id].add(key)
+        elif channel == 'sms' and code in sms_service.OPTED_OUT_CODES:
+            stopped.add(key)
+            _record_stop(addr)
+        else:
+            failed.add(key)
+    for n in rows:
+        n.recipients = ', '.join(order[k] for k in order if k in done[n.id])
+        missing = wanted[n.id] - done[n.id] - stopped
+        if not missing:
+            if done[n.id]:
+                n.status, n.sent_at = 'sent', n.sent_at or now
+            else:
+                _skip([n], 'parent replied STOP')
+        elif missing & failed:
+            _retry([n], now, f'{channel} failed for {len(missing)} of {len(wanted[n.id])} address(es)')
+    return messages
 
 
 def _record_stop(phone):

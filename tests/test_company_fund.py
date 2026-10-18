@@ -35,7 +35,7 @@ from app.helpers import (  # noqa: E402
 )
 from app.migrations import run_migrations  # noqa: E402
 from app.models import (  # noqa: E402
-    AuditLog, CompanyMembership, Family, ParentStudent, PerformanceGroup, Setting, Student,
+    AuditLog, CompanyMembership, Family, ParentStudent, PendingPayment, PerformanceGroup, Setting, Student,
     Transaction, User,
 )
 
@@ -191,8 +191,8 @@ def test_dropdowns_render_from_map():
     with app.test_client() as c:
         login_admin(c)
         html = c.get("/transactions").get_data(as_text=True)
-        record("/transactions renders a Company / Foundation optgroup with company_dues",
-               'label="Company / Foundation"' in html and 'value="company_dues"' in html)
+        record("/transactions renders a Company optgroup with company_dues",
+               'label="Company"' in html and 'value="company_dues"' in html)
 
 
 def test_hard_wall():
@@ -316,10 +316,10 @@ def test_company_visibility():
             end = html.find(">Portal Access</h2>")
             return html[start:end] if start >= 0 and end > start else ""
         record("studio-only student detail shows Studio and hides the Company block",
-               "Studio" in account_card(plain) and "Company / Foundation" not in account_card(plain),
+               "Studio" in account_card(plain) and "Company" not in account_card(plain),
                account_card(plain)[:200])
         record("student with Company activity shows the Company block",
-               "Company / Foundation" in account_card(with_row), account_card(with_row)[:200])
+               "Company" in account_card(with_row), account_card(with_row)[:200])
 
 def test_ledger_shape():
     """Test 9: build_ledger keeps one running balance per fund and files each
@@ -450,10 +450,119 @@ def _make_parent(username, student_id):
         db.session.commit()
 
 
+def test_parent_family_ledger_scope():
+    """A parent linked to one sibling cannot read another sibling's money."""
+    with app.app_context():
+        family = Family(name="Shared household")
+        db.session.add(family)
+        db.session.commit()
+        family_id = family.id
+    linked = new_student("Linked", family_id)
+    linked_two = new_student("LinkedTwo", family_id)
+    other = new_student("Other", family_id)
+    post_txn(linked, "charge", 35, "competition")
+    post_txn(linked_two, "charge", 15, "competition")
+    post_txn(other, "charge", 90, "competition")
+    _make_parent("scopedparent", linked)
+    with app.app_context():
+        parent = User.query.filter_by(username="scopedparent").one()
+        db.session.add(ParentStudent(parent_id=parent.id, student_id=linked_two))
+        db.session.commit()
+        parent_id = parent.id
+    with app.test_client() as c:
+        c.post("/auth/login", data={"username": "scopedparent", "password": "pw"})
+        response = c.get(f"/api/families/{family_id}/ledger")
+        data = response.get_json()
+        record("parent family ledger contains only linked child and their charges",
+               response.status_code == 200
+               and {s["id"] for s in data["students"]} == {linked, linked_two}
+               and {row["student_id"] for row in data["ledger"]} == {linked, linked_two}
+               and {item["student_id"] for item in data["open_charges"]} == {linked, linked_two}
+               and data["funds"]["studio"]["balance"] == "0.00",
+               str(data))
+        dashboard = c.get("/parent").get_data(as_text=True)
+        record("partial-family parent sees no whole-family pay banner",
+               f"openPay('family', {family_id}," not in dashboard)
+        claim = c.post("/api/payments/claim", json={"family_id": family_id,
+                      "amount": 50, "method": "cashapp", "fund": "company"})
+        record("partial-family parent cannot create a whole-family payment claim",
+               claim.status_code == 403, str(claim.get_json()))
+        statement = c.get(f"/students/{linked}/statement")
+        record("linked child's statement is available to parent", statement.status_code == 200)
+        other_statement = c.get(f"/students/{other}/statement")
+        record("unlinked child's statement is not available to parent",
+               other_statement.status_code == 302)
+    with app.app_context():
+        pending = PendingPayment(family_id=family_id, parent_id=parent_id,
+                                 amount=35, method="cashapp", fund="company", status="pending")
+        db.session.add(pending)
+        db.session.commit()
+        pending_id = pending.id
+    with app.test_client() as c:
+        login_admin(c)
+        refused = c.post(f"/api/pending-payments/{pending_id}/confirm", json={})
+        body = refused.get_json() or {}
+        with app.app_context():
+            none_paid = not [t for t in Transaction.query.filter_by(type="payment", fund="company").all()
+                             if t.student_id in {linked, linked_two, other}]
+        record("a legacy family claim from a partly linked parent isn't auto-split",
+               refused.status_code == 409 and body.get("needs_allocation") and none_paid
+               and {s["id"] for s in body.get("students", [])} >= {linked, linked_two, other}
+               and {s["id"] for s in body["students"] if s["linked_to_claimant"]} == {linked, linked_two},
+               str(body))
+        bad = c.post(f"/api/pending-payments/{pending_id}/confirm",
+                     json={"allocations": [{"student_id": linked, "amount": 20}]})
+        record("a hand split that doesn't add up to the claim is refused", bad.status_code == 400)
+        stranger = c.post(f"/api/pending-payments/{pending_id}/confirm",
+                          json={"allocations": [{"student_id": 999999, "amount": 35}]})
+        record("a hand split can't credit a dancer outside the family", stranger.status_code == 400)
+        confirmed = c.post(f"/api/pending-payments/{pending_id}/confirm",
+                           json={"allocations": [{"student_id": linked, "amount": 25},
+                                                 {"student_id": other, "amount": 10}]})
+        with app.app_context():
+            paid = {t.student_id: float(t.amount)
+                    for t in Transaction.query.filter_by(type="payment", fund="company").all()
+                    if t.student_id in {linked, linked_two, other}}
+        record("the admin's hand split is posted exactly, in the claim's fund",
+               confirmed.status_code == 200 and paid == {linked: 25.0, other: 10.0}, str(paid))
+
+
+def test_family_banner_excludes_withdrawn_students():
+    """The combined amount must match the active children eligible for allocation."""
+    with app.app_context():
+        family = Family(name="Active family")
+        db.session.add(family)
+        db.session.commit()
+        family_id = family.id
+    first = new_student("ActiveOne", family_id)
+    second = new_student("ActiveTwo", family_id)
+    withdrawn = new_student("Withdrawn", family_id)
+    post_txn(first, "charge", 20, "competition")
+    post_txn(second, "charge", 10, "competition")
+    post_txn(withdrawn, "charge", 50, "competition")
+    _make_parent("activefamilyparent", first)
+    with app.app_context():
+        parent = User.query.filter_by(username="activefamilyparent").one()
+        db.session.add_all([
+            ParentStudent(parent_id=parent.id, student_id=second),
+            ParentStudent(parent_id=parent.id, student_id=withdrawn),
+        ])
+        db.session.get(Student, withdrawn).is_active = False
+        db.session.commit()
+    with app.test_client() as client:
+        client.post("/auth/login", data={"username": "activefamilyparent", "password": "pw"})
+        dashboard = client.get("/parent").get_data(as_text=True)
+        record("family pay banner excludes withdrawn child and balance",
+               f"openPay('family', {family_id}," in dashboard
+               and "Pay $30.00 (Company) for everyone" in dashboard
+               and "Pay $80.00 (Company) for everyone" not in dashboard,
+               dashboard)
+
+
 def test_pending_fund_and_receipt():
     """Tests 12 + 13: a parent's claim carries a fund (default studio, bad
     value rejected); confirming a Company claim records the payment in the
-    Company fund only; the receipt names Company / Foundation."""
+    Company fund only; the receipt names Company."""
     sid = new_student("Claim")
     post_txn(sid, "charge", 60, "tuition")
     post_txn(sid, "charge", 45, "competition")
@@ -496,8 +605,8 @@ def test_pending_fund_and_receipt():
         record("the recorded payment row is fund=company",
                len(rows) == 1 and rows[0].fund == "company", str([(t.fund, str(t.amount)) for t in rows]))
     receipts = [b for (_, subj, b) in captured if subj.startswith("Payment received")]
-    record("receipt body names the Company / Foundation account",
-           len(receipts) == 1 and "Company / Foundation" in receipts[0], str(captured)[:300])
+    record("receipt body names the Company account",
+           len(receipts) == 1 and "Company account" in receipts[0], str(captured)[:300])
 
 
 def test_statement_and_csv_per_fund():
@@ -513,15 +622,15 @@ def test_statement_and_csv_per_fund():
     with app.test_client() as c:
         login_admin(c)
         html = c.get(f"/students/{sid}/statement?year={year}").get_data(as_text=True)
-        record("statement shows the Company / Foundation block and the Foundation note",
-               "Company / Foundation" in html and "payable to the LSODance Foundation" in html)
+        record("statement shows the Company block and the Foundation note",
+               "Company" in html and "payable to the LSODance Foundation" in html)
         record("statement has a Studio and a Company ending balance line",
-               "Studio ending balance" in html and "Company / Foundation ending balance" in html)
+               "Studio ending balance" in html and "Company ending balance" in html)
         record("statement has no unlabelled grand 'Ending balance' row",
                ">Ending balance<" not in html)
         record("statement carries a Fund column header and per-fund brought-forward rows",
                ">Fund<" in html and "Studio balance brought forward" in html
-               and "Company / Foundation balance brought forward" in html)
+               and "Company balance brought forward" in html)
         record("statement totals are per fund (studio $120.00 charged, company $80.00 charged)",
                "$120.00" in html and "$80.00" in html and "$60.00" in html)
 
@@ -529,7 +638,7 @@ def test_statement_and_csv_per_fund():
         post_txn(plain, "charge", 10, "tuition")
         html = c.get(f"/students/{plain}/statement?year={year}").get_data(as_text=True)
         record("studio-only statement hides the Company block",
-               "Company / Foundation" not in html)
+               "Company ending balance" not in html)
 
         r = c.get("/api/reports/transactions.csv")
         text = r.get_data(as_text=True)
@@ -537,13 +646,13 @@ def test_statement_and_csv_per_fund():
         record("transactions CSV header has a Fund column after Category",
                r.status_code == 200 and lines[0] == "Date,Student,Type,Category,Fund,Amount,Method,Description", lines[0] if lines else "")
         record("transactions CSV ends with per-fund subtotal rows",
-               "Subtotal charges - Company / Foundation" in text and "Subtotal payments - Studio" in text,
+               "Subtotal charges - Company" in text and "Subtotal payments - Studio" in text,
                text[-300:])
         r = c.get("/api/reports/transactions.csv?fund=company")
         text = r.get_data(as_text=True)
         record("?fund=company filters rows and subtotals to the Company fund",
                r.status_code == 200 and "Subtotal charges - Studio" not in text and ",Studio," not in text
-               and "Subtotal charges - Company / Foundation" in text, text[-300:])
+               and "Subtotal charges - Company" in text, text[-300:])
         r = c.get("/api/reports/transactions.csv?fund=nope")
         record("?fund=nope -> 400", r.status_code == 400, str(r.get_json()))
 
@@ -561,6 +670,8 @@ def main():
     test_ledger_shape()
     test_transfer()
     test_payment_options_per_fund()
+    test_parent_family_ledger_scope()
+    test_family_banner_excludes_withdrawn_students()
     test_pending_fund_and_receipt()
     test_statement_and_csv_per_fund()
     fails = [r for r in results if not r[1]]

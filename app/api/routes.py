@@ -1913,10 +1913,12 @@ def get_student_ledger(student_id):
         Transaction.transaction_date, Transaction.created_at
     ).all()
     result = build_ledger(txns)
+    open_items = [c for c in charge_remainders(txns) if c['remaining'] > 0]
     return jsonify({
         'student_id': student.id,
         'student_name': student.full_name,
         'has_company': student.id in has_company_activity_bulk([student.id]),
+        'open_charges': [{**c, 'date': c['date'].isoformat()} for c in open_items],
         **result,
     })
 
@@ -3076,6 +3078,9 @@ def get_family_ledger(family_id):
         return err
     family = Family.query.get_or_404(family_id)
     students = family.students.filter_by(is_active=True).all()
+    if current_user.is_parent:
+        linked_ids = _parent_student_ids(current_user)
+        students = [student for student in students if student.id in linked_ids]
     student_ids = [s.id for s in students]
 
     all_txns = (
@@ -3087,6 +3092,13 @@ def get_family_ledger(family_id):
 
     result = build_ledger(all_txns)
     balances = calc_balance_bulk(student_ids)
+    open_items = []
+    for student in students:
+        student_txns = [t for t in all_txns if t.student_id == student.id]
+        open_items.extend({**c, 'date': c['date'].isoformat(),
+                           'student_id': student.id, 'student_name': student.full_name}
+                          for c in charge_remainders(student_txns)
+                          if c['remaining'] > 0)
     return jsonify({
         'family_id': family.id, 'family_name': family.name,
         'students': [{'id': s.id, 'full_name': s.full_name,
@@ -3095,6 +3107,7 @@ def get_family_ledger(family_id):
                       'balances': {fund: f"{balances[s.id][fund]['balance']:.2f}" for fund in FUNDS}}
                      for s in students],
         'has_company': bool(has_company_activity_bulk(student_ids)),
+        'open_charges': open_items,
         **result,
     })
 
@@ -3787,6 +3800,9 @@ def claim_payment():
             my_families = {Student.query.get(sid).family_id for sid in my_students}
             if family_id not in my_families:
                 return jsonify({'error': 'Not authorized for this family'}), 403
+            active_ids = {s.id for s in Family.query.get_or_404(family_id).students.filter_by(is_active=True).all()}
+            if not active_ids.issubset(my_students):
+                return jsonify({'error': 'Family payment requires access to every active child'}), 403
     elif not current_user.is_admin:
         # Billing is admin-only: teachers can't record payment claims on a
         # family's behalf (least privilege).
@@ -3867,14 +3883,53 @@ def confirm_pending_payment(pid):
         who = p.student.full_name
     else:
         students = p.family.students.filter_by(is_active=True).all()
-        allocations = allocate_family_payment([s.id for s in students], amount, p.fund)
+        explicit = data.get('allocations')
+        if explicit is not None:
+            # The admin split it by hand (see below). Every share must go to a
+            # dancer in this family and the shares must add up to the claim.
+            if not isinstance(explicit, list) or not explicit:
+                return jsonify({'error': 'allocations must be a list of {student_id, amount}'}), 400
+            fam_ids = {s.id for s in p.family.students.all()}
+            allocations = []
+            for a in explicit:
+                if not isinstance(a, dict):
+                    return jsonify({'error': 'allocations must be a list of {student_id, amount}'}), 400
+                sid, serr = _valid_id(a.get('student_id'))
+                if serr or sid not in fam_ids:
+                    return jsonify({'error': 'Every share must go to a dancer in this family'}), 400
+                amt, aerr = _valid_amount(a.get('amount'))
+                if aerr:
+                    return aerr
+                allocations.append((sid, amt))
+            if abs(sum(a for _, a in allocations) - amount) > 0.005:
+                return jsonify({'error': f'The shares must add up to ${amount:.2f}'}), 400
+        else:
+            # A parent can only see (and so only claim for) the dancers they
+            # are linked to. If this family has other active dancers - a claim
+            # made before that rule, or links that changed since - an automatic
+            # split could credit the whole payment to the wrong child. Stop and
+            # have the admin split it by hand.
+            if p.parent and p.parent.is_parent:
+                linked_ids = _parent_student_ids(p.parent)
+                if {s.id for s in students} - linked_ids:
+                    return jsonify({
+                        'error': ("This family payment came from a parent linked to only some of "
+                                  "the family's dancers. Split it by hand so the right dancers are "
+                                  "credited."),
+                        'needs_allocation': True,
+                        'amount': f'{amount:.2f}',
+                        'students': [{'id': s.id, 'name': s.full_name,
+                                      'linked_to_claimant': s.id in linked_ids}
+                                     for s in students],
+                    }), 409
+            allocations = allocate_family_payment([s.id for s in students], amount, p.fund)
         if not allocations:
             # Nobody owed and no students — record against first student if any
             if students:
                 allocations = [(students[0].id, amount)]
             else:
                 return jsonify({'error': 'Family has no active students to credit'}), 400
-        receipt_email = family_emails(p.family)
+        receipt_email = ([p.parent.email] if p.parent.email else []) if p.parent and p.parent.is_parent else family_emails(p.family)
         who = f'{p.family.name} (family)'
 
     method_label = p.method
