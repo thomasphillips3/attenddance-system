@@ -309,6 +309,14 @@ def create_app(config_name=None):
             _process_auto_reminders()
         except Exception:
             logger.exception("Auto-reminder processing failed at startup")
+        # Tap-In parent notices: one background sender. Anything left pending
+        # from before a restart goes out (or is skipped as stale) on its first
+        # pass. Production only by default (config TAP_NOTIFY_WORKER).
+        try:
+            from app.tap.outbox import start_worker
+            start_worker(app)
+        except Exception:
+            logger.exception("Tap notice worker failed to start")
 
     @app.before_request
     def _enforce_active_user():

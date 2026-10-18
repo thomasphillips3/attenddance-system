@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+{% from "_components.html" import page_header, card %}
+
+{% block content %}
+{{ page_header('Tap-In', 'Dancers tap a key fob or card on a staff phone to check in and out.', 'id-card') }}
+
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-6" x-data="tapHub({{ 'true' if current_user.is_admin else 'false' }})" x-init="init()">
+    <div class="lg:col-span-2 space-y-6">
+        <div class="grid sm:grid-cols-2 gap-4">
+            <a href="{{ url_for('main.tap_station') }}" class="block p-5 rounded-2xl bg-primary-500 text-white shadow-soft hover:bg-primary-600">
+                <p class="text-lg font-bold"><i class="fas fa-mobile-screen-button mr-2"></i>Start a tap station</p>
+                <p class="text-sm text-white/80 mt-1">Android phone or tablet (Chrome), or a laptop with the USB reader. Dancers tap one after another.</p>
+            </a>
+            <a href="{{ url_for('main.tap_today') }}" class="block p-5 rounded-2xl bg-surface border border-line shadow-soft hover:border-primary-300">
+                <p class="text-lg font-bold text-ink"><i class="fas fa-list-check mr-2 text-primary-500"></i>Today's taps</p>
+                <p class="text-sm text-ink-2 mt-1">Who's here, who left, and who never tapped out.</p>
+            </a>
+        </div>
+
+        {% call card('Dancers without a tag', 'user-tag') %}
+            <p class="text-sm text-ink-2 mb-3" x-show="missing.loaded && missing.count">
+                <b x-text="missing.count"></b> of <span x-text="missing.total"></span> active dancers don't have an active tag yet.
+            </p>
+            <div class="max-h-80 overflow-y-auto divide-y divide-line">
+                <template x-for="s in missing.students" :key="s.id">
+                    <a :href="'/students/' + s.id + '/detail#tags'" class="flex items-center justify-between py-2 text-sm hover:bg-surface-2 px-1 rounded">
+                        <span class="text-ink" x-text="s.name"></span>
+                        <span class="text-xs" :class="s.has_pending ? 'text-warn font-bold' : 'text-primary-600'" x-text="s.has_pending ? 'Setup not finished' : 'Set up'"></span>
+                    </a>
+                </template>
+            </div>
+            <p class="text-sm text-ok font-bold" x-show="missing.loaded && !missing.count"><i class="fas fa-circle-check mr-1"></i>Every active dancer has a tag.</p>
+        {% endcall %}
+
+        {% if current_user.is_admin %}
+        {% call card('Settings', 'sliders') %}
+            <form @submit.prevent="save()" class="space-y-4 text-sm">
+                <div>
+                    <label class="block font-bold text-ink mb-1" for="tap_base_url">Permanent tag address</label>
+                    <input id="tap_base_url" x-model="s.tap_base_url" placeholder="https://attenddance.fly.dev" class="w-full border border-line-2 rounded-lg px-3 py-2">
+                    <p class="text-xs text-ink-3 mt-1">Every tag holds a link to this address. Until it's saved, tags use <span class="font-mono" x-text="s.effective_base_url"></span> and none can be locked. Pick the address you'll keep for years: a locked tag can never be rewritten.</p>
+                    <p class="text-xs text-warn font-bold mt-1" x-show="s.locked_tags"><span x-text="s.locked_tags"></span> locked tag(s) point at the current address.</p>
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                    <label class="block"><span class="block font-bold text-ink mb-1">Check-in opens (min before class)</span>
+                        <input type="number" min="0" max="240" x-model.number="s.tap_early_minutes" class="w-full border border-line-2 rounded-lg px-3 py-2"></label>
+                    <label class="block"><span class="block font-bold text-ink mb-1">Check-in closes (min after class ends)</span>
+                        <input type="number" min="0" max="240" x-model.number="s.tap_late_minutes" class="w-full border border-line-2 rounded-lg px-3 py-2"></label>
+                    <label class="block"><span class="block font-bold text-ink mb-1">Ignore repeat taps for (seconds)</span>
+                        <input type="number" min="3" max="300" x-model.number="s.tap_dedup_seconds" class="w-full border border-line-2 rounded-lg px-3 py-2"></label>
+                    <label class="block"><span class="block font-bold text-ink mb-1">Check-out allowed after (minutes in)</span>
+                        <input type="number" min="0" max="180" x-model.number="s.tap_dwell_minutes" class="w-full border border-line-2 rounded-lg px-3 py-2"></label>
+                    <label class="block"><span class="block font-bold text-ink mb-1">Mark T after (min past start, 0 = off)</span>
+                        <input type="number" min="0" max="120" x-model.number="s.tap_tardy_grace_minutes" class="w-full border border-line-2 rounded-lg px-3 py-2"></label>
+                    <label class="flex items-center gap-2 self-end pb-2"><input type="checkbox" x-model="s.tap_rollover_enabled" class="rounded">
+                        <span class="text-ink">Back-to-back classes carry over</span></label>
+                </div>
+                <div class="pt-3 border-t border-line">
+                    <p class="font-bold text-ink mb-2">Parent check-in notices</p>
+                    <div class="space-y-2">
+                        <label class="flex items-center gap-2"><input type="checkbox" x-model="s.tap_notify_email_enabled" class="rounded">
+                            <span class="text-ink">Email parents when their dancer checks in and out</span></label>
+                        <label class="flex items-center gap-2"><input type="checkbox" x-model="s.tap_notify_sms_enabled" class="rounded">
+                            <span class="text-ink">Offer text notices (parents opt in from the portal)</span></label>
+                        <p class="text-xs text-ink-3 pl-6">Turn texts on only after the Twilio number is registered for 10DLC, or carriers block them. About 2 texts per dancer per class.</p>
+                        <label class="flex items-center gap-2"><input type="checkbox" x-model="s.tap_notify_paused" class="rounded">
+                            <span class="text-ink font-bold text-danger">Pause all notices</span></label>
+                        <label class="block max-w-xs"><span class="block font-bold text-ink mb-1">Daily limit (messages)</span>
+                            <input type="number" min="1" max="2000" x-model.number="s.tap_notify_daily_cap" class="w-full border border-line-2 rounded-lg px-3 py-2"></label>
+                        <p class="text-xs text-ink-3">Keep this under the studio Gmail's daily sending limit (about 500), or receipts and reminders stop for the day.</p>
+                    </div>
+                </div>
+                <button type="submit" class="px-4 py-2 rounded-xl bg-primary-500 text-white font-bold hover:bg-primary-600">Save settings</button>
+            </form>
+        {% endcall %}
+        {% endif %}
+    </div>
+
+    <div class="space-y-6">
+        {% call card('Staff phone setup', 'list-ol') %}
+            <div class="text-sm text-ink-2 space-y-4">
+                <div>
+                    <p class="font-bold text-ink mb-1"><i class="fab fa-apple mr-1"></i>iPhone (XS or newer)</p>
+                    <ol class="list-decimal pl-5 space-y-1">
+                        <li>Sign in to this site in <b>Safari</b> and check "Remember me". Tag links open in Safari, and the Home Screen app keeps its own separate sign-in.</li>
+                        <li>Set Auto-Lock to 5 minutes or more during drop-off. A locked phone doesn't read tags.</li>
+                        <li>Close the Camera and Wallet. The iPhone won't read tags while either is open.</li>
+                        <li>Hold the top edge of the phone to the tag, then tap the banner that pops up. The result fills the screen.</li>
+                    </ol>
+                </div>
+                <div>
+                    <p class="font-bold text-ink mb-1"><i class="fab fa-android mr-1"></i>Android</p>
+                    <ol class="list-decimal pl-5 space-y-1">
+                        <li>Turn on NFC in Settings.</li>
+                        <li>In Chrome, open Tap-In, then Start a tap station, then tap Start. Keep the page open.</li>
+                        <li>Dancers hold their tag to the middle of the back of the phone. No banner to tap.</li>
+                    </ol>
+                </div>
+                <p class="text-xs text-ink-3">Setting up new tags needs an Android phone, or the free NXP TagWriter app on iPhone.</p>
+            </div>
+        {% endcall %}
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+window.tapHub = function (isAdmin) {
+    return {
+        isAdmin, s: {}, missing: { students: [], count: 0, total: 0, loaded: false },
+        async init() {
+            try {
+                const r = await fetch('/api/tags/missing');
+                const d = await r.json();
+                if (r.ok) this.missing = Object.assign(d, { loaded: true });
+            } catch (e) { /* offline */ }
+            if (this.isAdmin) {
+                const r = await fetch('/api/tap/settings');
+                if (r.ok) this.s = await r.json();
+            }
+        },
+        async save(confirmBreak) {
+            const body = Object.assign({}, this.s, confirmBreak ? { confirm_break_locked: true } : {});
+            const r = await fetch('/api/tap/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+            const d = await r.json();
+            if (r.status === 409 && d.needs_confirm) {
+                if (confirm(d.error + ' Change it anyway?')) return this.save(true);
+                return;
+            }
+            if (!r.ok) { toast(d.error || 'Error', false); return; }
+            this.s = d; toast('Saved', true);
+        },
+    };
+};
+</script>
+{% endblock %}

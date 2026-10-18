@@ -11,31 +11,15 @@ from app.models import Transaction
 def build_aging(txns: list, as_of: date | None = None) -> dict:
     """Accounts-receivable aging for one entity from its transactions.
 
-    Applies payments FIFO against the oldest charges (standard AR method), then
-    buckets each charge's unpaid remainder by how old that charge is:
+    Applies linked payments to their chosen charges and unlinked payments FIFO,
+    then buckets each charge's unpaid remainder by how old that charge is:
       current (0-30d), d31_60, d61_90, d90_plus.
 
     Expects txns for a single student/family. Order-independent (sorts here).
     Returns {'current','d31_60','d61_90','d90_plus','total'} as floats (rounded).
     """
     as_of = as_of or date.today()
-    ordered = sorted(txns, key=lambda t: (t.transaction_date, t.created_at or t.transaction_date))
-    charges = []  # oldest first: {'date', 'remaining'}
-    payment_pool = 0.0
-    for t in ordered:
-        amt = float(t.amount)
-        if t.type == 'charge':
-            charges.append({'date': t.transaction_date, 'remaining': amt})
-        else:
-            payment_pool += amt
-
-    # Pay down oldest charges first.
-    for c in charges:
-        if payment_pool <= 0:
-            break
-        pay = min(c['remaining'], payment_pool)
-        c['remaining'] = round(c['remaining'] - pay, 2)
-        payment_pool = round(payment_pool - pay, 2)
+    charges = charge_remainders(txns)
 
     buckets = {'current': 0.0, 'd31_60': 0.0, 'd61_90': 0.0, 'd90_plus': 0.0}
     for c in charges:
@@ -56,6 +40,35 @@ def build_aging(txns: list, as_of: date | None = None) -> dict:
         buckets[k] = round(buckets[k], 2)
     buckets['total'] = round(sum(buckets.values()), 2)
     return buckets
+
+
+def charge_remainders(txns: list) -> list[dict]:
+    """Apply linked payments to their charge, then unlinked payments FIFO."""
+    ordered = sorted(txns, key=lambda t: (t.transaction_date, t.created_at or t.transaction_date))
+    charges = [{'id': getattr(t, 'id', None), 'date': t.transaction_date,
+                'amount': float(t.amount), 'remaining': float(t.amount),
+                'category': getattr(t, 'category', None),
+                'description': getattr(t, 'description', None),
+                'fund': getattr(t, 'fund', None)} for t in ordered if t.type == 'charge']
+    by_id = {c['id']: c for c in charges if c['id'] is not None}
+    unlinked = {}
+    for t in ordered:
+        if t.type != 'payment':
+            continue
+        target = by_id.get(getattr(t, 'applied_charge_id', None))
+        if target is not None:
+            target['remaining'] = round(target['remaining'] - float(t.amount), 2)
+        else:
+            fund = getattr(t, 'fund', None)
+            unlinked[fund] = unlinked.get(fund, 0.0) + float(t.amount)
+    for c in charges:
+        fund = c['fund']
+        if unlinked.get(fund, 0) <= 0:
+            continue
+        paid = min(max(c['remaining'], 0), unlinked[fund])
+        c['remaining'] = round(c['remaining'] - paid, 2)
+        unlinked[fund] = round(unlinked[fund] - paid, 2)
+    return charges
 
 
 def calc_balance(student_id: int) -> dict:
@@ -364,7 +377,11 @@ def family_emails(family):
     return _dedupe_emails(candidates)
 
 
-def student_to_dict(student) -> dict:
+def student_to_dict(student, has_tag=None) -> dict:
+    """`has_tag` lets a list endpoint pass a precomputed answer instead of one
+    query per dancer."""
+    if has_tag is None:
+        has_tag = student.has_active_tag()
     return {
         'id': student.id,
         'first_name': student.first_name,
@@ -402,8 +419,8 @@ def student_to_dict(student) -> dict:
         'size_notes': student.size_notes,
         'family_id': student.family_id,
         'family_name': student.family.name if student.family else None,
-        'rfid_uid': student.rfid_uid,
-        'has_rfid': student.has_rfid(),
+        'has_tag': has_tag,
+        'rfid_uid': student.rfid_uid,  # legacy badge, read-only history
         'rfid_assigned_at': _utc_iso(student.rfid_assigned_at),  # UTC metadata -> 'Z' for correct local display
         'is_active': student.is_active,
         'enrollment_date': student.enrollment_date.isoformat(),
@@ -595,6 +612,9 @@ def transaction_to_dict(t) -> dict:
         'category': t.category,
         'fund': t.fund,
         'payment_method': t.payment_method if t.payment_method != 'n/a' else None,
+        'applied_charge_id': t.applied_charge_id,
+        'applied_charge_description': (t.applied_charge.description or t.applied_charge.category)
+                                      if t.applied_charge else None,
         'description': t.description,
         'transaction_date': t.transaction_date.isoformat(),
         'created_by': t.creator.full_name if t.creator else None,

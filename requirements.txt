@@ -6,11 +6,6 @@ Flask-WTF==1.3.0
 WTForms==3.2.2
 Werkzeug==3.1.8
 
-# RFID Hardware Support - Latest versions for Raspberry Pi
-mfrc522==0.0.7
-RPi.GPIO==0.7.1
-spidev==3.6
-
 # Security and Authentication
 cryptography>=48.0.1,<49  # encrypt payment credentials at rest
 

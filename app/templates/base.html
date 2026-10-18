@@ -168,6 +168,7 @@
                 {{ nl('Calendar', 'main.calendar_page', 'calendar-days', ['calendar']) }}
                 {{ nl('Take Attendance', 'main.take_attendance', 'clipboard-check', ['take']) }}
                 {{ nl('Attendance Log', 'main.attendance', 'list-check', ['main.attendance']) }}
+                {{ nl('Tap-In', 'main.tap_hub', 'id-card', ['main.tap_']) }}
                 {% if current_user.is_admin %}{{ nl('Makeups', 'main.makeups_page', 'rotate', ['makeups']) }}{% endif %}
                 {% if current_user.is_admin %}{{ nl('Skills', 'main.skills_page', 'medal', ['skills']) }}{% endif %}
 
@@ -191,7 +192,7 @@
                 {{ nl('Rules', 'main.rules_admin', 'gavel', ['rules']) }}
                 {{ nl('Messages', 'main.messages_page', 'envelope', ['message']) }}
                 {{ nl('Time Clock', 'main.timeclock_page', 'business-time', ['timeclock']) }}
-                {% if current_user.is_admin %}{{ nl('User Manual', 'main.manual_page', 'book-open', ['manual']) }}{% endif %}
+                {{ nl('User Manual', 'main.manual_page', 'book-open', ['manual']) }}
             </nav>
             <div class="border-t border-line p-3 flex items-center gap-2.5">
                 <span class="h-9 w-9 rounded-full bg-gold-300 text-gold-ink flex items-center justify-center text-sm font-bold">{{ current_user.first_name[0]|upper }}{{ current_user.last_name[0]|upper }}</span>
@@ -281,7 +282,7 @@
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {
-                navigator.serviceWorker.register('/static/sw.js').catch(function () {});
+                navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(function () {});
             });
         }
         // The API returns class times as 24-hour "HH:MM" (that's what

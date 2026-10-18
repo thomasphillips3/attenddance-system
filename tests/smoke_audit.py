@@ -164,7 +164,8 @@ def run_idor(ids):
             "/api/registrations",         # every enrollment request (PII)
             "/api/audit-log",             # the full audit trail
             "/api/analytics/retention",   # retention analytics
-            "/api/rfid/logs",             # every check-in
+            "/api/tags/missing",          # roster of dancers without a tag
+            "/api/tap/settings",          # Tap-In settings
             "/api/timeclock/report",      # staff payroll
             "/api/waivers/compliance",    # every family's waiver status
             "/api/settings/payments",     # payment config (may carry secrets)
@@ -1914,7 +1915,7 @@ def run_full_mutation_fuzz():
     effects (external calls, destructive to the shared test DB)."""
     import re as _re
     SKIP = {"/api/cron/run", "/api/webhooks/square", "/api/settings/payments/test-square",
-            "/api/settings/sms/test", "/api/seed-demo-parent", "/api/rfid/simulate",
+            "/api/settings/sms/test", "/api/seed-demo-parent",
             "/api/auth/login", "/api/auth/logout", "/api/register",
             "/api/students/424242/invite-parent", "/api/messages"}
     with app.app_context():
@@ -2029,13 +2030,12 @@ def run_reminder_non_blocking():
 
 
 def run_rfid_assign_unique():
-    """An RFID card must map to exactly ONE student — assigning a UID already on
-    another student is rejected. Otherwise the scan (which does `.first()` on the
-    UID) would check in the wrong dancer. Re-assigning the same UID to the SAME
-    student is fine (idempotent)."""
+    """A check-in tag must map to exactly ONE dancer. Enrolling a chip that is
+    already another dancer's active tag is refused, or the tap would check in
+    the wrong child. (Was the legacy assign-rfid check; Tap-In replaced it.)"""
     from app.models import Student, Family
     with app.app_context():
-        fam = Family(name="RfidUniq Fam")
+        fam = Family(name="TagUniq Fam")
         db.session.add(fam)
         db.session.flush()
         a = Student(first_name="Card", last_name="Aaa", family_id=fam.id, is_active=True)
@@ -2045,17 +2045,17 @@ def run_rfid_assign_unique():
         aid, bid = a.id, b.id
     with app.test_client() as c:
         login(c, "admin", "admin123")
-        r1 = c.post(f"/api/students/{aid}/assign-rfid", json={"rfid_uid": "UNIQCARD_1"})
-        r2 = c.post(f"/api/students/{bid}/assign-rfid", json={"rfid_uid": "UNIQCARD_1"})  # dup -> reject
-        r3 = c.post(f"/api/students/{aid}/assign-rfid", json={"rfid_uid": "UNIQCARD_1"})  # same student -> ok
-    record("RFID card can't be assigned to two students (prevents wrong-student check-in)",
-           r1.status_code == 200 and r2.status_code == 400 and r3.status_code == 200,
-           f"assignA={r1.status_code} dupB={r2.status_code} reassignA={r3.status_code}", "P2")
-    # rfid_assigned_at is UTC metadata — must be emitted with a 'Z' so the browser
-    # renders it in local time, not shifted (display-consistency sweep, iter 161).
-    ra = ((r1.get_json() or {}).get("student") or {}).get("rfid_assigned_at") or ""
-    record("UTC metadata timestamp emitted with 'Z' (rfid_assigned_at)",
-           ra.endswith("Z"), f"rfid_assigned_at={ra!r} (want trailing 'Z')", "P3")
+        r1 = c.post(f"/api/students/{aid}/tags/uid", json={"uid": "0A0B0C0D"})
+        r2 = c.post(f"/api/students/{bid}/tags/uid", json={"uid": "0a:0b:0c:0d"})  # dup -> reject
+        r3 = c.post(f"/api/students/{aid}/tags/uid", json={"uid": "0A0B0C0D"})  # already hers
+    record("A tag can't be enrolled for two dancers (prevents wrong-dancer check-in)",
+           r1.status_code == 201 and r2.status_code == 409 and r3.status_code == 409,
+           f"enrollA={r1.status_code} dupB={r2.status_code} againA={r3.status_code}", "P2")
+    # activated_at is UTC metadata: emitted with a 'Z' so the browser renders it
+    # in local time, not shifted (display-consistency sweep, iter 161).
+    ra = (r1.get_json() or {}).get("activated_at") or ""
+    record("UTC metadata timestamp emitted with 'Z' (tag activated_at)",
+           ra.endswith("Z"), f"activated_at={ra!r} (want trailing 'Z')", "P3")
 
 
 def run_day_of_week_convention():
@@ -2103,47 +2103,43 @@ def run_attendance_default_local():
 
 
 def run_rfid_checkin_local_day():
-    """An RFID scan records attendance via a third code path (rfid/service.py).
-    It must use the studio-local day like the manual/toggle paths — datetime.utcnow()
-    would date an evening scan on the next UTC day, hiding it from today's roster
-    and tripping the unique-day index. Simulate a scan and assert it lands today."""
+    """A tag tap records attendance through the Tap-In service. It must use the
+    studio-local day like the manual/toggle paths: datetime.utcnow() would date
+    an evening tap on the next UTC day, hiding it from today's roster and
+    tripping the unique-day index."""
     from datetime import date, time as _time
-    from app.models import (User, DanceClass, Student, Family, ClassEnrollment, Attendance)
-    try:
-        from rfid.service import get_rfid_service
-    except Exception as e:  # RFID module unavailable in this env — don't fail the suite
-        record("RFID scan records attendance on the studio-local day", True,
-               f"RFID service unavailable, skipped: {e}", "P3")
-        return
+    from app.models import (User, DanceClass, Student, Family, ClassEnrollment, Attendance,
+                            NfcTag, TapEvent)
+    from app.tap.credentials import hash_token, mint_token
+    from app.tap.service import TapRequest, process_tap
     with app.app_context():
         adm = User.query.filter_by(username="admin").first()
-        fam = Family(name="RFID Fam")
+        fam = Family(name="Tap Fam")
         db.session.add(fam)
         db.session.flush()
-        s = Student(first_name="Rfid", last_name="Scan", family_id=fam.id, is_active=True,
-                    rfid_uid="TESTUID_RFID_1")
+        s = Student(first_name="Tap", last_name="Scan", family_id=fam.id, is_active=True)
         db.session.add(s)
         db.session.flush()
-        # A class on today's weekday, wide open all day, so _get_current_class matches.
-        cls = DanceClass(name="RfidClass", day_of_week=date.today().weekday(),
+        cls = DanceClass(name="TapClass", day_of_week=date.today().weekday(),
                          start_time=_time(0, 0), end_time=_time(23, 59), instructor_id=adm.id)
         db.session.add(cls)
         db.session.flush()
         db.session.add(ClassEnrollment(student_id=s.id, class_id=cls.id))
+        tok = mint_token()
+        db.session.add(NfcTag(student_id=s.id, token_hash=hash_token(tok), status="active",
+                              label="T-SMOKE"))
         db.session.commit()
         sid = s.id
-    ok = get_rfid_service().simulate_scan("TESTUID_RFID_1")
-    with app.app_context():
-        from app.models import RFIDLog
-        att = Attendance.query.filter_by(student_id=sid, check_in_method="rfid").first()
+        res = process_tap(TapRequest(event_key="smoke-local-day-1", token=tok))
+        att = Attendance.query.filter_by(student_id=sid, check_in_method="tap").first()
         dated_today = att is not None and att.check_in_time.date() == date.today()
-        log = RFIDLog.query.filter_by(rfid_uid="TESTUID_RFID_1").order_by(RFIDLog.id.desc()).first()
-        log_today = log is not None and log.scan_time.date() == date.today()
-    record("RFID scan records attendance on the studio-local day (not the next UTC day)",
-           ok and dated_today,
-           f"scan_ok={ok} att={'none' if att is None else att.check_in_time.isoformat()}", "P2")
-    record("RFID scan_time log is also studio-local (matches the dashboard display)",
-           log_today, f"log scan_time={'none' if log is None else log.scan_time.isoformat()}", "P3")
+        ev = TapEvent.query.filter_by(event_key="smoke-local-day-1").first()
+        ev_today = ev is not None and ev.occurred_at.date() == date.today()
+    record("Tag tap records attendance on the studio-local day (not the next UTC day)",
+           res.outcome == "checked_in" and dated_today,
+           f"outcome={res.outcome} att={'none' if att is None else att.check_in_time.isoformat()}", "P2")
+    record("Tap ledger time is also studio-local (matches the result screen)",
+           ev_today, f"occurred_at={'none' if ev is None else ev.occurred_at.isoformat()}", "P3")
 
 
 def run_money_creation_audited():
@@ -2265,38 +2261,6 @@ def run_registration_approve_capacity():
            r.status_code == 200 and n == 1 and newcomer is not None and bool(d.get("full_skipped")),
            f"status={r.status_code} enrolled={n} (want 1) newcomer={'yes' if newcomer else 'no'} skips={d.get('full_skipped')}", "P2")
 
-
-def run_rfid_reuses_app():
-    """The RFID reader polls in a loop, one _process_card_scan per card tap. It
-    must reuse a single Flask app — building one per scan (as it did) re-ran
-    migrations, re-seeded, and spawned a reminder daemon thread on every tap, a
-    slow leak over a day of scanning. Count create_app across two scans on a
-    fresh service; expect exactly one (cached thereafter)."""
-    try:
-        import app as _appmod
-        from rfid.service import RFIDService
-    except Exception as e:
-        record("RFID reader reuses one app across scans", True,
-               f"RFID service unavailable, skipped: {e}", "P3")
-        return
-    calls = [0]
-    orig = _appmod.create_app
-
-    def counting(*a, **k):
-        calls[0] += 1
-        return orig(*a, **k)
-
-    _appmod.create_app = counting
-    try:
-        svc = RFIDService()
-        # Bogus UIDs — no student match, but each scan still routes through
-        # _get_app (and _log_rfid_scan), which is what we're counting.
-        svc.simulate_scan("NOSUCH_UID_A")
-        svc.simulate_scan("NOSUCH_UID_B")
-    finally:
-        _appmod.create_app = orig
-    record("RFID reader reuses one app across scans (create_app called once, not per tap)",
-           calls[0] == 1, f"create_app called {calls[0]}x for 2 scans (want 1)", "P2")
 
 
 def run_recurring_no_retroactive_first_month():
@@ -5110,7 +5074,6 @@ def main():
     run_rfid_assign_unique()
     run_day_of_week_convention()
     run_rfid_checkin_local_day()
-    run_rfid_reuses_app()
     run_registration_approve_capacity()
     run_money_creation_audited()
     run_costume_charge_race()

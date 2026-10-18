@@ -1,5 +1,7 @@
 {% extends "base.html" %}
 
+{% set title = "User Manual" %}
+
 {# Studio operations manual. Everything here is written against what the app
    actually does - if a behavior changes, this page has to change with it. #}
 
@@ -33,26 +35,31 @@
 {% endmacro %}
 
 {% block content %}
-<div class="flex flex-wrap items-end justify-between gap-3 mb-6 man-head">
+<div class="flex flex-wrap items-end justify-between gap-3 mb-6">
   <div>
     <div class="text-[11px] font-bold uppercase tracking-[.09em] text-primary-600">Help</div>
     <h1 class="font-display text-3xl text-ink leading-tight mt-1">User Manual</h1>
-    <p class="mt-1 text-sm text-ink-2">How to run the studio in AttenDANCE. Written for LaShelle's School of Dance.</p>
+    <p class="mt-1 text-sm text-ink-2">Teacher and admin guide for LaShelle's School of Dance.</p>
   </div>
-  <div class="flex items-center gap-2">
+  <div class="flex flex-wrap items-center gap-2 no-print">
+    <label for="man-search" class="sr-only">Search the manual</label>
     <input id="man-search" type="search" placeholder="Search the manual…"
-           class="bg-surface border border-line-2 rounded-xl px-3 py-2 text-sm w-56 focus:outline-none focus:ring-2 focus:ring-primary-200 focus:border-primary-400">
+           class="bg-surface border border-line-2 rounded-xl px-3 py-2 text-sm w-full sm:w-56 focus:outline-none focus:ring-2 focus:ring-primary-200 focus:border-primary-400">
     <button onclick="window.print()" class="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-line-2 text-sm font-bold text-ink-2 hover:border-primary-300 hover:text-primary-700">
       <i class="fas fa-print"></i>Print
     </button>
   </div>
 </div>
 
-<div id="man-noresults" class="hidden text-center py-12 text-ink-3 text-sm">
+<p class="text-sm text-ink-2 mb-5 no-print">Teachers: start with <a href="#teacher-start" class="text-primary-600 hover:underline">your daily checklist</a>.
+Admins: use the contents below for setup and studio operations. Sections marked <strong>Admin only</strong> describe controls available to admins.
+Search narrows the page; Print includes the full manual and can save a PDF.</p>
+
+<div id="man-noresults" role="status" class="hidden text-center py-12 text-ink-3 text-sm no-print">
   Nothing matches that. <button onclick="clearManSearch()" class="text-primary-600 font-bold hover:underline">Clear the search</button>
 </div>
 
-<div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+<div class="grid grid-cols-1 lg:grid-cols-12 gap-6 man-layout">
 
   <!-- Table of contents -->
   <aside class="lg:col-span-3 man-toc">
@@ -65,7 +72,9 @@
         <li><a href="#students" class="hover:text-primary-700">4. Students &amp; families</a></li>
         <li><a href="#enrollment" class="hover:text-primary-700">5. Enrollment &amp; parent portal</a></li>
         <li><a href="#attendance" class="hover:text-primary-700">6. Attendance &amp; makeups</a></li>
+        <li class="pl-3"><a href="#tap-in" class="hover:text-primary-700">Tap-In setup &amp; troubleshooting</a></li>
         <li><a href="#money" class="hover:text-primary-700">7. Money</a></li>
+        <li class="pl-3"><a href="#applied-payments" class="hover:text-primary-700">Apply a payment to a charge</a></li>
         <li><a href="#messages" class="hover:text-primary-700">8. Messages &amp; reminders</a></li>
         <li><a href="#paperwork" class="hover:text-primary-700">9. Forms, waivers &amp; rules</a></li>
         <li><a href="#recital" class="hover:text-primary-700">10. Recital &amp; costumes</a></li>
@@ -78,7 +87,7 @@
     </nav>
   </aside>
 
-  <div class="lg:col-span-9">
+  <div id="man-content" class="lg:col-span-9 min-w-0">
 
   <!-- ============ 1. START HERE ============ -->
   <h2 id="start" class="{{ h2 }}">1. Start here</h2>
@@ -86,8 +95,7 @@
   <div class="{{ card }}">
     <h3 class="{{ h3 }}">What this system does</h3>
     <p class="{{ p }}">AttenDANCE is the studio's own system for enrollment, attendance, tuition, parent
-    communication, recital planning, and company management. It replaces what the studio was paying
-    Jackrabbit for. Everything lives at <strong>attenddance.fly.dev</strong> and works on a phone,
+    communication, recital planning, and company management. Everything lives at <strong>attenddance.fly.dev</strong> and works on a phone,
     tablet, or laptop - no app to install.</p>
 
     <h3 class="{{ h3 }}">Who can do what</h3>
@@ -105,7 +113,7 @@
             <td class="px-3 py-2.5">Everything: money, students, staff, settings, recital, company</td>
             <td class="px-3 py-2.5">-</td></tr>
           <tr class="border-b border-line"><td class="px-3 py-2.5 font-bold">Teacher</td>
-            <td class="px-3 py-2.5">Take attendance, view students and classes, view families (no money), send messages to their classes, edit the recital show order and cast, clock in and out</td>
+            <td class="px-3 py-2.5">Take attendance, manage check-in tags and photos, view students, families, classes, calendar and rules, send class or individual parent messages, edit recital numbers and cast, clock in and out, read this manual</td>
             <td class="px-3 py-2.5">Anything to do with money, adding or editing students, settings, staff</td></tr>
           <tr><td class="px-3 py-2.5 font-bold">Parent</td>
             <td class="px-3 py-2.5">See only their own dancers: balance, attendance, pay, sign forms, initial rules, request makeups, sign up for auditions</td>
@@ -114,7 +122,7 @@
       </table>
     </div>
     {% call tip("Give people the smallest role that works") %}
-      A teacher account genuinely cannot see balances or edit the roster, so handing one to a new
+      A teacher account cannot see balances or edit the roster, so handing one to a new
       instructor is safe. Only give someone Admin if they need to touch money or settings.
     {% endcall %}
 
@@ -124,20 +132,51 @@
       <li>To change your own password: click your name (top right) then <strong>Your profile</strong>.</li>
       <li>Forgot it? Use <strong>Forgot your password?</strong> on the sign-in page. It emails you a link that works for one hour.</li>
     </ol>
+    <p class="{{ p }}">Password recovery needs email delivery to be configured. If the link does not arrive,
+    check spam and ask an admin for help. Use <strong>Sign out</strong> when leaving a shared device.</p>
+
+    <h3 id="teacher-start" class="{{ h3 }}">Teacher daily checklist</h3>
+    <ol class="{{ ol }}">
+      <li>Open <strong>Dashboard</strong> for today's classes and recent check-ins. <strong>Calendar</strong> shows the weekly schedule.</li>
+      <li>Open the dancer's page from <strong>Students</strong> to review emergency contacts and health notes before class.</li>
+      <li><strong>Clock In</strong> on <strong>Time Clock</strong> when you begin work.</li>
+      <li>Use <strong>Take Attendance</strong> or <strong>Tap-In</strong>. Check the result before assuming a mark saved.</li>
+      <li>Review <strong>Today's taps</strong> for missing check-outs; use <strong>Messages</strong> for class updates.</li>
+      <li><strong>Clock Out</strong> when finished. Ask an admin to handle roster changes, payments, makeups, and skills.</li>
+    </ol>
+
+    <h3 class="{{ h3 }}">Admin setup checklist</h3>
+    <ol class="{{ ol }}">
+      <li>Add staff accounts and locations, then create the season, its dates, and classes.</li>
+      <li>Configure <strong>Payment Methods</strong> for Studio and Company separately; test email and any Square or SMS connection before relying on them.</li>
+      <li>Create waivers and rules, open enrollment for the correct season, and approve registrations.</li>
+      <li>Set up tuition rules, parent logins, and check-in tags. Review <strong>Pending</strong> for payments and activity.</li>
+      <li>Before a season change or bulk billing, download a backup under <strong>Payment Methods → Data &amp; Backup</strong>.</li>
+    </ol>
+
+    <h3 class="{{ h3 }}">Finding things on a phone or computer</h3>
+    <p class="{{ p }}">On a phone, open the menu button to see the sidebar. On wider screens, the top search
+    finds students, families, and classes; type at least two characters and select a result. The
+    Dashboard's <strong>No tag yet</strong> tile opens Tap-In. The <strong>User Manual</strong> link is
+    in the sidebar and on the Dashboard for both staff roles.</p>
+    <p class="{{ p }}">You can add the site to your phone's Home Screen from your browser menu.
+    Most features need an internet connection. Only the tap station has a queue for temporary outages;
+    a saved Home Screen icon does not make the rest of the portal work offline.</p>
   </div>
 
   <!-- ============ 2. SEASONS ============ -->
   <h2 id="seasons" class="{{ h2 }}">2. Seasons</h2>
 
   <div class="{{ card }}">
+    <p class="{{ p }}"><strong>Admin only:</strong> creating, editing, activating, and deleting seasons. Teachers can browse the class schedule.</p>
     <p class="{{ p }}">A <strong>season</strong> is a session of the year: Fall 2026, Summer 2027, and so
     on. This is what lets you build next season's whole schedule while the current one is still running,
-    without parents or teachers seeing it early and without anybody getting billed early.</p>
+    while keeping automatic tuition billing off until the season is active.</p>
 
     <p class="{{ p }}">A season is always in one of three states:</p>
     <ul class="{{ ul }}">
       <li><strong>Active</strong> - the season running right now. Exactly one season is active at a time. This is what parents, teachers, and check-in see.</li>
-      <li><strong>Upcoming (draft)</strong> - a staging area you're building. Invisible to everyone but admins. Nothing in it bills.</li>
+      <li><strong>Upcoming (draft)</strong> - a staging area for next season. Its classes stay off the live schedule, but you can publish them for early registration. Auto-billing is paused; admins can still post manual charges.</li>
       <li><strong>Archived</strong> - a finished season, kept as history.</li>
     </ul>
 
@@ -146,7 +185,7 @@
       <li>Go to <strong>Classes</strong>. At the top there's a season bar with a dropdown.</li>
       <li>Click <strong>New Season</strong>, name it (for example "Fall 2026"), and set its start and end dates - those dates decide how many weeks the attendance card shows, so set them. The page switches you into the new season automatically.</li>
       <li>While that season is selected in the dropdown, click <strong>Add Class</strong> for each class. Every class you add lands in the season you're viewing.</li>
-      <li>Set up its tuition too if you want (see <a href="#autobilling" class="text-primary-600 hover:underline">Auto-billing</a>). Draft classes appear in the billing dropdowns marked "(upcoming)" and will not charge anyone.</li>
+      <li>Set up its tuition too if you want (see <a href="#autobilling" class="text-primary-600 hover:underline">Auto-billing</a>). Draft classes appear in billing dropdowns marked "(upcoming)"; their recurring rules do not post charges until activation.</li>
       <li>Switch the dropdown back to the active season any time to get back to what's live today.</li>
     </ol>
 
@@ -183,11 +222,18 @@
 
   <div class="{{ card }}">
     <h3 class="{{ h3 }}">Adding and editing a class</h3>
+    <p class="{{ p }}"><strong>Admin only:</strong> class changes, enrollment changes, waitlists, and locations. Teachers can view classes and the calendar.</p>
     <p class="{{ p }}"><strong>Classes</strong> in the menu, then <strong>Add Class</strong>. You set the
     name, day, start and end time, level, location, instructor, and maximum number of students. The
     maximum is enforced - once a class is full, new sign-ups go to a waitlist instead.</p>
     <p class="{{ p }}">Use <strong>Edit</strong> on a class card to change any of that later, including
     mid-season. <strong>Manage Students</strong> on the card is where you add or remove dancers.</p>
+
+    <h3 class="{{ h3 }}">Waitlists</h3>
+    <p class="{{ p }}">Open <strong>Manage Students → Waitlist</strong> on the class. <strong>Add to Waitlist</strong>
+    queues an existing dancer without enrolling them. When a place opens, use <strong>Enroll</strong>
+    on the waitlist entry; the class must have space. Remove an entry if the family no longer wants
+    the place. Removing a dancer from a roster does not automatically promote someone from the waitlist.</p>
 
     <h3 class="{{ h3 }}">Cancelling a class</h3>
     {% call warn("Cancel Class does more than hide it") %}
@@ -239,8 +285,9 @@
     <h3 class="{{ h3 }}">Families</h3>
     <p class="{{ p }}">A family groups siblings. On the <strong>Families</strong> page you see each
     family, its dancers, and (admins only) the combined balance with a link to a
-    <strong>family ledger</strong> - every sibling's charges and payments merged into one running
-    balance. You attach a dancer to a family by editing the dancer and picking the family.</p>
+    <strong>family ledger</strong> - every sibling's charges and payments, with a separate running
+    balance for each fund. Use <strong>Add Family</strong> to create a household, then attach a dancer
+    by editing the dancer and picking the family.</p>
     <p class="{{ p }}">The one thing families change for parents: if a parent has two or more dancers in
     the same family and the family owes money, the portal offers them a single "pay for the whole
     family" option, and the payment gets split across the kids automatically.</p>
@@ -262,12 +309,16 @@
 
   <div class="{{ card }}">
     <h3 class="{{ h3 }}">Public sign-up (new families)</h3>
+    <p class="{{ p }}"><strong>Admin only:</strong> enrollment approval, parent login invitations, and reset links.</p>
     <ol class="{{ ol }}">
       <li>Go to <strong>Enrollment</strong> and turn on <strong>Registration open</strong>. Pick which season it's for if you're taking sign-ups for an upcoming one.</li>
       <li>Share the public link (it's at the top of that page - <strong>attenddance.fly.dev/register</strong>). Put it on the website, Instagram, wherever.</li>
       <li>Families fill it out themselves. New requests show a badge on the <strong>Enrollment</strong> menu item.</li>
       <li>Open each request and <strong>Approve</strong> it. That creates the family, creates the dancers, and enrolls them in the classes they picked.</li>
     </ol>
+    <p class="{{ p }}">Review requested classes and contact details before approval. A full class puts the
+    dancer on its waitlist. Use the queue's status filter to revisit approved or rejected requests;
+    <strong>Reject</strong> leaves the request on record without creating a login or enrolling anyone.</p>
     <p class="{{ p }}">Returning families use the exact same link. The system matches them by email, so
     it re-enrolls existing dancers instead of creating duplicates, and flags the request
     <strong>Returning</strong> in your queue.</p>
@@ -347,8 +398,8 @@
     <p class="{{ p }}">Same <strong>Portal Access</strong> card, click <strong>Reset password link</strong>
     next to their name, and text them the link. It expires in one hour. Parents can also use
     <strong>Forgot your password?</strong> on the sign-in page themselves now that email is set up.</p>
-    {% call tip("Neither link is sent automatically") %}
-      Invite links and reset links appear on your screen only. Copy them before you navigate away - if
+    {% call tip("Manually generated links must be sent by staff") %}
+      Manual invite links and staff-generated reset links appear on your screen only. Copy them before you navigate away - if
       you lose one, just generate a fresh one.
     {% endcall %}
 
@@ -383,12 +434,103 @@
     <p class="{{ p }}"><strong>Attendance Log</strong> shows the history and lets you check a dancer in
     manually if you missed them.</p>
     {% call warn("Take attendance even on light nights") %}
-      The <strong>Insights</strong> page flags any dancer with no check-in in the last 30 days as
+      The <strong>Insights</strong> page flags any dancer with no attendance record in the last 30 days as
       "at risk." If a class simply never gets attendance taken, every dancer in it shows up as at risk
       and the number is meaningless. This is the most common false alarm in the system.
     {% endcall %}
 
+    <h3 id="tap-in" class="{{ h3 }}">Tap-In: tag check-in</h3>
+    <p class="{{ p }}">Dancers can check themselves in and out by tapping a key fob or card on a staff
+    phone. A tap marks them present on the card (a teacher's P, A, T or E still works the same), and a
+    second tap at least 5 minutes later checks them out with the default settings. Everything lives under <strong>Tap-In</strong>
+    in the menu.</p>
+    <ol class="{{ ol }}">
+      <li><strong>Give a dancer a tag:</strong> open their page, then <strong>Check-in Tags &rsaquo; Set up a
+      tag</strong>. On an Android phone, hold a blank tag to the phone and follow the steps. On an iPhone,
+      copy the link into the free NXP TagWriter app, write it, then tap the tag and choose
+      <strong>Finish setup</strong>.</li>
+      <li><strong>Drop-off:</strong> on an Android phone or tablet, open <strong>Tap-In &rsaquo; Start a tap
+      station</strong> and tap Start. Dancers tap one after another. On an iPhone, hold the top of the phone to
+      the tag and tap the banner.</li>
+      <li><strong>Lost tag:</strong> on the dancer's page, choose <strong>Replace</strong>. The old tag stops
+      working right away.</li>
+      <li><strong>Who still needs a tag:</strong> the Tap-In page lists them. <strong>Today's taps</strong>
+      shows who's here and who never tapped out.</li>
+    </ol>
+    {% call tip("Mistakes are one tap to fix") %}
+      Every result screen has <strong>Undo</strong>, and a dancer who checked out by accident can be put
+      <strong>back in class</strong>. A tap with no class at that time asks you to pick the class.
+    {% endcall %}
+    {% call warn("Never write a dancer's name on a tag") %}
+      Write the tag's label (like T-0014) on its box instead. If a tag is lost, whoever finds it learns
+      nothing about the dancer.
+    {% endcall %}
+    <p class="{{ p }}">Parents get an email when their dancer checks in and out, and can turn it off or
+    sign up for texts in their portal. Admins control all of this in <strong>Tap-In &rsaquo; Settings</strong>,
+    including a pause switch.</p>
+
+    <h3 class="{{ h3 }}">Tap-In setup, tag status, and photos</h3>
+    <p class="{{ p }}">Use blank <strong>NTAG213</strong> fobs or cards. Keep pilot tags unlocked.
+    Android Chrome writes the link and asks for a second tap to verify it; with an external writer,
+    the link is shown once, so write it before closing setup. An unfinished tag stays
+    <strong>Pending</strong> and does not check anyone in. Finish setup from the written tag, or delete
+    the pending entry and start again.</p>
+    <p class="{{ p }}">Under <strong>Check-in Tags</strong>, <strong>Lost</strong> and <strong>Retire</strong>
+    disable a tag immediately. <strong>Replace</strong> marks the old tag lost and starts a new one.
+    <strong>Found it, reactivate</strong> enables a lost or retired tag again. A dancer can have more
+    than one tag. <strong>Add photo</strong>, <strong>Change</strong>, and <strong>Remove</strong>
+    manage a staff-only check-in photo so the tap screen can help identify the dancer.</p>
+    {% call warn("Locking a tag is permanent") %}
+      An admin must first save the <strong>Permanent tag address</strong> in Tap-In Settings.
+      <strong>Lock</strong> makes the physical tag read-only; it cannot be rewritten even if you
+      change the website address later. Keep the old address working if the site moves.
+    {% endcall %}
+
+    <h3 class="{{ h3 }}">Tap stations and connection problems</h3>
+    <ul class="{{ ul }}">
+      <li><strong>iPhone:</strong> sign in as staff in Safari, even if already signed in through a Home Screen icon.
+      Keep the phone awake; close Camera and Wallet. Hold its top edge to the tag and open the banner.</li>
+      <li><strong>Android:</strong> enable NFC, use Chrome, open the station, press <strong>Start</strong>, and keep it open.</li>
+      <li><strong>USB reader:</strong> choose <strong>Scan on the USB reader</strong> during setup if enrolling a serial-only tag.
+      That tag works on the USB station only. Configure the reader for the full NTAG213 serial:
+      14 hexadecimal characters, normal byte order, no separators, and Enter at the end.</li>
+    </ul>
+    <p class="{{ p }}">The station can queue taps during a temporary outage. Keep that browser page open and
+    reconnect so the queue can upload. The <strong>N saved, not sent</strong> counter disappears when
+    the queue empties. If an upload error says a saved tap could not be recorded, check and correct
+    the attendance card; an empty queue alone does not prove every tap succeeded. <strong>NOT RECORDED</strong> means the
+    attendance has not saved. A regular iPhone tag page cannot queue a tap offline: retry online or use
+    the attendance card. Do not treat an offline message as proof the dancer checked in.</p>
+
+    <h3 class="{{ h3 }}">Reading and correcting tap results</h3>
+    <p class="{{ p }}">By default, check-in opens 30 minutes before class and closes at its end.
+    Repeat reads within 10 seconds are ignored; an early second tap may say the dancer is already in.
+    With back-to-back carry-over enabled, a later check-out also records the intervening consecutive
+    classes. If a tap asks for a class, select the right one before leaving the result screen.</p>
+    <p class="{{ p }}">Use <strong>Undo</strong> for a wrong tap, or <strong>Put back in class</strong>
+    for an accidental check-out. <strong>Today's taps</strong> has date navigation, class sessions,
+    missing check-outs after class ends, and refused taps that need attention. An unknown, lost,
+    retired, or unfinished tag needs staff attention; a non-staff phone always sees a generic tag
+    page without dancer information.</p>
+    <p class="{{ p }}">The staff-only <strong>Forms needed</strong> badge flags missing paperwork.
+    Admins may also see <strong>Check account</strong>; teachers do not see that badge or dollar
+    amounts. Neither badge prevents check-in.</p>
+
+    <h3 class="{{ h3 }}">Tap-In settings and household notices</h3>
+    <p class="{{ p }}"><strong>Admin only:</strong> Tap-In Settings controls early/late windows,
+    repeat-tap delay, minimum time before check-out, optional tardy marking (0 turns it off),
+    and back-to-back carry-over. Save changes with <strong>Save settings</strong>.</p>
+    <p class="{{ p }}">Email notices are normally on. Parents can change household preferences in their
+    portal; staff can toggle household email or turn texts off on a dancer's page. Staff cannot opt a
+    parent into texts. To opt in, the parent enters a mobile number and verifies the texted code.
+    The admin must first enable text notices with the studio's SMS service configured.</p>
+    <p class="{{ p }}">Notices are grouped briefly after taps, so siblings may share an email. Adult
+    dancers, undone taps, and stale events more than 20 minutes old do not generate notices.
+    An admin can pause all notices or set a daily message limit. A successful check-in does not
+    guarantee an email or text was delivered.</p>
+
     <h3 class="{{ h3 }}">Makeups</h3>
+    <p class="{{ p }}"><strong>Admin only:</strong> scheduling and managing makeup requests and skills.</p>
     <p class="{{ p }}">Parents can request a makeup from their portal; those land on the
     <strong>Makeups</strong> page marked <strong>Requested</strong>, and you use
     <strong>Schedule</strong> to set the class and date. If you're logging a makeup yourself with
@@ -412,17 +554,61 @@
   <h2 id="money" class="{{ h2 }}">7. Money</h2>
 
   <div class="{{ card }}">
+    <p class="{{ p }}"><strong>Admin only:</strong> all staff billing screens and settings in this section.</p>
     <h3 class="{{ h3 }}">How billing works here</h3>
     <p class="{{ p }}">Every charge and every payment is recorded against <strong>one dancer</strong>.
     A balance is just charges minus payments. Family totals are a roll-up of the siblings' individual
     balances. All of this lives on the <strong>Payments</strong> page.</p>
 
+    <h3 class="{{ h3 }}">Studio and Company / Foundation are separate</h3>
+    <p class="{{ p }}">Every dancer has two accounts. Studio covers tuition, costumes, shoes,
+    registration, and other studio fees. Company / Foundation covers competition, convention,
+    transportation, lodging, observer fees, costume rental, company dues, and company tickets.
+    A charge's category selects its fund. When recording a payment, choose which balance it pays.</p>
+    <p class="{{ p }}">A Studio credit never pays a Company debt automatically. Student ledgers, family
+    ledgers, statements, parent payment options, and reports keep the funds separate. The Company
+    account appears for dancers with Company activity; it may be hidden for studio-only dancers.</p>
+
     <h3 class="{{ h3 }}">Charging</h3>
     <ul class="{{ ul }}">
       <li><strong>Add Charge</strong> - one dancer, one amount, a category (tuition, costumes, shoes, registration fee, other) and a description.</li>
       <li><strong>Bulk Charge</strong> - charge everyone in a class at once. Use this for costume deposits, recital fees, that sort of thing.</li>
-      <li><strong>Add Payment</strong> - record money you received, including cash and checks handed to you in person.</li>
+      <li><strong>Add Payment</strong> - choose the dancer, positive amount, date, category, method, and description, then save. Record only money actually received. For an explicit fund choice, use <strong>Record Payment</strong> on the dancer's ledger.</li>
     </ul>
+
+    <h3 id="applied-payments" class="{{ h3 }}">Apply a payment to a specific charge</h3>
+    <p class="{{ p }}">Use this when a payment is for a particular item, such as a costume deposit,
+    rather than the oldest outstanding bill. This is available to admins when recording a payment directly.</p>
+    <ol class="{{ ol }}">
+      <li>Open <strong>Payments → Add Payment</strong> and choose the dancer. Or open that dancer's
+      ledger and choose <strong>Record Payment</strong>.</li>
+      <li>In <strong>Apply to charge</strong>, select the unpaid item. Each option shows its date,
+      description or category, remaining amount, and fund. Only charges with an unpaid remainder
+      for that dancer appear.</li>
+      <li>The form fills the charge's category, fund, and remaining amount. For a partial payment,
+      reduce the amount to what you received. Keep the category and fund matched to the charge.</li>
+      <li>Check the payment date and method, add a note or description if helpful, then save.
+      The transaction list and dancer's ledger show <strong>Applied to #</strong> followed by the
+      charge number and description. Check this line to confirm the intended item was paid.</li>
+    </ol>
+    <p class="{{ p }}">A partial payment reduces that item's remaining amount. A fully settled item
+    drops out of the picker. Each payment entry can target one charge; if one received payment
+    covers several items, record its portions separately and make sure they add up to the actual
+    amount received.</p>
+    {% call tip("No specific charge keeps automatic allocation") %}
+      Leave <strong>No specific charge</strong> selected to apply the payment to the oldest unpaid
+      charges in the same fund for aging and the open-charge list. Choosing a category alone does
+      not link a payment to an item. Existing unlinked payments keep this behavior.
+    {% endcall %}
+    <p class="{{ p }}">For example, a dancer owes $100 in older tuition and $60 for a costume.
+    Apply a $30 payment to the costume charge: it leaves $30 on that costume and the $100 tuition
+    charge unpaid. Studio and Company balances still stay separate.</p>
+    {% call warn("A linked payment cannot exceed the charge's remainder") %}
+      If another payment settled part of the item while the form was open, reopen the form to
+      refresh its remaining amount. If you see a fund/category mismatch, reselect the charge and
+      keep those filled values. Do not switch to another dancer's charge or record the payment
+      twice to get past an error.
+    {% endcall %}
 
     <h3 id="autobilling" class="{{ h3 }}">Auto-billing (monthly tuition)</h3>
     <p class="{{ p }}">On the <strong>Payments</strong> page, <strong>Auto-Billing Rules</strong> is
@@ -437,6 +623,9 @@
     {% endcall %}
     <p class="{{ p }}">A dancer who joins mid-month is not automatically charged a partial month - post
     that one by hand if you want it.</p>
+    <p class="{{ p }}">Rules run when the app starts or its billing job runs, so review posted charges
+    on the due day. A due day of 29–31 uses the last day in a shorter month. Editing a rule changes
+    future runs; stopping a rule does not remove charges already posted.</p>
 
     <h3 class="{{ h3 }}">How parents pay</h3>
     <p class="{{ p }}">Set the options up under <strong>Payment Methods</strong>:</p>
@@ -447,6 +636,20 @@
     </ul>
     <p class="{{ p }}">Zelle and Cash App payments don't tell the system anything on their own, so
     there's a confirmation step - see below.</p>
+    <p class="{{ p }}">Configure <strong>Company / Foundation</strong> payment details separately on
+    the same settings page: its own Zelle name and QR code, Cash App tag, and card payment link.
+    The portal uses the chosen fund's destinations. Save with <strong>Save Settings</strong>.</p>
+
+    <h3 class="{{ h3 }}">Square invoices and connection settings</h3>
+    <p class="{{ p }}">For emailed invoices, expand Square's <strong>Advanced</strong> settings,
+    enter its access token, location ID, environment, and webhook signature key, then
+    <strong>Test Connection</strong>. Sandbox is for testing. The token stays masked after saving;
+    <strong>Clear token</strong> removes it. Ask Thomas to help connect email or SMS delivery when needed.</p>
+    <p class="{{ p }}">Open a dancer's ledger and use <strong>Send Invoice</strong> when Square is connected.
+    This bills the outstanding <strong>Studio</strong> balance with a due date 14 days out.
+    A paid invoice posts automatically when its verified Square notification arrives. A standalone
+    card payment link does not itself reconcile a payment; verify and record it if needed. Company
+    payments use the Foundation's link and are not included in Studio invoices.</p>
 
     <h3 class="{{ h3 }}">The Pending inbox</h3>
     <p class="{{ p }}">When a parent pays by Zelle or Cash App they tap "I sent it" in the portal.
@@ -460,16 +663,54 @@
       Confirming is what creates the payment record. Always verify against your actual bank or Cash App
       before you press it.
     {% endcall %}
+    <p class="{{ p }}">Check the <strong>Fund</strong> column as well as the amount. Rejection can include
+    a reason shown to the family. Use the status filter to revisit confirmed or rejected claims.
+    <strong>Recent Activity</strong> below the inbox records who performed changes such as confirmation,
+    charges, deletions, and transfers.</p>
 
     <h3 class="{{ h3 }}">Late fees</h3>
-    <p class="{{ p }}">Set your default amount and threshold under <strong>Payment Methods → Late Fees</strong>,
-    then apply them from the <strong>Pending</strong> page with <strong>Apply late fees</strong>. Nothing
+    <p class="{{ p }}">Set your default amount under <strong>Payment Methods → Late Fees</strong>,
+    then choose the amount and balance threshold on <strong>Pending → Apply Late Fees</strong>. Nothing
     charges a late fee automatically - you press the button when you want it. Any dancer who already
-    got a late fee this calendar month is skipped, so a double-click can't double-charge.</p>
+    got a late fee in the same fund this calendar month is skipped, so a double-click can't double-charge.
+    Fees are assessed per dancer and per fund above the threshold.</p>
 
     <h3 class="{{ h3 }}">Payment plans</h3>
-    <p class="{{ p }}">A family who needs to spread a big balance can be put on a plan with a set number
-    of installments. Their portal shows the plan and how many payments they've made.</p>
+    <p class="{{ p }}">On <strong>Pending → Payment Plans → New Plan</strong>, choose a dancer, installment
+    amount, number of installments, due day (1–28), and optional note. This is a Studio payment
+    schedule for that dancer. The first installment is this month's due day if it has not passed,
+    otherwise next month's. Creating a new plan replaces that dancer's active plan.</p>
+    <p class="{{ p }}">Click an installment to toggle its paid marker; <strong>End plan</strong> closes the
+    plan. These markers do not post payments, charge a card, or change the ledger. Record or confirm
+    the actual payment separately. Parents see the schedule and the paid markers in their portal.</p>
+
+    <h3 class="{{ h3 }}">Correcting payments and moving credit</h3>
+    <ol class="{{ ol }}">
+      <li><strong>Wrong amount, duplicate, or wrong dancer:</strong> use the trash icon on the posted
+      transaction in Payments or the dancer's ledger, confirm deletion, and record the correct entry.
+      Deletion is permanent and logged; it does not refund money through a bank or payment provider.</li>
+      <li><strong>Wrong fund on the same dancer:</strong> open the dancer's ledger → <strong>Move money
+      between funds</strong>. Choose From, To, amount, and a note. It adds a charge in the source fund
+      and payment in the destination with a shared reference. It does not move cash between bank accounts.</li>
+      <li><strong>One payment covered siblings:</strong> open <strong>Families</strong>, the family ledger,
+      then <strong>Move credit between siblings</strong>. Choose the child holding credit, the receiving
+      child, fund, amount, and note. Both must belong to that family, and the source must have enough
+      credit. Two linked entries move it within the same fund, preserving the family total.</li>
+    </ol>
+    <p class="{{ p }}">Transfers preserve the original payment. Check both ledger entries after saving.
+    A suggested <strong>Move credit</strong> banner can fill in a sibling transfer for you.</p>
+    <p class="{{ p }}">To correct which charge a payment was applied to, delete the mistaken payment
+    entry and record it again with the correct <strong>Apply to charge</strong> selection.
+    Deleting a charge removes its payment links but keeps the payments; those payments then use
+    the normal oldest-charge allocation. Review the remaining items and Aging after a correction.</p>
+
+    <h3 class="{{ h3 }}">Printable account statements</h3>
+    <p class="{{ p }}">Parents open <strong>Statement</strong> on their dancer's portal card. Admins can
+    open <code>/students/STUDENT_ID/statement</code> or <code>/families/FAMILY_ID/statement</code>, using
+    the numeric ID from the dancer detail or family ledger address. Add <code>?year=2026</code> to
+    choose a year, or use the year selector once the statement opens. For example, dancer ID 42's
+    2026 statement is <code>/students/42/statement?year=2026</code>. Statements show carry-forward, charges, payments, and closing balances separately
+    for Studio and Company. Use the statement's Print button or the browser's print command to save a PDF.</p>
   </div>
 
   <!-- ============ 8. MESSAGES ============ -->
@@ -549,7 +790,7 @@
       The site sleeps when nobody's using it, and the monthly reminder only fires when the app is
       running on the day you picked. If nobody opens the site that day, that month's reminders quietly
       don't go out. Two easy habits fix this: pick a day you're normally working anyway, and open the
-      site that morning. Text me if you want this fully automated - it's a small job on my end.
+      site that morning. Ask Thomas to configure a scheduled reminder job if you need unattended delivery.
     {% endcall %}
     <p class="{{ p }}">Reminders go out <strong>one per family</strong>, based on what the whole family owes.
     If one child has a credit and a sibling has a matching balance, they cancel out and nobody gets a reminder.
@@ -569,6 +810,7 @@
 
   <div class="{{ card }}">
     <h3 class="{{ h3 }}">Forms &amp; Waivers</h3>
+    <p class="{{ p }}"><strong>Admin only:</strong> creating and managing forms and rules. Teachers can view Rules and its acknowledgment status.</p>
     <p class="{{ p }}">Create a form (liability waiver, photo release, medical authorization) with
     <strong>New Form</strong>: a title and the text the parent reads. Parents sign from their portal by
     typing their full name. Each form shows you a compliance card - how many have signed, and the
@@ -583,11 +825,15 @@
       signs again.
     {% endcall %}
 
+    <p class="{{ p }}">Use a form's <strong>Edit</strong> control to correct its text or title;
+    <strong>Archive</strong> removes it from the active forms list. Existing signatures are kept.
+    If a policy changes enough to require a fresh signature, archive the old form and create a new one.</p>
     <h3 class="{{ h3 }}">Rules</h3>
     <p class="{{ p }}"><strong>Rules</strong> is your studio policies, one per entry. Parents initial
     each rule individually from their portal, and you get a status table showing who's complete.</p>
-    <p class="{{ p }}">Adding a new rule sets everyone back to incomplete on that rule, which is what
-    you want when a policy changes. Initials can't be undone by the parent once entered.</p>
+    <p class="{{ p }}">Use <strong>Add Rule</strong> to create a policy, and edit or remove existing
+    entries as needed. Initials can't be undone by the parent once entered. Editing an existing
+    rule keeps its acknowledgments; add a new rule when you need everyone to initial a new policy.</p>
   </div>
 
   <!-- ============ 10. RECITAL ============ -->
@@ -597,6 +843,8 @@
     <h3 class="{{ h3 }}">Recital Hub</h3>
     <p class="{{ p }}"><strong>Recital Hub</strong> is the command center for the June show. Create the
     year with <strong>New Year</strong>, then work through the tabs:</p>
+    <p class="{{ p }}">Choose the recital year from the picker. An admin uses <strong>Make Active</strong>
+    to select the recital parents see; this is separate from the active class season.</p>
     <ul class="{{ ul }}">
       <li><strong>Overview</strong> - title, theme, date, show times, venue, your director's note and acknowledgments (both print in the booklet).</li>
       <li><strong>Show Order</strong> - every number in performance order. Each one holds the class or company performing it, the music (song, artist, link, cue notes), the choreographer and formation notes, duration, props, and the cast. Reorder with the up and down arrows.</li>
@@ -605,6 +853,11 @@
     </ul>
     <p class="{{ p }}">When a number is linked to a class or company, <strong>Fill from class/company</strong>
     adds the whole roster to the cast at once, skipping anyone already in it.</p>
+    <p class="{{ p }}">Open a number to edit its details, add or remove individual cast members,
+    and record their parts and notes. Changes to a class roster do not replace your saved cast list.</p>
+    <p class="{{ p }}"><strong>Admin only:</strong> under Overview → <strong>Show dates &amp; tickets</strong>,
+    link a performance created in Company → Performances. This connects the show's ticket types
+    and sales to the recital. Unlinking removes that connection.</p>
     <p class="{{ p }}"><strong>Open Booklet</strong> produces the print-ready program: cover, director's
     note, the full program with cast lists, awards, sponsor ads, and acknowledgments. Print it or save
     it as a PDF to send to the printer.</p>
@@ -617,6 +870,7 @@
     {% endcall %}
 
     <h3 class="{{ h3 }}">Costumes &amp; tickets</h3>
+    <p class="{{ p }}"><strong>Admin only:</strong> costume fees, assignments, and ticket management.</p>
     <p class="{{ p }}">From the Recital Hub, <strong>Costumes &amp; Tickets</strong> has two tabs.</p>
     <p class="{{ p }}"><strong>Costumes</strong> - create a costume with a fee and vendor, assign
     dancers (or add a whole class at once), and record each dancer's costume size. The sizes you
@@ -627,14 +881,17 @@
       dancers - but you can't un-charge from this screen. To reverse one, go to the dancer's ledger.
     {% endcall %}
     <p class="{{ p }}"><strong>Tickets</strong> - set up ticket types with prices for each show date,
-    then record sales as they come in. The header keeps a running total of tickets sold and money
-    collected versus pending.</p>
+    then record sales as they come in with buyer, quantity, and paid status. Mark an order paid when
+    the money arrives. Parents can order through their portal. The header keeps a running total of
+    tickets sold and money collected versus pending. A ticket's paid marker is its sales record;
+    it does not post a payment to a dancer's tuition ledger.</p>
   </div>
 
   <!-- ============ 11. COMPANY ============ -->
   <h2 id="company" class="{{ h2 }}">11. Company &amp; auditions</h2>
 
   <div class="{{ card }}">
+    <p class="{{ p }}"><strong>Admin only:</strong> company rosters, auditions, and performances.</p>
     <p class="{{ p }}"><strong>Company</strong> runs LSODance Company and any other performance group.
     Three tabs:</p>
     <ul class="{{ ul }}">
@@ -657,8 +914,12 @@
 
   <div class="{{ card }}">
     <h3 class="{{ h3 }}">Staff accounts</h3>
+    <p class="{{ p }}"><strong>Admin only:</strong> staff management, leads, and payroll reports. All staff can use their own time clock.</p>
     <p class="{{ p }}"><strong>Staff</strong> is where you add teachers and admins and set who's who.
-    Give new instructors a <strong>teacher</strong> account unless they need to handle money.
+    Use <strong>Add Teacher</strong> and select Teacher or Admin, then enter the staff member's contact
+    details, username, and initial password. Share credentials privately and ask them to change their
+    password under Your Profile. <strong>Edit</strong> updates their details, role, or password;
+    leaving the password field blank keeps the existing one. Give new instructors a <strong>teacher</strong> account unless they need to handle money.
     Deactivating a staff account signs them out immediately, including any session they already had
     open.</p>
 
@@ -669,7 +930,7 @@
     {% call warn("A missed clock-out won't show up in payroll") %}
       There's no way to edit or delete a punch in the app, and a shift that was never clocked out is
       left out of the payroll report entirely. If someone's hours look low, check whether they have a
-      shift still sitting open. Text me if a punch needs correcting - I can fix it directly.
+    shift still sitting open. Text Thomas if a punch needs correcting.
     {% endcall %}
     <p class="{{ p }}">Hours are straight clock-out minus clock-in. No break deductions, no overtime
     rules, no pay rates - it's a record of hours worked, not a payroll processor.</p>
@@ -679,6 +940,9 @@
     with their contact info, what they're interested in, and how they found you, then move them along
     the stages: new, contacted, trial scheduled, converted, lost. <strong>Convert</strong> turns a lead
     into a real family and dancer.</p>
+    <p class="{{ p }}">Use the stage dropdown on a lead's row as the conversation progresses.
+    Converting creates the family and dancer; it does not select a class or set up a parent login.
+    Enroll the dancer and generate a portal invite afterward. Deleting a lead removes that lead record.</p>
     {% call tip("The list defaults to New only") %}
       When you open Leads &amp; Trials you're seeing only brand-new leads, not everything. Change the
       filter to <strong>All</strong> if you're wondering where everyone went.
@@ -689,6 +953,7 @@
   <h2 id="reports" class="{{ h2 }}">13. Reports &amp; donations</h2>
 
   <div class="{{ card }}">
+    <p class="{{ p }}"><strong>Admin only:</strong> studio reports, donations, and giving statements for other donors.</p>
     <h3 class="{{ h3 }}">The four reports</h3>
     <ul class="{{ ul }}">
       <li><strong>Insights</strong> - active dancers, new this month, at risk, inactive, plus enrollment and attendance trends and your biggest classes.</li>
@@ -700,21 +965,30 @@
       Revenue's "Outstanding" counts only active dancers. Aging also includes withdrawn dancers who
       still owe, marked "Withdrawn." If you're chasing money, trust Aging.
     {% endcall %}
-    <p class="{{ p }}">On Aging, payments are applied to the oldest charges first, so a family can still
-    show something in the 90+ column right after paying you.</p>
+    <p class="{{ p }}">On Aging, linked payments settle their selected charge first. Payments recorded
+    with <strong>No specific charge</strong> settle the oldest unpaid charges in the same fund.
+    Paying a newer item can leave an older one in the 90+ column. See
+    <a href="#applied-payments" class="text-primary-600 hover:underline">Apply a payment to a specific charge</a>.</p>
+    <p class="{{ p }}">Review the Studio and Company totals and fund labels in each report. Revenue's collection totals
+    exclude internal transfer entries, so moving credit does not count as new money collected.
+    Aging keeps each fund's debt separate. Use its CSV export when following up on unpaid accounts.</p>
 
     <h3 class="{{ h3 }}">Donations and giving statements</h3>
     <p class="{{ p }}"><strong>Donations</strong> records gifts to the LSODance Foundation. Enter the
     donor's name, <strong>email</strong>, amount, and method. Donations parents submit through their
     portal arrive as <strong>pending</strong> and need you to <strong>Confirm</strong> them before they
     count.</p>
+    <p class="{{ p }}">Check the actual gift arrived before confirming it. Use <strong>Delete</strong>
+    to remove a mistaken or duplicate donation record; this changes the giving statement and does
+    not refund money through a payment provider.</p>
     <p class="{{ p }}">At year end, type a donor's email and the year into the bar at the top and press
     <strong>Giving statement</strong> to produce their printable 501(c)(3) letter with your EIN and the
     "no goods or services" language. Set the org name and EIN once under
     <strong>Payment Methods → Foundation Donations</strong>.</p>
-    {% call warn("No email means no statement, ever") %}
+    {% call warn("A giving statement needs the donor's email") %}
       Statements are matched by exact donor email. A donation entered without one (or with a typo) can
-      never appear on any statement. Get the email at the time you record the gift.
+      be missing from the donor's statement. Get the email at the time you record the gift; ask for help
+      correcting a record if needed. Only confirmed gifts appear. Company fees are not donation records.
     {% endcall %}
   </div>
 
@@ -722,15 +996,19 @@
   <h2 id="data" class="{{ h2 }}">14. Your data &amp; backups</h2>
 
   <div class="{{ card }}">
-    <h3 class="{{ h3 }}">Backups happen automatically</h3>
-    <p class="{{ p }}">Every night at about 3am the entire system is backed up to secure offsite storage,
-    and 90 days of those backups are kept. You don't have to do anything. If something catastrophic ever
-    happened, the studio loses at most one day.</p>
+    <h3 class="{{ h3 }}">Scheduled backups</h3>
+    <p class="{{ p }}">The project has a nightly offsite backup job scheduled for 07:00 UTC (about
+    3am or 2am in Michigan depending on daylight saving time), with a 90-day retention policy.
+    Successful backups depend on that job's configuration and completion. Ask Thomas to verify the
+    latest successful backup before relying on it for a recovery.</p>
 
     <h3 class="{{ h3 }}">Taking your own copy</h3>
     <p class="{{ p }}"><strong>Payment Methods → Data &amp; Backup → Download backup</strong> gives you a
     complete copy of the studio's database as a file. Worth grabbing before anything big - a season
     switch, a bulk charge - and keeping somewhere safe. It's also your proof that this data is yours.</p>
+    <p class="{{ p }}"><strong>Admin only:</strong> full database downloads. They include sensitive family,
+    staff, health, and billing records; keep them private. Restoring a backup requires technical help;
+    uploading it into the portal is not supported.</p>
 
     <h3 class="{{ h3 }}">Exports</h3>
     <ul class="{{ ul }}">
@@ -742,8 +1020,8 @@
     <h3 class="{{ h3 }}">Privacy requests</h3>
     <p class="{{ p }}">Parents can download everything the studio holds on their family from their
     profile page, and can submit a deletion request. A deletion request doesn't erase anything by
-    itself - it notifies you so a person decides, since billing and tax records have to be kept. The
-    public privacy policy is at <strong>attenddance.fly.dev/privacy</strong>.</p>
+    itself - it notifies admins so they can review the request and record retention before responding. The
+    public privacy policy is at <a href="{{ url_for('main.privacy_policy') }}" class="text-primary-600 hover:underline">Privacy policy</a>.</p>
   </div>
 
   <!-- ============ 15. GOTCHAS ============ -->
@@ -762,7 +1040,7 @@
             <td class="px-3 py-2.5">You probably added it to an upcoming season. Check the season dropdown at the top of the Classes page.</td></tr>
           <tr class="border-b border-line">
             <td class="px-3 py-2.5 font-bold">Tons of dancers marked "at risk"</td>
-            <td class="px-3 py-2.5">Attendance isn't being taken for their class. At risk just means no check-in in 30 days.</td></tr>
+            <td class="px-3 py-2.5">Check whether attendance is being taken for their class. At risk means no attendance record in 30 days.</td></tr>
           <tr class="border-b border-line">
             <td class="px-3 py-2.5 font-bold">Leads page looks empty</td>
             <td class="px-3 py-2.5">The filter defaults to "New." Switch it to "All."</td></tr>
@@ -783,7 +1061,13 @@
             <td class="px-3 py-2.5">The donation has no email on it, or a different one. Statements match by exact email.</td></tr>
           <tr class="border-b border-line">
             <td class="px-3 py-2.5 font-bold">Parent says they never got the invite</td>
-            <td class="px-3 py-2.5">Invite and reset links aren't sent automatically - you copy and send them. Generate a fresh one.</td></tr>
+            <td class="px-3 py-2.5">Approval and Send logins try to email the setup link; check the result message and spam folder. Manual invite/reset links must be copied and sent by staff. Generate a fresh link if expired.</td></tr>
+          <tr class="border-b border-line">
+            <td class="px-3 py-2.5 font-bold">Tag shows NOT RECORDED or a generic page</td>
+            <td class="px-3 py-2.5">Reconnect and retry; on iPhone, sign in as staff in Safari. For a pending, lost, or retired tag, finish setup or check its status on the dancer's page.</td></tr>
+          <tr class="border-b border-line">
+            <td class="px-3 py-2.5 font-bold">A Studio credit did not clear a Company balance</td>
+            <td class="px-3 py-2.5">The funds stay separate. An admin can correct a misfiled payment with Move money between funds after checking which account received it.</td></tr>
           <tr>
             <td class="px-3 py-2.5 font-bold">The site is slow to load the first time</td>
             <td class="px-3 py-2.5">Normal. It sleeps when unused and takes a few seconds to wake. It's quick after that.</td></tr>
@@ -793,8 +1077,9 @@
 
     <h3 class="{{ h3 }}">Still stuck</h3>
     <p class="{{ p }}">Text Thomas. Say what you were doing, what you expected, and what happened
-    instead - a screenshot helps more than anything. Nothing in here is unfixable, and the nightly
-    backups mean nothing is truly lost.</p>
+    instead. Include the page, approximate time, and error message; a screenshot helps. Avoid including
+    passwords, payment credentials, or tag links. For missing records, ask for a backup check before
+    making further changes.</p>
   </div>
 
   <p class="text-xs text-ink-3 text-center mb-8">Last updated {{ updated.strftime('%B %-d, %Y') }} · AttenDANCE for LaShelle's School of Dance</p>
@@ -806,16 +1091,22 @@
 {% block extra_js %}
 <style>
   @media print {
-    .man-toc, .man-head, aside, nav, header, .no-print { display: none !important; }
-    .man-sec { break-inside: avoid; box-shadow: none !important; border-color: #ddd !important; }
+    .man-toc, aside, nav, header, footer, .no-print { display: none !important; }
+    body > div > .lg\:grid { display: block !important; }
+    .man-layout { display: block !important; }
+    #man-content .man-sec, #man-content h2 { display: block !important; }
+    .man-sec { box-shadow: none !important; border-color: #ddd !important; }
+    #man-content h2, #man-content h3 { break-after: avoid; }
+    #man-content p, #man-content li { orphans: 3; widows: 3; }
+    #man-content .overflow-x-auto { overflow: visible !important; }
     body { background: #fff !important; }
   }
 </style>
 <script>
 // Filter the manual to the cards that match. Sections whose cards are all
 // hidden lose their heading too, so the page never shows a bare heading.
-const manSecs = Array.from(document.querySelectorAll('.man-sec'));
-const manHeads = Array.from(document.querySelectorAll('h2[id]'));
+const manSecs = Array.from(document.querySelectorAll('#man-content .man-sec'));
+const manHeads = Array.from(document.querySelectorAll('#man-content h2[id]'));
 
 function clearManSearch() {
   const box = document.getElementById('man-search');
@@ -829,7 +1120,9 @@ function applyManSearch() {
   let anyVisible = false;
 
   manSecs.forEach(sec => {
-    const hit = !q || sec.textContent.toLowerCase().includes(q);
+    const heading = sec.previousElementSibling;
+    const text = (heading ? heading.textContent : '') + ' ' + sec.textContent;
+    const hit = !q || text.toLowerCase().includes(q);
     sec.classList.toggle('hidden', !hit);
     if (hit) anyVisible = true;
   });
@@ -850,5 +1143,12 @@ function applyManSearch() {
 }
 
 document.getElementById('man-search').addEventListener('input', applyManSearch);
+// Contents links must still work after a search hid their destination.
+document.querySelectorAll('a[href^="#"]').forEach(link => {
+  link.addEventListener('click', () => {
+    document.getElementById('man-search').value = '';
+    applyManSearch();
+  });
+});
 </script>
 {% endblock %}

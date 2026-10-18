@@ -203,7 +203,24 @@ class Student(db.Model):
     parent_email_2 = db.Column(db.String(120))
     parent_phone = db.Column(db.String(20))
     
-    # RFID information
+    # Staff-only ID photo shown on the tap result screen so staff can confirm
+    # the right dancer. A small JPEG data URI (resized in the browser), kept in
+    # the DB because Fly's disk is ephemeral. Deferred: never loaded with lists.
+    photo_data = deferred(db.Column(db.Text))
+    photo_updated_at = db.Column(db.DateTime)
+
+    # Tap-In check-in notices. Email is on unless the household opts out; SMS
+    # needs an explicit opt-in (who and when is kept as the consent record).
+    tap_email_opt_out = db.Column(db.Boolean, default=False, nullable=False)
+    tap_sms_opt_in = db.Column(db.Boolean, default=False, nullable=False)
+    tap_sms_opt_in_at = db.Column(db.DateTime)
+    tap_sms_opt_in_by = db.Column(db.Integer, db.ForeignKey('users.id'))
+    # The one number that agreed to texts (E.164). Consent is per number, so a
+    # second guardian on file is never texted on the first one's say-so.
+    tap_sms_phone = db.Column(db.String(20))
+
+    # Legacy RFID badge (the old Raspberry Pi reader). Read-only history now:
+    # Tap-In backfilled these into nfc_tags and never writes them.
     rfid_uid = db.Column(db.String(50), unique=True, index=True)
     rfid_assigned_at = db.Column(db.DateTime)
     rfid_assigned_by = db.Column(db.Integer, db.ForeignKey('users.id'))
@@ -248,7 +265,8 @@ class Student(db.Model):
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     # Relationships
-    assigned_by_user = db.relationship('User', backref='assigned_students')
+    assigned_by_user = db.relationship('User', backref='assigned_students',
+                                       foreign_keys=[rfid_assigned_by])
     attendances = db.relationship('Attendance', backref='student', lazy='dynamic')
     class_enrollments = db.relationship('ClassEnrollment', backref='student', lazy='dynamic')
     transactions = db.relationship('Transaction', backref='student', lazy='dynamic')
@@ -268,9 +286,9 @@ class Student(db.Model):
             )
         return None
     
-    def has_rfid(self):
-        """Check if student has RFID assigned"""
-        return self.rfid_uid is not None
+    def has_active_tag(self):
+        """True when the dancer has an active Tap-In tag."""
+        return self.nfc_tags.filter_by(status='active').first() is not None
     
     def get_recent_attendance(self, days=30):
         """Get recent attendance records"""
@@ -386,7 +404,7 @@ class Attendance(db.Model):
     check_out_time = db.Column(db.DateTime)
     
     # How they checked in
-    check_in_method = db.Column(db.String(20), default='rfid')  # rfid, manual, mobile
+    check_in_method = db.Column(db.String(20), default='rfid')  # tap, manual, backfill, rfid (legacy)
     
     # Optional notes
     notes = db.Column(db.Text)
@@ -400,10 +418,11 @@ class Attendance(db.Model):
     # is_excused marks the E, so every "who showed up" count skips it.
     is_excused = db.Column(db.Boolean, default=False, nullable=False)
     
-    # Lookup index for the per-(student, class, day) dedup query. NOTE: this is a
-    # plain index, NOT a uniqueness guarantee — duplicate check-ins are prevented
-    # at the APPLICATION level (manual_checkin returns 400 if already present;
-    # toggle_attendance deletes-or-creates). Keep those checks; the DB won't.
+    # Lookup index for the per-(student, class, day) query. Uniqueness is NOT
+    # declared here: app/migrations.py adds the functional UNIQUE index
+    # ix_attendance_unique_day on (student_id, class_id, date(check_in_time)) and
+    # de-dupes on every boot, keeping the earliest row. So a check-out must
+    # UPDATE the day's row (Tap-In does) - a second row is rejected or deleted.
     __table_args__ = (
         db.Index('idx_attendance_date_student', 'student_id',
                 db.func.date('check_in_time'), 'class_id'),
@@ -425,7 +444,8 @@ class Attendance(db.Model):
         return f'<Attendance {self.student.full_name} on {self.attendance_date}>'
 
 class RFIDLog(db.Model):
-    """RFID scan log for debugging and security"""
+    """Scan log from the retired Raspberry Pi reader. Kept as read-only history
+    (it's in the parent data export); Tap-In logs to tap_events instead."""
     __tablename__ = 'rfid_logs'
     
     id = db.Column(db.Integer, primary_key=True)
@@ -462,6 +482,7 @@ class Transaction(db.Model):
     description = db.Column(db.Text)
     transaction_date = db.Column(db.Date, default=date.today, nullable=False)
     recurring_charge_id = db.Column(db.Integer, db.ForeignKey('recurring_charges.id'))
+    applied_charge_id = db.Column(db.Integer, db.ForeignKey('transactions.id'), index=True)
 
     created_by = db.Column(db.Integer, db.ForeignKey('users.id'))
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
@@ -469,6 +490,7 @@ class Transaction(db.Model):
     creator = db.relationship('User', backref='created_transactions')
 
     recurring_charge = db.relationship('RecurringCharge', backref='transactions')
+    applied_charge = db.relationship('Transaction', remote_side=[id], backref='applied_payments')
 
     def __repr__(self):
         return f'<Transaction ${self.amount} {self.category} for student {self.student_id}>'
@@ -1338,3 +1360,129 @@ class RecitalAd(db.Model):
 
     def __repr__(self):
         return f'<RecitalAd {self.advertiser} {self.size}>'
+
+# ── Tap-In (NFC check-in) ───────────────────────────────────────────
+
+class NfcTag(db.Model):
+    """A physical NFC fob or card that checks a dancer in and out.
+
+    The tag itself carries only a URL with a random token. The token is never
+    stored, only its sha256, so a database leak can't be turned into working
+    tags. `uid` is the chip's serial number (uppercase hex, no separators): the
+    USB keyboard-wedge reader can only see that, so it is captured at
+    enrollment. Legacy `Student.rfid_uid` badges are backfilled here with a
+    uid and no token.
+
+    Lifecycle: pending (written, not yet verified) -> active -> lost/retired.
+    A lost tag is kept, not deleted, so a tap on it is recognised and refused
+    instead of looking like a stranger's card."""
+    __tablename__ = 'nfc_tags'
+
+    id = db.Column(db.Integer, primary_key=True)
+    student_id = db.Column(db.Integer, db.ForeignKey('students.id'), index=True)
+    token_hash = db.Column(db.String(64), unique=True, index=True)
+    uid = db.Column(db.String(32), unique=True, index=True)
+    label = db.Column(db.String(20))       # non-identifying, printed on nothing: T-0014
+    kind = db.Column(db.String(10), default='fob', nullable=False)  # fob, card, other
+    status = db.Column(db.String(10), default='pending', nullable=False)  # pending/active/lost/retired
+    locked = db.Column(db.Boolean, default=False, nullable=False)  # made read-only on the chip
+    source = db.Column(db.String(10), default='enrolled', nullable=False)  # enrolled, legacy
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    created_by = db.Column(db.Integer, db.ForeignKey('users.id'))
+    activated_at = db.Column(db.DateTime)
+    deactivated_at = db.Column(db.DateTime)
+
+    student = db.relationship('Student', backref=db.backref('nfc_tags', lazy='dynamic'))
+
+    def __repr__(self):
+        return f'<NfcTag {self.label} {self.status}>'
+
+
+class TapEvent(db.Model):
+    """Append-only ledger of every tap, accepted or not.
+
+    Direction (in vs out) is decided from these rows, never from the Attendance
+    row: a teacher can pre-mark P on the card before the dancer arrives, and
+    that must not turn the arrival tap into a departure. `event_key` makes a
+    replayed request (reload, offline queue retry) a no-op. Times are
+    studio-local naive, the same basis as Attendance.check_in_time."""
+    __tablename__ = 'tap_events'
+
+    id = db.Column(db.Integer, primary_key=True)
+    event_key = db.Column(db.String(64), unique=True, nullable=False)
+    tag_id = db.Column(db.Integer, db.ForeignKey('nfc_tags.id'))
+    student_id = db.Column(db.Integer, db.ForeignKey('students.id'))
+    class_id = db.Column(db.Integer, db.ForeignKey('classes.id'))
+    attendance_id = db.Column(db.Integer, db.ForeignKey('attendance.id'))
+    occurred_at = db.Column(db.DateTime, nullable=False, index=True)
+    recorded_at = db.Column(db.DateTime, default=datetime.now, nullable=False)
+    source = db.Column(db.String(10), default='api', nullable=False)  # url, kiosk, usb, api
+    # checked_in, checked_out, already_in, already_out, duplicate, needs_class,
+    # rolled_over, reopened, undone, unknown_tag, inactive_tag, unassigned_tag
+    outcome = db.Column(db.String(20), nullable=False)
+    direction = db.Column(db.String(3))  # 'in', 'out' or None for no state change
+    undone = db.Column(db.Boolean, default=False, nullable=False)
+    undo_data = db.Column(db.Text)       # JSON snapshot of the attendance row before this tap
+    actor_id = db.Column(db.Integer, db.ForeignKey('users.id'))
+    detail = db.Column(db.String(200))
+
+    tag = db.relationship('NfcTag')
+    student = db.relationship('Student')
+    dance_class = db.relationship('DanceClass')
+    attendance = db.relationship('Attendance')
+
+    __table_args__ = (
+        db.Index('ix_tap_events_student_time', 'student_id', 'occurred_at'),
+    )
+
+    def __repr__(self):
+        return f'<TapEvent {self.outcome} s={self.student_id} {self.occurred_at}>'
+
+
+class TapNotification(db.Model):
+    """Outbox for arrival/departure notices. Written in the same transaction as
+    the tap, sent later by one background thread, so a slow SMTP or Twilio
+    call never holds up a tap. Recipients are resolved at send time, so an
+    opt-out made after the tap still wins. `household_key` ('f12' / 's34')
+    groups siblings who tapped together into one message."""
+    __tablename__ = 'tap_notifications'
+
+    id = db.Column(db.Integer, primary_key=True)
+    tap_event_id = db.Column(db.Integer, db.ForeignKey('tap_events.id'), nullable=False)
+    student_id = db.Column(db.Integer, db.ForeignKey('students.id'), nullable=False)
+    household_key = db.Column(db.String(20), nullable=False, index=True)
+    kind = db.Column(db.String(10), nullable=False)      # arrival, departure
+    channel = db.Column(db.String(5), nullable=False)    # email, sms
+    status = db.Column(db.String(10), default='pending', nullable=False, index=True)
+    reason = db.Column(db.String(80))                    # why skipped/failed
+    attempts = db.Column(db.Integer, default=0, nullable=False)
+    send_after = db.Column(db.DateTime, nullable=False, index=True)  # studio-local
+    created_at = db.Column(db.DateTime, default=datetime.now, nullable=False)
+    sent_at = db.Column(db.DateTime)
+    recipients = db.Column(db.Text)
+
+    event = db.relationship('TapEvent')
+    student = db.relationship('Student')
+
+    __table_args__ = (
+        db.UniqueConstraint('tap_event_id', 'channel', name='unique_tap_notice_channel'),
+    )
+
+    def __repr__(self):
+        return f'<TapNotification {self.kind}/{self.channel} {self.status}>'
+
+
+class SmsVerification(db.Model):
+    """A one-time code texted to a number before it can get check-in texts.
+    Proves the parent holds the phone, so the portal can't be used to text a
+    stranger. Only a hash of the code is stored."""
+    __tablename__ = 'sms_verifications'
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
+    phone = db.Column(db.String(20), nullable=False, index=True)
+    code_hash = db.Column(db.String(64), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    expires_at = db.Column(db.DateTime, nullable=False)
+    attempts = db.Column(db.Integer, default=0, nullable=False)
+    used = db.Column(db.Boolean, default=False, nullable=False)
