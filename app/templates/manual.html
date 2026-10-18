@@ -560,9 +560,9 @@ Search narrows the page; Print includes the full manual and can save a PDF.</p>
     A balance is just charges minus payments. Family totals are a roll-up of the siblings' individual
     balances. All of this lives on the <strong>Payments</strong> page.</p>
 
-    <h3 class="{{ h3 }}">Studio and Company / Foundation are separate</h3>
+    <h3 class="{{ h3 }}">Studio and Company are separate</h3>
     <p class="{{ p }}">Every dancer has two accounts. Studio covers tuition, costumes, shoes,
-    registration, and other studio fees. Company / Foundation covers competition, convention,
+    registration, and other studio fees. Company covers competition, convention,
     transportation, lodging, observer fees, costume rental, company dues, and company tickets.
     A charge's category selects its fund. When recording a payment, choose which balance it pays.</p>
     <p class="{{ p }}">A Studio credit never pays a Company debt automatically. Student ledgers, family
@@ -636,7 +636,7 @@ Search narrows the page; Print includes the full manual and can save a PDF.</p>
     </ul>
     <p class="{{ p }}">Zelle and Cash App payments don't tell the system anything on their own, so
     there's a confirmation step - see below.</p>
-    <p class="{{ p }}">Configure <strong>Company / Foundation</strong> payment details separately on
+    <p class="{{ p }}">Configure <strong>Company</strong> payment details separately on
     the same settings page: its own Zelle name and QR code, Cash App tag, and card payment link.
     The portal uses the chosen fund's destinations. Save with <strong>Save Settings</strong>.</p>
 
@@ -1120,7 +1120,8 @@ function applyManSearch() {
   let anyVisible = false;
 
   manSecs.forEach(sec => {
-    const heading = sec.previousElementSibling;
+    let heading = sec.previousElementSibling;
+    while (heading && heading.tagName !== 'H2') heading = heading.previousElementSibling;
     const text = (heading ? heading.textContent : '') + ' ' + sec.textContent;
     const hit = !q || text.toLowerCase().includes(q);
     sec.classList.toggle('hidden', !hit);

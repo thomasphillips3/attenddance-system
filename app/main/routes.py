@@ -160,7 +160,7 @@ def parent_dashboard():
             'recent_attendance': recent_att,
             'classes': child_classes,
         })
-        if child.family_id:
+        if child.family_id and child.is_active:
             g = family_groups.setdefault(child.family_id, {
                 'family_id': child.family_id,
                 'name': child.family.name if child.family else 'Family',
@@ -174,9 +174,14 @@ def parent_dashboard():
     # Only offer combined pay when a family has 2+ of this parent's children and
     # owes money in a fund; one banner per (family, fund) so a family owing only
     # Company money sees only the Foundation's destinations.
+    linked_child_ids = {child.id for child in children}
+    payable_groups = [
+        g for g in family_groups.values() if len(g['members']) > 1
+        and {s.id for s in Family.query.get(g['family_id']).students.filter_by(is_active=True).all()}.issubset(linked_child_ids)
+    ]
     families = [
         {**g, 'fund': fund, 'balance': g['funds'][fund]}
-        for g in family_groups.values() if len(g['members']) > 1
+        for g in payable_groups
         for fund in FUNDS if g['funds'][fund] > 0
     ]
     return render_template('parent/dashboard.html', children=child_data, families=families)

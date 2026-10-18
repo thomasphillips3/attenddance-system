@@ -19,6 +19,14 @@
     </div>
 </div>
 
+<div class="mb-6 flex items-center gap-3">
+    <label for="filter-fund" class="text-sm font-bold text-ink-2">Show fund</label>
+    <select id="filter-fund" onchange="applyFundFilter()" class="bg-surface border border-line-2 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-200 focus:border-primary-400">
+        <option value="">All funds</option>
+        {% for fund in FUNDS %}<option value="{{ fund }}">{{ FUND_LABELS[fund] }}</option>{% endfor %}
+    </select>
+</div>
+
 <!-- Balance Summary -->
 <h2 class="font-display text-xl text-ink mb-3">Student Balances</h2>
 <div class="bg-surface border border-line rounded-2xl shadow-soft overflow-hidden mb-8">
@@ -30,7 +38,7 @@
                     {# One balance column per fund; hover a cell for that fund's
                        charges and payments. There is no combined column on purpose. #}
                     {% for fund in FUNDS %}
-                    <th class="{{ thr }}">{{ FUND_LABELS[fund] }} balance</th>
+                    <th data-fund="{{ fund }}" class="{{ thr }}">{{ FUND_LABELS[fund] }} balance</th>
                     {% endfor %}
                     <th class="{{ thr }}"></th>
                 </tr>
@@ -70,12 +78,6 @@
 <!-- Recent Transactions -->
 <h2 class="font-display text-xl text-ink mb-3">Recent Transactions</h2>
 <div class="mb-4 flex flex-wrap gap-3">
-    <select id="filter-fund" onchange="loadTransactions(1)" class="bg-surface border border-line-2 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-200 focus:border-primary-400">
-        <option value="">All funds</option>
-        {% for fund in FUNDS %}
-        <option value="{{ fund }}">{{ FUND_LABELS[fund] }}</option>
-        {% endfor %}
-    </select>
     <select id="filter-category" onchange="loadTransactions(1)" class="bg-surface border border-line-2 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-200 focus:border-primary-400">
         {{ category_options(blank='All Categories') }}
     </select>
@@ -290,6 +292,38 @@ const methodLabels = { cash: 'Cash', zelle: 'Zelle', venmo: 'Venmo', cashapp: 'C
 const CATEGORY_FUND = Object.fromEntries({{ FUND_CATEGORIES | tojson }}.map(c => [c[0], c[2]]));
 const FUND_LABELS = {{ FUND_LABELS | tojson }};
 const FUNDS = {{ FUNDS | list | tojson }};
+let allBalances = [];
+const selectedFund = () => document.getElementById('filter-fund').value;
+const visibleFunds = () => selectedFund() ? [selectedFund()] : FUNDS;
+
+function filterCategories(select) {
+    const fund = selectedFund();
+    for (const group of select.querySelectorAll('optgroup')) {
+        const show = !fund || group.label === FUND_LABELS[fund];
+        group.hidden = !show;
+        group.style.display = show ? '' : 'none';
+        group.disabled = !show;
+    }
+    if (select.value && fund && CATEGORY_FUND[select.value] !== fund) select.value = '';
+    const hasBlankOption = [...select.options].some(opt => opt.value === '');
+    if (select.required && !hasBlankOption && !select.value) {
+        const first = [...select.options].find(opt => opt.value && !opt.disabled && !opt.parentElement.disabled);
+        if (first) select.value = first.value;
+    }
+}
+
+function applyFundFilter() {
+    const fund = selectedFund();
+    document.querySelectorAll('th[data-fund]').forEach(th =>
+        th.classList.toggle('hidden', !!fund && th.dataset.fund !== fund));
+    for (const selectId of ['filter-category', 'txn-category', 'bulk-category', 'rc-category']) {
+        filterCategories(document.getElementById(selectId));
+    }
+    if (!document.getElementById('txn-modal').classList.contains('hidden')) loadOpenCharges();
+    renderBalances(allBalances);
+    renderRecurring(allRecurring);
+    loadTransactions(1);
+}
 const studioColors = { tuition: 'bg-info/10 text-info', costumes: 'bg-primary-50 text-primary-700', shoes: 'bg-gold-300 text-gold-ink', registration: 'bg-ok/10 text-ok' };
 function pillClass(category) {
     if (CATEGORY_FUND[category] === 'company') return 'bg-gold-300 text-gold-ink';
@@ -305,18 +339,21 @@ async function loadBalances() {
     try {
         const res = await fetch('/api/balances');
         const data = await res.json();
-        renderBalances(data.balances);
+        allBalances = data.balances;
+        renderBalances(allBalances);
     } catch (err) {
-        document.getElementById('balances-table').innerHTML = '<tr><td colspan="4" class="px-5 py-4 text-center text-danger">Failed to load</td></tr>';
+        document.getElementById('balances-table').innerHTML = `<tr><td colspan="${visibleFunds().length + 2}" class="px-5 py-4 text-center text-danger">Failed to load</td></tr>`;
     }
 }
 function renderBalances(balances) {
     const tbody = document.getElementById('balances-table');
     // "Activity" means money moved in EITHER fund; the two are never summed.
     const hasActivity = f => parseFloat(f.total_charges) > 0 || parseFloat(f.total_payments) > 0;
-    const withActivity = balances.filter(b => FUNDS.some(fund => hasActivity(b.funds[fund])));
+    const funds = visibleFunds();
+    const withActivity = balances.filter(b => funds.some(fund => hasActivity(b.funds[fund])));
+    const colspan = funds.length + 2;
     if (!withActivity.length) {
-        tbody.innerHTML = '<tr><td colspan="4" class="px-5 py-4 text-center text-ink-3">No billing activity yet. Use "Add Charge" or "Bulk Charge" to get started.</td></tr>';
+        tbody.innerHTML = `<tr><td colspan="${colspan}" class="px-5 py-4 text-center text-ink-3">No billing activity in this fund.</td></tr>`;
         return;
     }
     const fundCell = (b, fund) => {
@@ -335,14 +372,16 @@ function renderBalances(balances) {
     tbody.innerHTML = withActivity.map(b => {
         return `<tr class="border-b border-line last:border-0 hover:bg-surface-2">
             <td class="px-5 py-3 text-sm font-bold text-ink">${esc(b.student_name)}${b.withdrawn?' <span class="ml-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-surface-2 text-ink-3 align-middle">Withdrawn</span>':''}</td>
-            ${FUNDS.map(fund => fundCell(b, fund)).join('')}
+            ${funds.map(fund => fundCell(b, fund)).join('')}
             <td class="px-5 py-3 text-sm text-right"><a href="/students/${b.student_id}/ledger" class="text-primary-600 hover:text-primary-800 font-bold">View Ledger</a></td>
         </tr>`;
     }).join('');
 }
 
 let txnPage = 1;
+let txnRequest = 0;
 async function loadTransactions(page) {
+    const request = ++txnRequest;
     if (page) txnPage = page;
     const category = document.getElementById('filter-category').value;
     const fund = document.getElementById('filter-fund').value;
@@ -354,9 +393,11 @@ async function loadTransactions(page) {
     try {
         const res = await fetch(url);
         const data = await res.json();
+        if (request !== txnRequest) return;
         renderTransactions(data.transactions);
         renderTxnPagination(data.pagination);
     } catch (err) {
+        if (request !== txnRequest) return;
         document.getElementById('transactions-table').innerHTML = '<tr><td colspan="7" class="px-5 py-4 text-center text-danger">Failed to load</td></tr>';
     }
 }
@@ -401,6 +442,7 @@ function renderTransactions(txns) {
 function openChargeModal() {
     document.getElementById('txn-form').reset();
     resetOpenCharges();
+    filterCategories(document.getElementById('txn-category'));
     document.getElementById('txn-type').value = 'charge';
     document.getElementById('txn-modal-title').textContent = 'Add Charge';
     document.getElementById('txn-submit-btn').textContent = 'Add Charge';
@@ -414,6 +456,7 @@ function openChargeModal() {
 function openPaymentModal() {
     document.getElementById('txn-form').reset();
     resetOpenCharges();
+    filterCategories(document.getElementById('txn-category'));
     document.getElementById('txn-type').value = 'payment';
     document.getElementById('txn-modal-title').textContent = 'Add Payment';
     document.getElementById('txn-submit-btn').textContent = 'Add Payment';
@@ -443,7 +486,7 @@ async function loadOpenCharges() {
         if (!res.ok) throw new Error('Could not load charges');
         const data = await res.json();
         if (document.getElementById('txn-student').value !== studentId) return;
-        openChargeRows = data.charges;
+        openChargeRows = data.charges.filter(charge => !selectedFund() || charge.fund === selectedFund());
         for (const c of openChargeRows) {
             const option = document.createElement('option');
             option.value = c.id;
@@ -500,6 +543,7 @@ async function saveTransaction(e) {
 
 function openBulkModal() {
     document.getElementById('bulk-form').reset();
+    filterCategories(document.getElementById('bulk-category'));
     document.getElementById('bulk-date').value = new Date().toISOString().split('T')[0];
     document.getElementById('bulk-modal').classList.remove('hidden');
 }
@@ -540,7 +584,7 @@ let allRecurring = [];
 function renderRecurring(rules) {
     allRecurring = rules || [];
     const tbody = document.getElementById('recurring-table');
-    const active = rules.filter(r => r.is_active);
+    const active = (rules || []).filter(r => r.is_active && (!selectedFund() || CATEGORY_FUND[r.category] === selectedFund()));
     if (!active.length) {
         tbody.innerHTML = '<tr><td colspan="6" class="px-5 py-4 text-center text-ink-3">No auto-billing rules. Click "Add Rule" to set up automatic monthly charges.</td></tr>';
         return;
@@ -560,6 +604,7 @@ function renderRecurring(rules) {
 }
 function openRecurringModal() {
     document.getElementById('recurring-form').reset();
+    filterCategories(document.getElementById('rc-category'));
     document.getElementById('recurring-id').value = '';
     document.getElementById('rc-class').disabled = false;
     document.getElementById('recurring-modal').classList.remove('hidden');
