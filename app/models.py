@@ -482,6 +482,7 @@ class Transaction(db.Model):
     description = db.Column(db.Text)
     transaction_date = db.Column(db.Date, default=date.today, nullable=False)
     recurring_charge_id = db.Column(db.Integer, db.ForeignKey('recurring_charges.id'))
+    applied_charge_id = db.Column(db.Integer, db.ForeignKey('transactions.id'), index=True)
 
     created_by = db.Column(db.Integer, db.ForeignKey('users.id'))
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
@@ -489,6 +490,7 @@ class Transaction(db.Model):
     creator = db.relationship('User', backref='created_transactions')
 
     recurring_charge = db.relationship('RecurringCharge', backref='transactions')
+    applied_charge = db.relationship('Transaction', remote_side=[id], backref='applied_payments')
 
     def __repr__(self):
         return f'<Transaction ${self.amount} {self.category} for student {self.student_id}>'

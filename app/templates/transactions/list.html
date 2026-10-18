@@ -158,6 +158,13 @@
                             <option value="tap">Tap at Desk</option>
                         </select>
                     </div>
+                    <div id="apply-charge-field" class="col-span-2 hidden">
+                        <label class="{{ lbl }}" for="txn-applied-charge">Apply to charge</label>
+                        <select id="txn-applied-charge" class="{{ inp }}" onchange="selectAppliedCharge()">
+                            <option value="">No specific charge</option>
+                        </select>
+                        <p class="mt-1 text-xs text-ink-3">Choose an unpaid itemized charge for this student.</p>
+                    </div>
                     <div class="col-span-2">
                         <label class="{{ lbl }}">Description</label>
                         <input type="text" id="txn-description" class="{{ inp }}" placeholder="e.g. June tuition, recital costume deposit">
@@ -384,7 +391,7 @@ function renderTransactions(txns) {
             <td class="px-5 py-3 whitespace-nowrap text-sm text-ink">${esc(t.student_name)}</td>
             <td class="px-5 py-3 whitespace-nowrap">${typeTag}</td>
             <td class="px-5 py-3 whitespace-nowrap"><span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-bold ${pillClass(t.category)}">${esc(t.category)}</span>${fundPill(t.fund)}</td>
-            <td class="px-5 py-3 text-sm text-ink-2">${esc(t.description || '-')}</td>
+            <td class="px-5 py-3 text-sm text-ink-2">${esc(t.description || '-')}${t.applied_charge_id ? `<div class="text-xs text-primary-600">Applied to #${t.applied_charge_id}: ${esc(t.applied_charge_description || 'charge')}</div>` : ''}</td>
             <td class="px-5 py-3 whitespace-nowrap text-sm text-ink-2">${t.payment_method ? esc(methodLabels[t.payment_method] || t.payment_method) : '—'}</td>
             <td class="px-5 py-3 whitespace-nowrap text-sm font-bold text-right tabular-nums ${amtClass}">$${parseFloat(t.amount).toFixed(2)}</td>
         </tr>`;
@@ -393,27 +400,71 @@ function renderTransactions(txns) {
 
 function openChargeModal() {
     document.getElementById('txn-form').reset();
+    resetOpenCharges();
     document.getElementById('txn-type').value = 'charge';
     document.getElementById('txn-modal-title').textContent = 'Add Charge';
     document.getElementById('txn-submit-btn').textContent = 'Add Charge';
     document.getElementById('txn-submit-btn').className = 'px-4 py-2 rounded-xl bg-danger text-white text-sm font-bold hover:opacity-90 shadow-sm';
     document.getElementById('method-field').style.display = 'none';
+    document.getElementById('apply-charge-field').classList.add('hidden');
     document.getElementById('txn-method').removeAttribute('required');
     document.getElementById('txn-date').value = new Date().toISOString().split('T')[0];
     document.getElementById('txn-modal').classList.remove('hidden');
 }
 function openPaymentModal() {
     document.getElementById('txn-form').reset();
+    resetOpenCharges();
     document.getElementById('txn-type').value = 'payment';
     document.getElementById('txn-modal-title').textContent = 'Add Payment';
     document.getElementById('txn-submit-btn').textContent = 'Add Payment';
     document.getElementById('txn-submit-btn').className = 'px-4 py-2 rounded-xl bg-ok text-white text-sm font-bold hover:opacity-90 shadow-sm';
     document.getElementById('method-field').style.display = '';
+    document.getElementById('apply-charge-field').classList.remove('hidden');
     document.getElementById('txn-method').setAttribute('required', '');
     document.getElementById('txn-date').value = new Date().toISOString().split('T')[0];
     document.getElementById('txn-modal').classList.remove('hidden');
 }
 function closeTxnModal() { document.getElementById('txn-modal').classList.add('hidden'); }
+
+let openChargeRows = [];
+function resetOpenCharges() {
+    openChargeRows = [];
+    document.getElementById('txn-applied-charge').innerHTML = '<option value="">No specific charge</option>';
+    document.querySelectorAll('#txn-category option[data-charge-only]').forEach(option => option.remove());
+}
+document.getElementById('txn-student').addEventListener('change', loadOpenCharges);
+async function loadOpenCharges() {
+    const studentId = document.getElementById('txn-student').value;
+    const select = document.getElementById('txn-applied-charge');
+    resetOpenCharges();
+    if (!studentId || document.getElementById('txn-type').value !== 'payment') return;
+    try {
+        const res = await fetch(`/api/students/${studentId}/open-charges`);
+        if (!res.ok) throw new Error('Could not load charges');
+        const data = await res.json();
+        if (document.getElementById('txn-student').value !== studentId) return;
+        openChargeRows = data.charges;
+        for (const c of openChargeRows) {
+            const option = document.createElement('option');
+            option.value = c.id;
+            option.textContent = `${c.date} · ${c.description || c.category} · $${c.remaining.toFixed(2)} due (${c.fund})`;
+            select.appendChild(option);
+        }
+    } catch (err) { toast('Could not load open charges', false); }
+}
+function selectAppliedCharge() {
+    const id = Number(document.getElementById('txn-applied-charge').value);
+    const charge = openChargeRows.find(c => c.id === id);
+    if (!charge) return;
+    const category = document.getElementById('txn-category');
+    if (!Array.from(category.options).some(option => option.value === charge.category)) {
+        const option = new Option(charge.category, charge.category);
+        option.dataset.chargeOnly = 'true';
+        category.add(option);
+    }
+    category.value = charge.category;
+    document.getElementById('txn-amount').value = charge.remaining.toFixed(2);
+}
 
 async function saveTransaction(e) {
     e.preventDefault();
@@ -433,6 +484,13 @@ async function saveTransaction(e) {
         payment_method: txnType === 'payment' ? document.getElementById('txn-method').value : null,
         description: document.getElementById('txn-description').value,
     };
+    if (txnType === 'payment') {
+        const charge = openChargeRows.find(c => c.id === Number(document.getElementById('txn-applied-charge').value));
+        if (charge) {
+            body.applied_charge_id = charge.id;
+            body.fund = charge.fund;
+        }
+    }
     try {
         const res = await fetch('/api/transactions', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
         if (res.ok) { closeTxnModal(); loadBalances(); loadTransactions(); } else { const d = await res.json(); toast(d.error || 'Error', false); }
