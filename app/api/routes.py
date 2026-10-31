@@ -2956,11 +2956,11 @@ def _class_names_for_messages(messages) -> dict[int, list[str]]:
     for m in messages:
         if m.recipient_type != 'class':
             continue
-        try:
-            ids_by_msg[m.id] = [int(p) for p in (m.recipient_filter or '').split(',')
-                                if p.strip()]
-        except ValueError:
-            continue
+        parts = [p.strip() for p in (m.recipient_filter or '').split(',') if p.strip()]
+        # Legacy rows stored the client's raw text; skip anything that is not a
+        # sane id rather than let one bad row break the whole history page.
+        if parts and all(p.isascii() and p.isdigit() and int(p) <= _MAX_ID for p in parts):
+            ids_by_msg[m.id] = [int(p) for p in parts]
     wanted = {i for ids in ids_by_msg.values() for i in ids}
     if not wanted:
         return {}
@@ -3204,6 +3204,7 @@ def send_message():
 
 
 _MAX_CLASSES_PER_MESSAGE = 200
+_MAX_ID = 2**31 - 1
 
 
 def _normalized_filter(rtype, raw) -> str:
@@ -3225,9 +3226,13 @@ def _parse_class_ids(raw) -> list[int] | tuple:
     parts = [p.strip() for p in str(raw or '').split(',') if p.strip()]
     if not parts:
         return jsonify({'error': 'recipient_filter (class ids) required for class type'}), 400
-    try:
-        ids = sorted({int(p) for p in parts})
-    except ValueError:
+    # ASCII digits only: int() would also take "1_0", "+3" and non-ASCII
+    # digits. The range cap keeps a huge number from overflowing SQLite's
+    # INTEGER when it is bound into the IN list (a 500 instead of a 400).
+    if not all(p.isascii() and p.isdigit() for p in parts):
+        return jsonify({'error': 'Invalid class selection'}), 400
+    ids = sorted({int(p) for p in parts})
+    if ids[-1] > _MAX_ID:
         return jsonify({'error': 'Invalid class selection'}), 400
     if len(ids) > _MAX_CLASSES_PER_MESSAGE:
         return jsonify({'error': f'Pick at most {_MAX_CLASSES_PER_MESSAGE} classes'}), 400
@@ -3244,6 +3249,15 @@ def _resolve_recipient_emails(rtype: str, recipient_filter) -> set | tuple:
         ids = _parse_class_ids(recipient_filter)
         if isinstance(ids, tuple):
             return ids
+        if not current_user.is_admin:
+            # The picker only offers live classes (active, current season); a
+            # teacher must not reach a retired or draft-season roster by
+            # posting its id. Refuse rather than quietly narrow the audience.
+            from app.helpers import live_class_query
+            live = {r[0] for r in live_class_query()
+                    .with_entities(DanceClass.id).filter(DanceClass.id.in_(ids)).all()}
+            if live != set(ids):
+                return jsonify({'error': 'One of those classes is not available'}), 400
         # Whole Student rows (not two columns) because the recipient list spans
         # the dancer's second parent address and the household's, which
         # student_emails() resolves. One query for any number of classes; the

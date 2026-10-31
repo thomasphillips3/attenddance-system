@@ -36,7 +36,7 @@
            for every class in that group, so one send path serves all three. #}
         <div id="class-picker" class="hidden mb-4 border border-line rounded-2xl p-4 bg-surface-2">
             <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
-                <span id="class-count" class="text-sm font-bold text-ink">0 classes selected</span>
+                <span id="class-count" aria-live="polite" class="text-sm font-bold text-ink">0 classes selected</span>
                 <div class="flex gap-3 text-sm">
                     <button type="button" onclick="pickAllClasses(true)" class="text-primary-600 hover:underline">Select all</button>
                     <button type="button" onclick="pickAllClasses(false)" class="text-primary-600 hover:underline">Clear</button>
@@ -55,7 +55,7 @@
         {# Who this will actually reach, resolved by the same code the send
            uses. The list is the thing the studio asked to see. #}
         <div id="recipient-preview" class="mb-4 text-sm text-ink-2 hidden">
-            <span id="recipient-summary"></span>
+            <span id="recipient-summary" aria-live="polite"></span>
             <button type="button" onclick="toggleRecipientList(this)" class="text-primary-600 hover:underline ml-2">Show list</button>
             <a id="recipient-csv" href="#" class="text-primary-600 hover:underline ml-2"><i class="fas fa-download mr-1"></i>Download list</a>
             <textarea id="recipient-list" rows="4" readonly class="hidden mt-2 block w-full bg-surface-2 border border-line-2 rounded-xl px-3 py-2 text-xs"></textarea>
@@ -143,6 +143,8 @@
 {% block extra_js %}
 <script>
 function esc(str) { const d = document.createElement('div'); d.textContent = str; return d.innerHTML; }
+// For values inside an attribute: esc() leaves double quotes alone.
+function escAttr(str) { return esc(str).replace(/"/g, '&quot;'); }
 let historyById = {};   // last loaded page of history, by id, for the detail panel
 const classes = {{ classes|tojson }};
 const locations = {{ locations|tojson }};
@@ -191,10 +193,14 @@ function chip(label, ids, onclick) {
     const on = groupFullyPicked(ids);
     const cls = on ? 'bg-primary-500 text-white border-primary-500'
                    : 'bg-surface text-ink-2 border-line-2 hover:border-primary-300';
-    return `<button type="button" aria-pressed="${on}" onclick="${onclick}" class="px-3 py-1 rounded-full border text-sm font-bold ${cls}">${esc(label)}</button>`;
+    return `<button type="button" aria-pressed="${on}" onclick="${onclick}" class="px-4 py-2 rounded-full border text-sm font-bold ${cls}">${esc(label)}</button>`;
 }
 
 function renderClassPicker() {
+    const listEl = document.getElementById('class-list');
+    const scroll = listEl.scrollTop;
+    const focusedId = document.activeElement && document.activeElement.dataset
+        ? document.activeElement.dataset.classId : null;
     document.getElementById('class-count').textContent =
         pickedClasses.size + (pickedClasses.size === 1 ? ' class selected' : ' classes selected');
     const days = [...new Set(classes.map(c => c.day))].sort((a, b) => a - b);
@@ -212,10 +218,15 @@ function renderClassPicker() {
         }
         const meta = [c.time, c.location].filter(Boolean).join(' · ');
         html += `<label class="flex items-start gap-3 px-3 py-2 cursor-pointer hover:bg-surface-2">
-            <input type="checkbox" class="mt-1 rounded border-line-2 text-primary-600 focus:ring-primary-200" ${pickedClasses.has(c.id) ? 'checked' : ''} onchange="toggleClass(${c.id})">
+            <input type="checkbox" data-class-id="${c.id}" class="mt-1 rounded border-line-2 text-primary-600 focus:ring-primary-200" ${pickedClasses.has(c.id) ? 'checked' : ''} onchange="toggleClass(${c.id})">
             <span class="min-w-0"><span class="block text-sm text-ink">${esc(c.name)}</span>${meta ? `<span class="block text-xs text-ink-3">${esc(meta)}</span>` : ''}</span></label>`;
     });
-    document.getElementById('class-list').innerHTML = html || '<p class="px-3 py-3 text-sm text-ink-3">No classes yet.</p>';
+    listEl.innerHTML = html || '<p class="px-3 py-3 text-sm text-ink-3">No classes yet.</p>';
+    listEl.scrollTop = scroll;
+    if (focusedId) {
+        const again = listEl.querySelector(`input[data-class-id="${focusedId}"]`);
+        if (again) again.focus();
+    }
 }
 
 function currentFilter(type) {
@@ -241,12 +252,18 @@ async function refreshRecipientPreview() {
         const r = await fetch('/api/messages/recipients?' + q);
         const d = await r.json();
         if (seq !== previewSeq) return;   // a newer selection superseded this one
-        if (!r.ok) { box.classList.add('hidden'); return; }
+        if (!r.ok) { previewFailed(box); return; }
         document.getElementById('recipient-summary').innerHTML =
             'Will go to <span class="font-bold text-ink">' + d.count + '</span> email address' + (d.count === 1 ? '' : 'es') + '.';
         document.getElementById('recipient-list').value = d.emails.join(', ');
         box.classList.remove('hidden');
-    } catch { box.classList.add('hidden'); }
+    } catch { if (seq === previewSeq) previewFailed(box); }
+}
+function previewFailed(box) {
+    document.getElementById('recipient-summary').textContent =
+        "Couldn't check who this will reach. Reload the page before sending.";
+    document.getElementById('recipient-list').value = '';
+    box.classList.remove('hidden');
 }
 function toggleRecipientList(btn) {
     const ta = document.getElementById('recipient-list');
@@ -308,7 +325,9 @@ function renderAttachList() {
 }
 
 function noClassPicked() {
-    return document.getElementById('msg-type').value === 'class' && pickedClasses.size === 0;
+    const type = document.getElementById('msg-type').value;
+    if (type === 'class') return pickedClasses.size === 0;
+    return type !== 'all' && !currentFilter(type);
 }
 
 function composeForm() {
@@ -331,7 +350,7 @@ async function sendTest() {
     const subject = document.getElementById('msg-subject').value.trim();
     const body = document.getElementById('msg-body').value.trim();
     if (!subject || !body) { toast('Write the subject and message first', false); return; }
-    if (noClassPicked()) { toast('Pick at least one class', false); return; }
+    if (noClassPicked()) { toast('Pick who this goes to first', false); return; }
     const btn = document.getElementById('test-btn');
     btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Sending test...';
     const form = composeForm();
@@ -346,7 +365,7 @@ async function sendTest() {
 
 async function sendMessage(e) {
     e.preventDefault();
-    if (noClassPicked()) { toast('Pick at least one class', false); return; }
+    if (noClassPicked()) { toast('Pick who this goes to first', false); return; }
     const btn = document.getElementById('send-btn');
     btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Sending...';
     const form = composeForm();
@@ -362,7 +381,12 @@ async function sendMessage(e) {
             } else {
                 toast(data.message, true);
             }
+            // reset() snaps the type select back to its first option, which is
+            // "All Parents" for an admin. Keep the type the sender chose so the
+            // next compose never silently defaults to the whole studio.
+            const keptType = document.getElementById('msg-type').value;
             document.getElementById('compose-form').reset();
+            document.getElementById('msg-type').value = keptType;
             selectedFiles = []; renderAttachList();
             pickedClasses = new Set();
             updateRecipientFilter();
@@ -429,7 +453,7 @@ function renderHistory(msgs) {
             ? '<span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-ok/10 text-ok">Sent</span>'
             : '<span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-warn/10 text-warn">Saved</span>';
         const atts = (m.attachments || []).length
-            ? m.attachments.map(a => `<a href="${a.url}" class="block text-sm text-primary-600 hover:underline" title="${esc(a.filename)} (${fmtSize(a.size)})">
+            ? m.attachments.map(a => `<a href="${a.url}" class="block text-sm text-primary-600 hover:underline" title="${escAttr(a.filename)} (${fmtSize(a.size)})">
                     <i class="fas fa-paperclip mr-1"></i>${esc(a.filename)}</a>`).join('')
             : '<span class="text-sm text-ink-3">—</span>';
         return `<tr class="border-b border-line last:border-0">

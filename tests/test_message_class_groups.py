@@ -130,6 +130,25 @@ r, d = preview(staff, "99999")
 record("an unknown class id is an empty audience, not an error",
        r.status_code == 200 and d.get("count") == 0, f"got {r.status_code} {d}")
 
+for bad in ("99999999999999999999", "1_0", "+3", "٣"):
+    r, d = preview(staff, bad)
+    record(f"unsafe id {bad!r} is a 400, not a 500", r.status_code == 400, f"got {r.status_code}")
+
+# teacher cannot reach a non-live class by posting its id
+with app.app_context():
+    adm = User.query.filter_by(username="admin").first()
+    dead = DanceClass(name="Retired", day_of_week=3, start_time=dtime(17, 0), end_time=dtime(18, 0),
+                      instructor_id=adm.id, is_active=False)
+    db.session.add(dead)
+    db.session.flush()
+    db.session.add(ClassEnrollment(student_id=ava, class_id=dead.id))
+    db.session.commit()
+    dead_id = dead.id
+r, d = preview(teach, f"{mon_op},{dead_id}")
+record("a teacher cannot include a retired class", r.status_code == 400, f"got {r.status_code} {d}")
+r, d = preview(teach, str(mon_op))
+record("a teacher can still preview a live class", r.status_code == 200, f"got {r.status_code}")
+
 # 4. send resolves the same audience, stores a normalized filter
 _, pv = preview(staff, f"{mon_lv},{mon_op}")
 r = staff.post("/api/messages", data={"subject": "Mondays", "body": "Hi",
@@ -167,6 +186,11 @@ with app.app_context():
     old = Message(subject="Legacy", body="b", recipient_type="class", recipient_filter="not-an-id",
                   recipient_count=0, recipient_emails="", created_by=1, sent=True)
     db.session.add(old)
+    db.session.commit()
+with app.app_context():
+    db.session.add(Message(subject="Huge", body="b", recipient_type="class",
+                           recipient_filter="99999999999999999999", recipient_count=0,
+                           recipient_emails="", created_by=1, sent=True))
     db.session.commit()
 r = staff.get("/api/messages")
 record("a legacy row with a junk filter does not break the history list", r.status_code == 200,

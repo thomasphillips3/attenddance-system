@@ -255,7 +255,8 @@ def messages_page():
             .all())
     classes = [{
         'id': c.id, 'name': c.name, 'day': c.day_of_week,
-        'time': c.start_time.strftime('%-I:%M %p') if c.start_time else '',
+        'time': (f'{c.start_time.hour % 12 or 12}:{c.start_time:%M} '
+                 f'{"AM" if c.start_time.hour < 12 else "PM"}') if c.start_time else '',
         'location_id': c.location_id,
         'location': c.location.name if c.location else '',
     } for c in rows]
