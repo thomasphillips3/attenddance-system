@@ -17,7 +17,7 @@ It's a Flask app running on Fly.io at https://attenddance.fly.dev.
 ### Billing funds
 
 Every charge and payment belongs to one of two funds: **Studio** (tuition,
-costumes, shoes, registration, other) or **Company / Foundation** (competition,
+costumes, dancewear, registration, other) or **Company / Foundation** (competition,
 convention, transportation, lodging, observer, costume rental, company dues,
 company tickets). Company money is owed to the LSODance Foundation, so the two
 are never netted: a Company payment only ever settles Company charges and every
