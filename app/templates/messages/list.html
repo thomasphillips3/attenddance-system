@@ -23,19 +23,39 @@
                     {% if current_user.is_admin %}{# whole-studio blasts are admin-only #}
                     <option value="all">All Parents</option>
                     {% endif %}
-                    <option value="class">Parents in a Class</option>
+                    <option value="class">Parents in Classes</option>
                     <option value="individual">Individual Student's Parent</option>
                 </select>
             </div>
             <div id="filter-field" class="hidden">
-                <label id="filter-label" class="{{ LABEL }}">Class</label>
+                <label id="filter-label" class="{{ LABEL }}">Student</label>
                 <select id="msg-filter" class="{{ INPUT }}"></select>
             </div>
+        </div>
+        {# Several classes at once. Day and location chips just tick the boxes
+           for every class in that group, so one send path serves all three. #}
+        <div id="class-picker" class="hidden mb-4 border border-line rounded-2xl p-4 bg-surface-2">
+            <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+                <span id="class-count" aria-live="polite" class="text-sm font-bold text-ink">0 classes selected</span>
+                <div class="flex gap-3 text-sm">
+                    <button type="button" onclick="pickAllClasses(true)" class="text-primary-600 hover:underline">Select all</button>
+                    <button type="button" onclick="pickAllClasses(false)" class="text-primary-600 hover:underline">Clear</button>
+                </div>
+            </div>
+            <div class="mb-2">
+                <div class="text-[11px] font-bold uppercase tracking-[.06em] text-ink-3 mb-1">By day</div>
+                <div id="day-chips" class="flex flex-wrap gap-2"></div>
+            </div>
+            <div id="loc-row" class="mb-3">
+                <div class="text-[11px] font-bold uppercase tracking-[.06em] text-ink-3 mb-1">By location</div>
+                <div id="loc-chips" class="flex flex-wrap gap-2"></div>
+            </div>
+            <div id="class-list" class="max-h-72 overflow-y-auto bg-surface border border-line rounded-xl divide-y divide-line"></div>
         </div>
         {# Who this will actually reach, resolved by the same code the send
            uses. The list is the thing the studio asked to see. #}
         <div id="recipient-preview" class="mb-4 text-sm text-ink-2 hidden">
-            <span id="recipient-summary"></span>
+            <span id="recipient-summary" aria-live="polite"></span>
             <button type="button" onclick="toggleRecipientList(this)" class="text-primary-600 hover:underline ml-2">Show list</button>
             <a id="recipient-csv" href="#" class="text-primary-600 hover:underline ml-2"><i class="fas fa-download mr-1"></i>Download list</a>
             <textarea id="recipient-list" rows="4" readonly class="hidden mt-2 block w-full bg-surface-2 border border-line-2 rounded-xl px-3 py-2 text-xs"></textarea>
@@ -123,26 +143,96 @@
 {% block extra_js %}
 <script>
 function esc(str) { const d = document.createElement('div'); d.textContent = str; return d.innerHTML; }
+// For values inside an attribute: esc() leaves double quotes alone.
+function escAttr(str) { return esc(str).replace(/"/g, '&quot;'); }
 let historyById = {};   // last loaded page of history, by id, for the detail panel
-const classes = [{% for c in classes %}{ id: {{ c.id }}, name: '{{ c.name }}' },{% endfor %}];
-const students = [{% for s in students %}{ id: {{ s.id }}, name: '{{ s.full_name }}' },{% endfor %}];
+const classes = {{ classes|tojson }};
+const locations = {{ locations|tojson }};
+const students = {{ students|tojson }};
+const DAYS = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+let pickedClasses = new Set();
 
 function updateRecipientFilter() {
     const type = document.getElementById('msg-type').value;
     const field = document.getElementById('filter-field');
     const select = document.getElementById('msg-filter');
-    const label = document.getElementById('filter-label');
-    if (type === 'all') { field.classList.add('hidden'); refreshRecipientPreview(); return; }
-    field.classList.remove('hidden');
+    const picker = document.getElementById('class-picker');
+    field.classList.add('hidden'); picker.classList.add('hidden');
+    if (type === 'all') { refreshRecipientPreview(); return; }
     if (type === 'class') {
-        label.textContent = 'Class';
-        select.innerHTML = classes.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
-    } else {
-        label.textContent = 'Student';
-        select.innerHTML = students.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
+        picker.classList.remove('hidden');
+        renderClassPicker();
+        refreshRecipientPreview();
+        return;
     }
+    field.classList.remove('hidden');
+    select.innerHTML = students.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
     select.onchange = refreshRecipientPreview;
     refreshRecipientPreview();
+}
+
+// ── Class picker ─────────────────────────────────────────────────────
+function classesWhere(pred) { return classes.filter(pred).map(c => c.id); }
+function groupFullyPicked(ids) { return ids.length > 0 && ids.every(id => pickedClasses.has(id)); }
+
+function toggleGroup(ids) {
+    const all = groupFullyPicked(ids);
+    ids.forEach(id => all ? pickedClasses.delete(id) : pickedClasses.add(id));
+    renderClassPicker(); refreshRecipientPreview();
+}
+function pickAllClasses(on) {
+    pickedClasses = on ? new Set(classes.map(c => c.id)) : new Set();
+    renderClassPicker(); refreshRecipientPreview();
+}
+function toggleClass(id) {
+    pickedClasses.has(id) ? pickedClasses.delete(id) : pickedClasses.add(id);
+    renderClassPicker(); refreshRecipientPreview();
+}
+
+function chip(label, ids, onclick) {
+    const on = groupFullyPicked(ids);
+    const cls = on ? 'bg-primary-500 text-white border-primary-500'
+                   : 'bg-surface text-ink-2 border-line-2 hover:border-primary-300';
+    return `<button type="button" aria-pressed="${on}" onclick="${onclick}" class="px-4 py-2 rounded-full border text-sm font-bold ${cls}">${esc(label)}</button>`;
+}
+
+function renderClassPicker() {
+    const listEl = document.getElementById('class-list');
+    const scroll = listEl.scrollTop;
+    const focusedId = document.activeElement && document.activeElement.dataset
+        ? document.activeElement.dataset.classId : null;
+    document.getElementById('class-count').textContent =
+        pickedClasses.size + (pickedClasses.size === 1 ? ' class selected' : ' classes selected');
+    const days = [...new Set(classes.map(c => c.day))].sort((a, b) => a - b);
+    document.getElementById('day-chips').innerHTML = days.length
+        ? days.map(d => chip(DAYS[d], classesWhere(c => c.day === d), `toggleGroup(classesWhere(c => c.day === ${d}))`)).join('')
+        : '<span class="text-sm text-ink-3">No classes yet</span>';
+    document.getElementById('loc-row').classList.toggle('hidden', !locations.length);
+    document.getElementById('loc-chips').innerHTML = locations.map(l =>
+        chip(l.name, classesWhere(c => c.location_id === l.id), `toggleGroup(classesWhere(c => c.location_id === ${l.id}))`)).join('');
+    let html = '', lastDay = null;
+    classes.forEach(c => {
+        if (c.day !== lastDay) {
+            lastDay = c.day;
+            html += `<div class="px-3 py-1.5 bg-surface-2 text-[11px] font-bold uppercase tracking-[.06em] text-ink-3">${DAYS[c.day]}</div>`;
+        }
+        const meta = [c.time, c.location].filter(Boolean).join(' · ');
+        html += `<label class="flex items-start gap-3 px-3 py-2 cursor-pointer hover:bg-surface-2">
+            <input type="checkbox" data-class-id="${c.id}" class="mt-1 rounded border-line-2 text-primary-600 focus:ring-primary-200" ${pickedClasses.has(c.id) ? 'checked' : ''} onchange="toggleClass(${c.id})">
+            <span class="min-w-0"><span class="block text-sm text-ink">${esc(c.name)}</span>${meta ? `<span class="block text-xs text-ink-3">${esc(meta)}</span>` : ''}</span></label>`;
+    });
+    listEl.innerHTML = html || '<p class="px-3 py-3 text-sm text-ink-3">No classes yet.</p>';
+    listEl.scrollTop = scroll;
+    if (focusedId) {
+        const again = listEl.querySelector(`input[data-class-id="${focusedId}"]`);
+        if (again) again.focus();
+    }
+}
+
+function currentFilter(type) {
+    if (type === 'all') return '';
+    if (type === 'class') return [...pickedClasses].sort((a, b) => a - b).join(',');
+    return document.getElementById('msg-filter').value;
 }
 
 // ── Recipient preview ────────────────────────────────────────────────
@@ -151,8 +241,9 @@ function updateRecipientFilter() {
 let previewSeq = 0;
 async function refreshRecipientPreview() {
     const type = document.getElementById('msg-type').value;
-    const filter = type === 'all' ? '' : document.getElementById('msg-filter').value;
+    const filter = currentFilter(type);
     const box = document.getElementById('recipient-preview');
+    if (type === 'class' && !filter) { ++previewSeq; box.classList.add('hidden'); return; }
     const q = new URLSearchParams({recipient_type: type});
     if (filter) q.set('recipient_filter', filter);
     document.getElementById('recipient-csv').href = '/api/messages/recipients?' + q + '&format=csv';
@@ -161,12 +252,18 @@ async function refreshRecipientPreview() {
         const r = await fetch('/api/messages/recipients?' + q);
         const d = await r.json();
         if (seq !== previewSeq) return;   // a newer selection superseded this one
-        if (!r.ok) { box.classList.add('hidden'); return; }
+        if (!r.ok) { previewFailed(box); return; }
         document.getElementById('recipient-summary').innerHTML =
             'Will go to <span class="font-bold text-ink">' + d.count + '</span> email address' + (d.count === 1 ? '' : 'es') + '.';
         document.getElementById('recipient-list').value = d.emails.join(', ');
         box.classList.remove('hidden');
-    } catch { box.classList.add('hidden'); }
+    } catch { if (seq === previewSeq) previewFailed(box); }
+}
+function previewFailed(box) {
+    document.getElementById('recipient-summary').textContent =
+        "Couldn't check who this will reach. Reload the page before sending.";
+    document.getElementById('recipient-list').value = '';
+    box.classList.remove('hidden');
 }
 function toggleRecipientList(btn) {
     const ta = document.getElementById('recipient-list');
@@ -227,6 +324,12 @@ function renderAttachList() {
         `<p class="text-xs text-ink-3">${selectedFiles.length} file(s), ${fmtSize(total)} total</p>`;
 }
 
+function noClassPicked() {
+    const type = document.getElementById('msg-type').value;
+    if (type === 'class') return pickedClasses.size === 0;
+    return type !== 'all' && !currentFilter(type);
+}
+
 function composeForm() {
     // Always multipart - one code path whether or not files are attached.
     const type = document.getElementById('msg-type').value;
@@ -234,7 +337,7 @@ function composeForm() {
     form.append('subject', document.getElementById('msg-subject').value);
     form.append('body', document.getElementById('msg-body').value);
     form.append('recipient_type', type);
-    if (type !== 'all') form.append('recipient_filter', document.getElementById('msg-filter').value);
+    if (type !== 'all') form.append('recipient_filter', currentFilter(type));
     if (document.getElementById('msg-copy-me').checked) form.append('copy_me', '1');
     selectedFiles.forEach(f => form.append('attachments', f));
     return form;
@@ -247,6 +350,7 @@ async function sendTest() {
     const subject = document.getElementById('msg-subject').value.trim();
     const body = document.getElementById('msg-body').value.trim();
     if (!subject || !body) { toast('Write the subject and message first', false); return; }
+    if (noClassPicked()) { toast('Pick who this goes to first', false); return; }
     const btn = document.getElementById('test-btn');
     btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Sending test...';
     const form = composeForm();
@@ -261,6 +365,7 @@ async function sendTest() {
 
 async function sendMessage(e) {
     e.preventDefault();
+    if (noClassPicked()) { toast('Pick who this goes to first', false); return; }
     const btn = document.getElementById('send-btn');
     btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Sending...';
     const form = composeForm();
@@ -276,8 +381,14 @@ async function sendMessage(e) {
             } else {
                 toast(data.message, true);
             }
+            // reset() snaps the type select back to its first option, which is
+            // "All Parents" for an admin. Keep the type the sender chose so the
+            // next compose never silently defaults to the whole studio.
+            const keptType = document.getElementById('msg-type').value;
             document.getElementById('compose-form').reset();
+            document.getElementById('msg-type').value = keptType;
             selectedFiles = []; renderAttachList();
+            pickedClasses = new Set();
             updateRecipientFilter();
             loadHistory();
         } else { toast(data.error || 'Error sending message', false); }
@@ -332,18 +443,23 @@ function renderHistory(msgs) {
     if (!msgs.length) { tbody.innerHTML = '<tr><td colspan="7" class="px-5 py-4 text-center text-ink-3">No messages sent yet.</td></tr>'; return; }
     historyById = Object.fromEntries(msgs.map(m => [m.id, m]));
     const typeLabels = { all: 'All Parents', class: 'Class', individual: 'Individual' };
+    const toLabel = m => {
+        if (m.recipient_type !== 'class') return typeLabels[m.recipient_type] || m.recipient_type;
+        const n = (m.recipient_classes || []).length;
+        return n === 1 ? m.recipient_classes[0] : n > 1 ? n + ' classes' : 'Class';
+    };
     tbody.innerHTML = msgs.map(m => {
         const status = m.sent
             ? '<span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-ok/10 text-ok">Sent</span>'
             : '<span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-warn/10 text-warn">Saved</span>';
         const atts = (m.attachments || []).length
-            ? m.attachments.map(a => `<a href="${a.url}" class="block text-sm text-primary-600 hover:underline" title="${esc(a.filename)} (${fmtSize(a.size)})">
+            ? m.attachments.map(a => `<a href="${a.url}" class="block text-sm text-primary-600 hover:underline" title="${escAttr(a.filename)} (${fmtSize(a.size)})">
                     <i class="fas fa-paperclip mr-1"></i>${esc(a.filename)}</a>`).join('')
             : '<span class="text-sm text-ink-3">—</span>';
         return `<tr class="border-b border-line last:border-0">
             <td class="px-5 py-3 text-sm text-ink">${esc(m.created_at.split('T')[0])}</td>
             <td class="px-5 py-3 text-sm font-bold text-ink">${esc(m.subject)}</td>
-            <td class="px-5 py-3 text-sm text-ink-3">${esc(typeLabels[m.recipient_type] || m.recipient_type)}</td>
+            <td class="px-5 py-3 text-sm text-ink-3">${esc(toLabel(m))}</td>
             <td class="px-5 py-3 text-sm text-ink-3">${m.recipient_count} recipient(s)</td>
             <td class="px-5 py-3 max-w-[220px]">${atts}</td>
             <td class="px-5 py-3">${status}</td>
@@ -373,6 +489,7 @@ function toggleMessageDetail(id) {
                 <p class="text-[11px] font-bold uppercase tracking-[.06em] text-ink-3 mb-1">Message</p>
                 <p class="text-sm font-bold text-ink mb-1">${esc(m.subject)}</p>
                 <pre class="whitespace-pre-wrap font-sans text-sm text-ink-2 bg-surface border border-line rounded-xl p-3">${esc(m.body)}</pre>
+                ${(m.recipient_classes || []).length > 1 ? `<p class="text-xs text-ink-3 mt-2">Classes: ${esc(m.recipient_classes.join(', '))}</p>` : ''}
                 <p class="text-xs text-ink-3 mt-2">Sent by ${esc(m.created_by || 'staff')}${m.sent_at ? ' on ' + esc(m.sent_at.replace('T', ' ').slice(0, 16)) : ''}</p>
             </div>
             <div>
