@@ -1,5 +1,14 @@
 # What's New in AttenDANCE
 
+## Email more than one class (October 2026)
+
+- **Pick several classes.** On Messages, choose Parents in Classes and tick as many as you want.
+- **By day.** Tap Monday to tick every Monday class. Tap Tuesday too for both days.
+- **By location.** Tap Oak Park or Lathrup Village to tick every class held there.
+- **One email per family.** A parent with dancers in two picked classes still gets one copy. The form shows how many addresses it will reach before you send.
+
+---
+
 ## PayPal checkout links (October 2026)
 
 - **Use your PayPal checkout link.** Paste a PayPal checkout link (https://www.paypal.com/ncp/payment/...) into Payment Methods, for the studio or the Company. Parents get a "Pay with PayPal" button and are told the amount to enter. PayPal.me links still work too.

@@ -115,7 +115,7 @@ Search narrows the page; Print includes the full manual and can save a PDF.</p>
             <td class="px-3 py-2.5">Everything: money, students, staff, settings, recital, company</td>
             <td class="px-3 py-2.5">-</td></tr>
           <tr class="border-b border-line"><td class="px-3 py-2.5 font-bold">Teacher</td>
-            <td class="px-3 py-2.5">Take attendance, manage check-in tags and photos, view students, families, classes, calendar and rules, send class or individual parent messages, edit recital numbers and cast, clock in and out, read this manual</td>
+            <td class="px-3 py-2.5">Take attendance, manage check-in tags and photos, view students, families, classes, calendar and rules, send parent messages to one or several classes, a whole day, a location, or one family, edit recital numbers and cast, clock in and out, read this manual</td>
             <td class="px-3 py-2.5">Anything to do with money, adding or editing students, settings, staff</td></tr>
           <tr><td class="px-3 py-2.5 font-bold">Parent</td>
             <td class="px-3 py-2.5">See only their own dancers: balance, attendance, pay, sign forms, initial rules, request makeups, sign up for auditions</td>
@@ -842,7 +842,7 @@ Search narrows the page; Print includes the full manual and can save a PDF.</p>
 
   <div class="{{ card }}">
     <h3 class="{{ h3 }}">Emailing parents</h3>
-    <p class="{{ p }}"><strong>Messages</strong> sends email to one of three groups:</p>
+    <p class="{{ p }}"><strong>Messages</strong> sends email to everyone, to the classes you pick, or to one family:</p>
     <ul class="{{ ul }}">
       <li><strong>All Parents</strong> - admins only</li>
       <li><strong>Parents in Classes</strong> - everyone currently enrolled in the classes you pick</li>
@@ -860,9 +860,20 @@ Search narrows the page; Print includes the full manual and can save a PDF.</p>
       <li><strong>By location</strong> - tap <em>Oak Park</em> or <em>Lathrup Village</em> to tick every
       class held there.</li>
     </ul>
-    <p class="{{ p }}">Tap a tapped shortcut again to untick that group. <strong>Select all</strong> and
-    <strong>Clear</strong> do what they say. A parent with dancers in two of the classes you picked still
-    gets one email, and the count above the subject line tells you how many addresses it will reach.</p>
+    <p class="{{ p }}">Shortcuts add up, so Monday plus Lathrup Village ticks both groups. Tap a
+    highlighted shortcut again to untick that group. <strong>Select all</strong> and <strong>Clear</strong>
+    do what they say, and you can still tick or untick single classes after using a shortcut.</p>
+    <ul class="{{ ul }}">
+      <li>Only classes running this season are listed. A class with no location is reached through its
+      day, or by ticking it yourself.</li>
+      <li>A parent with dancers in two of the classes you picked still gets one email. The line under the
+      list says how many addresses it will reach.</li>
+      <li>You can't send or send a test until at least one class is ticked.</li>
+      <li>In <strong>Message History</strong>, a message to several classes shows as "3 classes".
+      Click <strong>View</strong> to see their names.</li>
+      <li>After you send, the form stays on the group type you used, so a second class message doesn't
+      switch back to All Parents.</li>
+    </ul>
 
     <h3 class="{{ h3 }}">Seeing who it goes to, and proofing it first</h3>
     <ul class="{{ ul }}">
