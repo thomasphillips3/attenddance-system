@@ -26,7 +26,7 @@ FUND_LABELS = {STUDIO: 'Studio', COMPANY: 'Company'}
 CATEGORIES = [
     ('tuition', 'Tuition', STUDIO),
     ('costumes', 'Costumes', STUDIO),
-    ('shoes', 'Shoes', STUDIO),
+    ('shoes', 'Dancewear', STUDIO),
     ('registration', 'Registration Fee', STUDIO),
     ('other', 'Other', STUDIO),
     ('competition', 'Competition', COMPANY),
