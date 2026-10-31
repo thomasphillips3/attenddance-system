@@ -95,6 +95,11 @@ jobs:
           RFID_ENABLED: "false"
         run: python tests/test_message_recipients.py
 
+      - name: Message class groups harness
+        env:
+          RFID_ENABLED: "false"
+        run: python tests/test_message_class_groups.py
+
       - name: Registration field harness
         env:
           RFID_ENABLED: "false"

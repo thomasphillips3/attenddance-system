@@ -2949,6 +2949,27 @@ def download_message_recipients(mid):
     return _csv_response(f'message-{mid}-recipients.csv', ['Email'], ([e] for e in emails))
 
 
+def _class_names_for_messages(messages) -> dict[int, list[str]]:
+    """Class names behind each class-type message on a page, in one query.
+    A class deleted since the send is simply missing from the list."""
+    ids_by_msg: dict[int, list[int]] = {}
+    for m in messages:
+        if m.recipient_type != 'class':
+            continue
+        try:
+            ids_by_msg[m.id] = [int(p) for p in (m.recipient_filter or '').split(',')
+                                if p.strip()]
+        except ValueError:
+            continue
+    wanted = {i for ids in ids_by_msg.values() for i in ids}
+    if not wanted:
+        return {}
+    names = dict(db.session.query(DanceClass.id, DanceClass.name)
+                 .filter(DanceClass.id.in_(wanted)).all())
+    return {mid: [names[i] for i in ids if i in names]
+            for mid, ids in ids_by_msg.items()}
+
+
 @bp.route('/messages', methods=['GET'])
 @login_required
 def get_messages():
@@ -2960,10 +2981,12 @@ def get_messages():
     pagination = (Message.query.order_by(desc(Message.created_at))
                   .paginate(page=page, per_page=per_page, error_out=False))
     attachments = _attachments_for_messages([m.id for m in pagination.items])
+    class_names = _class_names_for_messages(pagination.items)
     return jsonify({
         'messages': [{
             'id': m.id, 'subject': m.subject, 'body': m.body,
             'recipient_type': m.recipient_type, 'recipient_filter': m.recipient_filter,
+            'recipient_classes': class_names.get(m.id, []),
             'recipient_count': m.recipient_count, 'recipient_emails': m.recipient_emails,
             'sent': m.sent, 'sent_at': _utc_iso(m.sent_at),
             'created_by': m.creator.full_name if m.creator else None,
@@ -3129,7 +3152,7 @@ def send_message():
         subject=subject,
         body=body,
         recipient_type=rtype,
-        recipient_filter=str(data.get('recipient_filter', '')),
+        recipient_filter=_normalized_filter(rtype, data.get('recipient_filter')),
         recipient_count=len(emails),
         recipient_emails=', '.join(sorted(emails)),
         created_by=current_user.id,
@@ -3180,6 +3203,37 @@ def send_message():
     }), 201
 
 
+_MAX_CLASSES_PER_MESSAGE = 200
+
+
+def _normalized_filter(rtype, raw) -> str:
+    """What gets stored on the Message. Class ids are re-serialized from the
+    parsed list (validated by the resolver before we get here), so history never
+    holds the client's raw text."""
+    if rtype == 'class':
+        ids = _parse_class_ids(raw)
+        if not isinstance(ids, tuple):
+            return ','.join(str(i) for i in ids)
+    return str(raw or '')
+
+
+def _parse_class_ids(raw) -> list[int] | tuple:
+    """Class ids from a message's recipient_filter: one id ("7") or a
+    comma-separated list ("3,7,9"). Returns a sorted, de-duplicated list, or a
+    (json, status) error tuple. Sorted so the stored filter is the same string
+    no matter what order the picker sent the ids in."""
+    parts = [p.strip() for p in str(raw or '').split(',') if p.strip()]
+    if not parts:
+        return jsonify({'error': 'recipient_filter (class ids) required for class type'}), 400
+    try:
+        ids = sorted({int(p) for p in parts})
+    except ValueError:
+        return jsonify({'error': 'Invalid class selection'}), 400
+    if len(ids) > _MAX_CLASSES_PER_MESSAGE:
+        return jsonify({'error': f'Pick at most {_MAX_CLASSES_PER_MESSAGE} classes'}), 400
+    return ids
+
+
 def _resolve_recipient_emails(rtype: str, recipient_filter) -> set | tuple:
     """Resolve email addresses for a message. Returns a set of emails or an error tuple."""
     emails: set[str] = set()
@@ -3187,20 +3241,18 @@ def _resolve_recipient_emails(rtype: str, recipient_filter) -> set | tuple:
         for s in Student.query.filter_by(is_active=True).all():
             emails.update(student_emails(s))
     elif rtype == 'class':
-        if not recipient_filter:
-            return jsonify({'error': 'recipient_filter (class_id) required for class type'}), 400
-        try:
-            cid = int(recipient_filter)
-        except (TypeError, ValueError):
-            return jsonify({'error': 'Invalid class selection'}), 400
-        # Use join to avoid N+1
-        # Whole Student rows (not two columns) because the recipient list now
-        # spans the dancer's second parent address and the household's, which
-        # student_emails() resolves. Still one query, so no N+1.
+        ids = _parse_class_ids(recipient_filter)
+        if isinstance(ids, tuple):
+            return ids
+        # Whole Student rows (not two columns) because the recipient list spans
+        # the dancer's second parent address and the household's, which
+        # student_emails() resolves. One query for any number of classes; the
+        # set dedupes a family with dancers in several of the picked classes.
         roster = (Student.query
                   .join(ClassEnrollment, ClassEnrollment.student_id == Student.id)
-                  .filter(ClassEnrollment.class_id == cid,
+                  .filter(ClassEnrollment.class_id.in_(ids),
                           ClassEnrollment.is_active == True)  # noqa: E712
+                  .distinct()
                   .all())
         for st in roster:
             emails.update(student_emails(st))

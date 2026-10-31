@@ -590,7 +590,7 @@ class Message(db.Model):
     subject = db.Column(db.String(200), nullable=False)
     body = db.Column(db.Text, nullable=False)
     recipient_type = db.Column(db.String(20), nullable=False)  # all, class, individual
-    recipient_filter = db.Column(db.String(100))  # class_id or student_id
+    recipient_filter = db.Column(db.Text)  # class id(s), comma-separated, or student_id
     recipient_count = db.Column(db.Integer, default=0)
     recipient_emails = db.Column(db.Text)  # comma-separated
     sent = db.Column(db.Boolean, default=False, nullable=False)

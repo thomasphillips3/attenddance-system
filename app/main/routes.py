@@ -247,8 +247,26 @@ def family_ledger(family_id):
 @staff_required
 def messages_page():
     students = Student.query.filter_by(is_active=True).order_by(Student.last_name).all()
-    classes = live_class_query().order_by(DanceClass.name).all()
-    return render_template('messages/list.html', students=students, classes=classes)
+    # Day, then time: the picker groups by day and the studio reads a week
+    # top to bottom. Plain dicts so the template can hand them to JS with
+    # |tojson (a class name with an apostrophe must not break the script).
+    rows = (live_class_query()
+            .order_by(DanceClass.day_of_week, DanceClass.start_time, DanceClass.name)
+            .all())
+    classes = [{
+        'id': c.id, 'name': c.name, 'day': c.day_of_week,
+        'time': c.start_time.strftime('%-I:%M %p') if c.start_time else '',
+        'location_id': c.location_id,
+        'location': c.location.name if c.location else '',
+    } for c in rows]
+    seen = {}
+    for c in rows:
+        if c.location and c.location.id not in seen:
+            seen[c.location.id] = {'id': c.location.id, 'name': c.location.name}
+    locations = sorted(seen.values(), key=lambda l: l['name'].lower())
+    student_rows = [{'id': s.id, 'name': s.full_name} for s in students]
+    return render_template('messages/list.html', students=student_rows,
+                           classes=classes, locations=locations)
 
 
 @bp.route('/rules')
