@@ -16,17 +16,29 @@
 <div class="bg-surface border border-line rounded-2xl shadow-soft p-6 mb-8">
     <h2 class="font-display text-xl text-ink mb-4">Compose Message</h2>
     <form id="compose-form" onsubmit="sendMessage(event)">
-        <div class="grid grid-cols-2 gap-4 mb-4">
-            <div>
-                <label class="{{ LABEL }}">Send To *</label>
-                <select id="msg-type" required onchange="updateRecipientFilter()" class="{{ INPUT }}">
-                    {% if current_user.is_admin %}{# whole-studio blasts are admin-only #}
-                    <option value="all">All Parents</option>
-                    {% endif %}
-                    <option value="class">Parents in Classes</option>
-                    <option value="individual">Individual Student's Parent</option>
-                </select>
+        {# Every choice on screen at once, as buttons. A dropdown hid "classes,
+           a day, or a location" behind "All Parents" and the studio never found
+           it on a phone. msg-type stays the one value the rest of the page reads. #}
+        <div class="mb-4">
+            <span class="{{ LABEL }}">Send To *</span>
+            <input type="hidden" id="msg-type" value="{{ 'all' if current_user.is_admin else 'class' }}">
+            <div role="radiogroup" aria-label="Send to" class="mt-1 grid grid-cols-1 sm:grid-cols-3 gap-2">
+                {% set send_to = [] %}
+                {% if current_user.is_admin %}{# whole-studio blasts are admin-only #}
+                {% set _ = send_to.append(('all', 'fa-users', 'Everyone', 'All parents')) %}
+                {% endif %}
+                {% set _ = send_to.append(('class', 'fa-layer-group', 'Classes, a day, or a location', 'e.g. only Oak Park families')) %}
+                {% set _ = send_to.append(('individual', 'fa-user', 'One family', "One student's parents")) %}
+                {% for value, icon, title, hint in send_to %}
+                <button type="button" role="radio" data-type="{{ value }}" onclick="setRecipientType('{{ value }}')"
+                        class="send-to text-left px-4 py-3 rounded-xl border-2 border-line-2 bg-surface hover:border-primary-300">
+                    <span class="flex items-center gap-2 text-sm font-bold text-ink"><i class="fas {{ icon }} text-primary-600"></i>{{ title }}</span>
+                    <span class="block text-xs text-ink-3 mt-0.5">{{ hint }}</span>
+                </button>
+                {% endfor %}
             </div>
+        </div>
+        <div class="mb-4">
             <div id="filter-field" class="hidden">
                 <label id="filter-label" class="{{ LABEL }}">Student</label>
                 <select id="msg-filter" class="{{ INPUT }}"></select>
@@ -46,9 +58,12 @@
                 <div class="text-[11px] font-bold uppercase tracking-[.06em] text-ink-3 mb-1">By day</div>
                 <div id="day-chips" class="flex flex-wrap gap-2"></div>
             </div>
-            <div id="loc-row" class="mb-3">
+            <div class="mb-3">
                 <div class="text-[11px] font-bold uppercase tracking-[.06em] text-ink-3 mb-1">By location</div>
                 <div id="loc-chips" class="flex flex-wrap gap-2"></div>
+                {# Hidden-when-empty made the location option look missing. Say why. #}
+                <p id="loc-empty" class="hidden text-sm text-ink-3">No class has a location yet. Set one on each class
+                    under <a href="/classes" class="text-primary-600 hover:underline">Classes</a> and Oak Park / Lathrup Village buttons show up here.</p>
             </div>
             <div id="class-list" class="max-h-72 overflow-y-auto bg-surface border border-line rounded-xl divide-y divide-line"></div>
         </div>
@@ -152,7 +167,20 @@ const students = {{ students|tojson }};
 const DAYS = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
 let pickedClasses = new Set();
 
+function setRecipientType(type) {
+    document.getElementById('msg-type').value = type;
+    updateRecipientFilter();
+}
+
 function updateRecipientFilter() {
+    const current = document.getElementById('msg-type').value;
+    document.querySelectorAll('.send-to').forEach(b => {
+        const on = b.dataset.type === current;
+        b.setAttribute('aria-checked', on);
+        b.classList.toggle('border-primary-500', on);
+        b.classList.toggle('bg-primary-50', on);
+        b.classList.toggle('border-line-2', !on);
+    });
     const type = document.getElementById('msg-type').value;
     const field = document.getElementById('filter-field');
     const select = document.getElementById('msg-filter');
@@ -207,7 +235,7 @@ function renderClassPicker() {
     document.getElementById('day-chips').innerHTML = days.length
         ? days.map(d => chip(DAYS[d], classesWhere(c => c.day === d), `toggleGroup(classesWhere(c => c.day === ${d}))`)).join('')
         : '<span class="text-sm text-ink-3">No classes yet</span>';
-    document.getElementById('loc-row').classList.toggle('hidden', !locations.length);
+    document.getElementById('loc-empty').classList.toggle('hidden', locations.length > 0);
     document.getElementById('loc-chips').innerHTML = locations.map(l =>
         chip(l.name, classesWhere(c => c.location_id === l.id), `toggleGroup(classesWhere(c => c.location_id === ${l.id}))`)).join('');
     let html = '', lastDay = null;
@@ -270,7 +298,7 @@ function toggleRecipientList(btn) {
     ta.classList.toggle('hidden');
     btn.textContent = ta.classList.contains('hidden') ? 'Show list' : 'Hide list';
 }
-// Initialize for the default selection — teachers have no "All Parents" option,
+// Initialize for the default selection — teachers have no "Everyone" button,
 // so their default is "class" and the filter must populate without a change event.
 updateRecipientFilter();
 
@@ -381,9 +409,8 @@ async function sendMessage(e) {
             } else {
                 toast(data.message, true);
             }
-            // reset() snaps the type select back to its first option, which is
-            // "All Parents" for an admin. Keep the type the sender chose so the
-            // next compose never silently defaults to the whole studio.
+            // Keep the type the sender chose across reset(), so the next
+            // compose never silently defaults to the whole studio.
             const keptType = document.getElementById('msg-type').value;
             document.getElementById('compose-form').reset();
             document.getElementById('msg-type').value = keptType;
@@ -442,7 +469,7 @@ function renderHistory(msgs) {
     const tbody = document.getElementById('history-table');
     if (!msgs.length) { tbody.innerHTML = '<tr><td colspan="7" class="px-5 py-4 text-center text-ink-3">No messages sent yet.</td></tr>'; return; }
     historyById = Object.fromEntries(msgs.map(m => [m.id, m]));
-    const typeLabels = { all: 'All Parents', class: 'Class', individual: 'Individual' };
+    const typeLabels = { all: 'Everyone', class: 'Class', individual: 'Individual' };
     const toLabel = m => {
         if (m.recipient_type !== 'class') return typeLabels[m.recipient_type] || m.recipient_type;
         const n = (m.recipient_classes || []).length;

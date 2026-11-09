@@ -2,7 +2,7 @@
 
 ## Email more than one class (October 2026)
 
-- **Pick several classes.** On Messages, choose Parents in Classes and tick as many as you want.
+- **Pick several classes.** On Messages, tap Classes, a day, or a location and tick as many as you want.
 - **By day.** Tap Monday to tick every Monday class. Tap Tuesday too for both days.
 - **By location.** Tap Oak Park or Lathrup Village to tick every class held there.
 - **One email per family.** A parent with dancers in two picked classes still gets one copy. The form shows how many addresses it will reach before you send.

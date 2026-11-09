@@ -210,6 +210,9 @@ html = r.get_data(as_text=True)
 record("the Messages page renders", r.status_code == 200, f"got {r.status_code}")
 record("a class name with an apostrophe is JSON-encoded, not pasted into a JS string",
        "Mon Tap\\u0027s" in html and "Mon Tap's" not in html)
+record("Send To shows every choice as a button, not a hidden dropdown",
+       'data-type="class"' in html and "Classes, a day, or a location" in html
+       and '<select id="msg-type"' not in html)
 record("the picker offers day and location shortcuts",
        'id="day-chips"' in html and 'id="loc-chips"' in html and "Lathrup Village" in html)
 
