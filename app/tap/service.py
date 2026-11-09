@@ -726,8 +726,14 @@ def reopen_session(event_id: int, actor_id=None, event_key=None) -> TapResult:
     snap = _snapshot(att)
     att.check_out_time = None
     now = datetime.now().replace(microsecond=0)
+    occurred = max(now, target.occurred_at)
+    if occurred.date() != target.occurred_at.date():
+        # Reopening an earlier day's checkout: keep the event on that day.
+        # Stamped "now" it would land in today's state and turn the dancer's
+        # first tap today into a "Back in class" duplicate.
+        occurred = target.occurred_at + timedelta(seconds=1)
     key = event_key or f'reopen:{target.id}'
-    new = TapEvent(event_key=key, occurred_at=max(now, target.occurred_at), source='api',
+    new = TapEvent(event_key=key, occurred_at=occurred, source='api',
                    actor_id=actor_id, outcome='reopened', direction='in',
                    tag_id=target.tag_id, student_id=target.student_id,
                    class_id=target.class_id, attendance_id=att.id,
