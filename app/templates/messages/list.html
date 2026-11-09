@@ -165,7 +165,6 @@ const classes = {{ classes|tojson }};
 const locations = {{ locations|tojson }};
 const students = {{ students|tojson }};
 const DAYS = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
-let pickedClasses = new Set();
 
 function setRecipientType(type) {
     document.getElementById('msg-type').value = type;
@@ -200,28 +199,74 @@ function updateRecipientFilter() {
 }
 
 // ── Class picker ─────────────────────────────────────────────────────
-function classesWhere(pred) { return classes.filter(pred).map(c => c.id); }
-function groupFullyPicked(ids) { return ids.length > 0 && ids.every(id => pickedClasses.has(id)); }
+// <picker-state>
+// Pure selection logic (no DOM) so tests/test_class_picker.py can run this exact
+// block in node. Two pieces of state:
+//   picked - the class ids that will be emailed. The only thing the send reads.
+//   pinned - the day/location chips the user TAPPED. A chip shows as on only if
+//            it is pinned AND all its classes are still picked.
+// Why pinned: lighting a chip merely because its classes happen to be picked
+// made "Oak Park" also light "Friday" whenever every Friday class was at Oak
+// Park, which read as "Friday was selected too". A chip now lights only for what
+// the user tapped, and any hand edit to a class inside it releases it.
+function createPickerState(classes) {
+    const picked = new Set();
+    const pinned = new Set();
+    const groupIds = key => {
+        const [kind, raw] = key.split(':');
+        const n = Number(raw);
+        if (kind === 'day') return classes.filter(c => c.day === n).map(c => c.id);
+        if (kind === 'loc') return classes.filter(c => c.location_id === n).map(c => c.id);
+        return [];
+    };
+    const isOn = key => {
+        const ids = groupIds(key);
+        return pinned.has(key) && ids.length > 0 && ids.every(id => picked.has(id));
+    };
+    return {
+        picked,
+        isOn,
+        toggleGroup(key) {
+            const ids = groupIds(key);
+            if (!ids.length) return;
+            if (isOn(key)) {
+                pinned.delete(key);
+                // Untick this group's classes, except any another lit chip still
+                // covers (Monday off must not drop Monday's Oak Park class while
+                // Oak Park is on).
+                const stillCovered = new Set();
+                [...pinned].filter(isOn).forEach(k => groupIds(k).forEach(id => stillCovered.add(id)));
+                ids.forEach(id => { if (!stillCovered.has(id)) picked.delete(id); });
+            } else {
+                pinned.add(key);
+                ids.forEach(id => picked.add(id));
+            }
+        },
+        toggleClass(id) {
+            picked.has(id) ? picked.delete(id) : picked.add(id);
+            // A hand edit inside a chip's group means it no longer describes the selection.
+            [...pinned].forEach(k => { if (groupIds(k).includes(id)) pinned.delete(k); });
+        },
+        pickAll(on) {
+            pinned.clear();
+            picked.clear();
+            if (on) classes.forEach(c => picked.add(c.id));
+        },
+        reset() { pinned.clear(); picked.clear(); },
+    };
+}
+// </picker-state>
+const classPicker = createPickerState(classes);
 
-function toggleGroup(ids) {
-    const all = groupFullyPicked(ids);
-    ids.forEach(id => all ? pickedClasses.delete(id) : pickedClasses.add(id));
-    renderClassPicker(); refreshRecipientPreview();
-}
-function pickAllClasses(on) {
-    pickedClasses = on ? new Set(classes.map(c => c.id)) : new Set();
-    renderClassPicker(); refreshRecipientPreview();
-}
-function toggleClass(id) {
-    pickedClasses.has(id) ? pickedClasses.delete(id) : pickedClasses.add(id);
-    renderClassPicker(); refreshRecipientPreview();
-}
+function toggleGroup(key) { classPicker.toggleGroup(key); renderClassPicker(); refreshRecipientPreview(); }
+function pickAllClasses(on) { classPicker.pickAll(on); renderClassPicker(); refreshRecipientPreview(); }
+function toggleClass(id) { classPicker.toggleClass(id); renderClassPicker(); refreshRecipientPreview(); }
 
-function chip(label, ids, onclick) {
-    const on = groupFullyPicked(ids);
+function chip(label, key) {
+    const on = classPicker.isOn(key);
     const cls = on ? 'bg-primary-500 text-white border-primary-500'
                    : 'bg-surface text-ink-2 border-line-2 hover:border-primary-300';
-    return `<button type="button" aria-pressed="${on}" onclick="${onclick}" class="px-4 py-2 rounded-full border text-sm font-bold ${cls}">${esc(label)}</button>`;
+    return `<button type="button" aria-pressed="${on}" onclick="toggleGroup('${key}')" class="px-4 py-2 rounded-full border text-sm font-bold ${cls}">${esc(label)}</button>`;
 }
 
 function renderClassPicker() {
@@ -230,14 +275,14 @@ function renderClassPicker() {
     const focusedId = document.activeElement && document.activeElement.dataset
         ? document.activeElement.dataset.classId : null;
     document.getElementById('class-count').textContent =
-        pickedClasses.size + (pickedClasses.size === 1 ? ' class selected' : ' classes selected');
+        classPicker.picked.size + (classPicker.picked.size === 1 ? ' class selected' : ' classes selected');
     const days = [...new Set(classes.map(c => c.day))].sort((a, b) => a - b);
     document.getElementById('day-chips').innerHTML = days.length
-        ? days.map(d => chip(DAYS[d], classesWhere(c => c.day === d), `toggleGroup(classesWhere(c => c.day === ${d}))`)).join('')
+        ? days.map(d => chip(DAYS[d], 'day:' + d)).join('')
         : '<span class="text-sm text-ink-3">No classes yet</span>';
     document.getElementById('loc-empty').classList.toggle('hidden', locations.length > 0);
     document.getElementById('loc-chips').innerHTML = locations.map(l =>
-        chip(l.name, classesWhere(c => c.location_id === l.id), `toggleGroup(classesWhere(c => c.location_id === ${l.id}))`)).join('');
+        chip(l.name, 'loc:' + l.id)).join('');
     let html = '', lastDay = null;
     classes.forEach(c => {
         if (c.day !== lastDay) {
@@ -246,7 +291,7 @@ function renderClassPicker() {
         }
         const meta = [c.time, c.location].filter(Boolean).join(' · ');
         html += `<label class="flex items-start gap-3 px-3 py-2 cursor-pointer hover:bg-surface-2">
-            <input type="checkbox" data-class-id="${c.id}" class="mt-1 rounded border-line-2 text-primary-600 focus:ring-primary-200" ${pickedClasses.has(c.id) ? 'checked' : ''} onchange="toggleClass(${c.id})">
+            <input type="checkbox" data-class-id="${c.id}" class="mt-1 rounded border-line-2 text-primary-600 focus:ring-primary-200" ${classPicker.picked.has(c.id) ? 'checked' : ''} onchange="toggleClass(${c.id})">
             <span class="min-w-0"><span class="block text-sm text-ink">${esc(c.name)}</span>${meta ? `<span class="block text-xs text-ink-3">${esc(meta)}</span>` : ''}</span></label>`;
     });
     listEl.innerHTML = html || '<p class="px-3 py-3 text-sm text-ink-3">No classes yet.</p>';
@@ -259,7 +304,7 @@ function renderClassPicker() {
 
 function currentFilter(type) {
     if (type === 'all') return '';
-    if (type === 'class') return [...pickedClasses].sort((a, b) => a - b).join(',');
+    if (type === 'class') return [...classPicker.picked].sort((a, b) => a - b).join(',');
     return document.getElementById('msg-filter').value;
 }
 
@@ -354,7 +399,7 @@ function renderAttachList() {
 
 function noClassPicked() {
     const type = document.getElementById('msg-type').value;
-    if (type === 'class') return pickedClasses.size === 0;
+    if (type === 'class') return classPicker.picked.size === 0;
     return type !== 'all' && !currentFilter(type);
 }
 
@@ -415,7 +460,7 @@ async function sendMessage(e) {
             document.getElementById('compose-form').reset();
             document.getElementById('msg-type').value = keptType;
             selectedFiles = []; renderAttachList();
-            pickedClasses = new Set();
+            classPicker.reset();
             updateRecipientFilter();
             loadHistory();
         } else { toast(data.error || 'Error sending message', false); }

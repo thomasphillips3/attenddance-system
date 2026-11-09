@@ -20,6 +20,11 @@ jobs:
         with:
           python-version: "3.12"
 
+      # test_class_picker.py runs the Messages picker's JS under node.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
       - name: Install dependencies (same set prod runs)
         run: |
           python -m pip install --upgrade pip
@@ -99,6 +104,11 @@ jobs:
         env:
           RFID_ENABLED: "false"
         run: python tests/test_message_class_groups.py
+
+      - name: Message class picker harness
+        env:
+          RFID_ENABLED: "false"
+        run: python tests/test_class_picker.py
 
       - name: Registration field harness
         env:
